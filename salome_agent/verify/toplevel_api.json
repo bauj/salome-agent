@@ -1,0 +1,5 @@
+{
+  "geompy": {"members": ["MakeBoxDXDYDZ", "MakeBoxTwoPnt", "MakeCylinderRH", "MakeFilletEdges", "MakeChamferEdges", "MakeCutList", "MakeFuseList", "MakeCommon", "CheckShape", "addToStudy", "SubShapeAllIDs"]},
+  "smesh": {"members": ["Mesh", "Compute", "NbNodes", "NbElements"]},
+  "pvsimple": {"members": ["OpenDataFile", "Show", "ColorBy", "GetActiveCamera"]}
+}
