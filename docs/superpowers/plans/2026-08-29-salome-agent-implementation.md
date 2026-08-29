@@ -459,8 +459,19 @@ git commit -m "feat: add executor process with run/reset_and_replay/introspect/l
 
 - [ ] **Step 1: Write the failing test — `make_box` publishes and returns a CallRecord**
 
+Correction found during implementation: the direct in-process version
+below (`build_namespace()` called straight from the test) only works if
+pytest itself is invoked from inside `salome shell` — the venv's pytest
+isn't. What actually shipped instead routes through the executor's socket
+the same way Task 2's `tests/salome/test_executor.py` does (spawn the
+real subprocess, send `call_tool` over the socket, assert on the JSON
+response) — see `tests/salome/conftest.py`'s shared `executor_conn`
+fixture. Left here as the original design intent for `call_tool`'s
+in-process signature; the actual test file differs in plumbing, not in
+what it asserts.
+
 ```python
-# tests/salome/test_geom_tools.py
+# tests/salome/test_geom_tools.py (original in-process design — see note above)
 import pytest
 from executor.executor import build_namespace, Executor
 from executor.geom_tools import call_tool
@@ -640,24 +651,49 @@ def list_tools() -> list[dict]:
 
 - [ ] **Step 4: Wire `list_tools`/`call_tool` into the executor's dispatcher**
 
-In `executor/executor.py`, add to `Executor.handle`, alongside the existing `if cmd == "run":` etc:
+Import `geom_tools` at **module load time**, before `build_namespace()`'s
+own imports run — not lazily inside `handle()`. Confirmed by hands-on
+testing 2026-08-29: something in `salome_init()`/`geomBuilder.New()`'s
+import chain mutates `sys.path` (KERNEL's `salome/__init__.py` defines an
+`extend_path()` for exactly this), which silently drops the repo-root
+entry Task 2's `sys.path.insert` added — a lazy `from executor.geom_tools
+import ...` inside `handle()` (only reached on the first client request,
+i.e. after `build_namespace()` already ran) then fails with `'executor'
+is not a package`. Importing early, in `executor/executor.py`'s own
+top-of-file block (right after the `sys.path.insert` line, before any
+other code), sidesteps it:
+
+```python
+from executor import geom_tools
+```
+
+Then in `Executor.handle`, alongside the existing `if cmd == "run":` etc:
 
 ```python
         if cmd == "list_tools":
-            from executor.geom_tools import list_tools
-            return {"id": req["id"], "tools": list_tools()}
+            return {"id": req["id"], "tools": geom_tools.list_tools()}
         if cmd == "call_tool":
-            from executor.geom_tools import call_tool
-            result = call_tool(self, req["name"], req["args"])
+            result = geom_tools.call_tool(self, req["name"], req["args"])
             return {"id": req["id"], **result}
 ```
 
 Also add to `reset_and_replay`'s reset step (it already calls `self.geom_bindings.clear()` from Task 2 — no change needed there; this step just confirms it).
 
+Second gotcha hit here: `geompy.CheckShape(shape, True)` — with the
+default `theReturnStatus=0`, `CheckShape` returns a **bare bool**, not a
+`(isValid, description)` tuple; unpacking it raises. Both
+`tool_fillet_edges` and `tool_check_shape` must pass `theReturnStatus=1`
+explicitly: `geompy.CheckShape(shape, True, 1)`.
+
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `pytest tests/salome/test_geom_tools.py -v -m salome`
-Expected: PASS (3 tests)
+Expected: PASS (5 tests — the plan's own test cases plus
+`test_unknown_tool_returns_structured_error` and
+`test_bad_param_returns_structured_error_not_crash`, added during
+implementation to actually exercise §6.5's "structured error, no crash"
+requirement for a bad tool call, per the `executor/geom_tools`
+integration-test row in §11.)
 
 - [ ] **Step 6: Commit**
 

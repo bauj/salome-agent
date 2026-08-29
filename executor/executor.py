@@ -8,9 +8,18 @@ import traceback as tb_module
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 
-# So `from executor.geom_tools import ...` resolves regardless of the cwd
-# `salome shell` launches this script from.
+# So `import executor.geom_tools` resolves regardless of the cwd `salome
+# shell` launches this script from.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Imported here, at module load time, before any SALOME import runs —
+# confirmed 2026-08-29 that something in build_namespace()'s salome_init()/
+# geomBuilder.New() chain mutates sys.path (KERNEL's salome/__init__.py
+# defines an extend_path() for exactly this kind of namespace-package
+# surgery), which silently drops our sys.path.insert above by the time a
+# LAZY `from executor.geom_tools import ...` inside handle() would run.
+# Importing early, before that mutation happens, sidesteps it entirely.
+from executor import geom_tools
 
 
 def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
@@ -140,11 +149,9 @@ class Executor:
         if cmd == "sanity":
             return {"id": req["id"], "ok": True, "warnings": [], "failures": []}
         if cmd == "list_tools":
-            from executor.geom_tools import list_tools
-            return {"id": req["id"], "tools": list_tools()}
+            return {"id": req["id"], "tools": geom_tools.list_tools()}
         if cmd == "call_tool":
-            from executor.geom_tools import call_tool
-            result = call_tool(self, req["name"], req["args"])
+            result = geom_tools.call_tool(self, req["name"], req["args"])
             return {"id": req["id"], **result}
         if cmd == "shutdown":
             return {"id": req["id"], "ok": True}
