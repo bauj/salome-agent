@@ -301,20 +301,58 @@ def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
     return result
 
 
-def build_namespace() -> dict:
+def _find_object(name: str):
+    # Whole-study search by name, not folder-scoped. study_ns folder
+    # scoping (geompy.PutToFolder / attach-mode rollback, spec §4.3/§12)
+    # is a separate, still-open piece of work — geompy.PutToFolder did not
+    # actually nest objects under the folder in manual testing against
+    # this SALOME build (2026-08-29), so folder-scoped lookup is deferred
+    # rather than shipped half-working. This search-by-name is correct as
+    # long as published names stay unique/deterministic (spec §5.2).
     import salome
-    import geompy
-    import smesh
+    from salome.kernel import salome as salome_kernel
+
+    def walk(sobj):
+        it = salome_kernel.myStudy.NewChildIterator(sobj)
+        while it.More():
+            child = it.Value()
+            if child.GetName() == name:
+                return child.GetObject()
+            found = walk(child)
+            if found is not None:
+                return found
+            it.Next()
+        return None
+
+    root = salome_kernel.myStudy.FindObjectID("0:1")
+    result = walk(root)
+    if result is None:
+        raise LookupError(f"no study object named {name!r}")
+    return result
+
+
+def build_namespace() -> dict:
+    # Real import convention for this SALOME build, confirmed by manual
+    # testing 2026-08-29 — NOT `import salome; import geompy; import smesh`
+    # as earlier spec drafts assumed. `geompy`/`smesh`/`salome` are still
+    # bound under those exact names below, so stage scripts and the static
+    # checker (verify/static.py's TOPLEVEL_MODULES) see the same bare
+    # top-level names either way.
+    from salome.kernel import salome
+    salome.salome_init()
+    from salome.geom import geomBuilder
+    geompy = geomBuilder.New()
+    from salome.smesh import smeshBuilder
+    smesh = smeshBuilder.New()
     try:
         import pvsimple
     except ImportError:
         pvsimple = None
-    salome.salome_init()
     study_ns = "salome_agent_run"
     return {
         "salome": salome, "geompy": geompy, "smesh": smesh, "pvsimple": pvsimple,
         "study_ns": study_ns,
-        "find_object": lambda name: salome.myStudy.FindObjectByName(name, study_ns)[0],
+        "find_object": _find_object,
     }
 
 
@@ -1676,12 +1714,34 @@ Expected: FAIL — module not found.
 - [ ] **Step 7: Write `salome_agent/nodes/assembler.py`**
 
 ```python
-PREAMBLE = """import salome
-import geompy
-import smesh
+# Real import convention for this SALOME build (confirmed 2026-08-29,
+# see Task 2's build_namespace) — result.py must self-init the same way
+# the executor's exec namespace does, since it runs standalone under
+# `salome shell` with no executor process attached.
+PREAMBLE = """from salome.kernel import salome
 salome.salome_init()
+from salome.geom import geomBuilder
+geompy = geomBuilder.New()
+from salome.smesh import smeshBuilder
+smesh = smeshBuilder.New()
 study_ns = "salome_agent_run"
-find_object = lambda name: salome.myStudy.FindObjectByName(name, study_ns)[0]
+
+def find_object(name):
+    def walk(sobj):
+        it = salome.myStudy.NewChildIterator(sobj)
+        while it.More():
+            child = it.Value()
+            if child.GetName() == name:
+                return child.GetObject()
+            found = walk(child)
+            if found is not None:
+                return found
+            it.Next()
+        return None
+    result = walk(salome.myStudy.FindObjectID("0:1"))
+    if result is None:
+        raise LookupError(f"no study object named {name!r}")
+    return result
 """
 
 
