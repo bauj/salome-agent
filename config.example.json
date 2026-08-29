@@ -1,0 +1,15 @@
+{
+  "llm": { "base_url": "", "api_key": "", "model": "", "temperature": 0 },
+  "salome": {
+    "root": "/storage/salome_platform/devel/SALOME-master-native-FD44"
+  },
+  "policy": {
+    "static_retries": 3,
+    "exec_retries": 2,
+    "exec_timeout_s": 120,
+    "tool_iteration_cap": 12,
+    "on_stage_failure": "abort",
+    "assembler_smoke_run": true
+  },
+  "work_dir": "~/.local/share/salome-agent/runs"
+}
