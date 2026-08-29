@@ -1,6 +1,7 @@
 import os
 import subprocess
 import time
+import uuid
 
 from salome_agent.executor_client import ExecutorClient
 from salome_agent.session.discovery import discover_port
@@ -30,6 +31,7 @@ class SessionManager:
         self.salome_bin = f"{salome_root}/salome"
         self.socket_dir = socket_dir
         self._proc: subprocess.Popen | None = None
+        self._socket_path: str | None = None
 
     def resolve(self, no_session: bool, port: int | None) -> tuple[SessionHandle, ExecutorClient | None]:
         if no_session:
@@ -37,7 +39,12 @@ class SessionManager:
                     "alive": False, "owned": False}, None
 
         resolved_port = port or discover_port()
-        socket_path = f"{self.socket_dir}/salome_agent_executor.sock"
+        # A fixed socket path collides across concurrent/crashed runs (a
+        # leftover file from a prior process makes Popen's bind fail with
+        # "Address already in use") — one unique path per SessionManager
+        # instance instead.
+        socket_path = f"{self.socket_dir}/salome_agent_executor_{uuid.uuid4().hex}.sock"
+        self._socket_path = socket_path
         env = _salome_subprocess_env()
 
         if resolved_port is not None:
@@ -74,3 +81,8 @@ class SessionManager:
         if self._proc is not None:
             self._proc.terminate()
             self._proc.wait(timeout=10)
+        if self._socket_path is not None:
+            try:
+                os.unlink(self._socket_path)
+            except FileNotFoundError:
+                pass
