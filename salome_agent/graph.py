@@ -1,3 +1,6 @@
+from langchain_core.runnables import RunnableConfig
+
+
 def route_after_run_stage(state: dict) -> str:
     stage = state["stages"][state["stage_idx"]]
     if stage["module"] == "geom":
@@ -13,6 +16,162 @@ def route_after_verify_exec(state: dict, session_died: bool = False) -> str:
     return "advance"
 
 
+# llm_client/executor_client are live, non-serializable objects — they live
+# in the graph's runnable config["configurable"] (never checkpointed), not
+# in RunState itself. Putting them in state made MemorySaver.put() try to
+# msgpack them and fail with "Type is not msgpack serializable: MagicMock"
+# the first time a live end-to-end run actually exercised the checkpointer.
+
+def _plan_node(state: dict, config: "RunnableConfig"):
+    from langgraph.types import Command
+    from salome_agent.nodes.planner import plan
+
+    llm = config["configurable"]["llm_client"]
+    stage_plans = plan(state["user_request"], llm)
+    stages = {
+        i: {"module": p["module"], "status": "pending", "script": None,
+            "call_log": None, "static_retries": 0, "exec_retries": 0}
+        for i, p in enumerate(stage_plans)
+    }
+    return Command(update={"plan": stage_plans, "stages": stages, "stage_idx": 0},
+                   goto="plan_gate")
+
+
+def _run_stage_node(state: dict, config: "RunnableConfig"):
+    from langgraph.types import Command
+
+    idx = state["stage_idx"]
+    stage_plan = state["plan"][idx]
+    module = stage_plan["module"]
+    llm = config["configurable"]["llm_client"]
+    client = config["configurable"].get("executor_client")
+    cap = state["config"]["policy"]["tool_iteration_cap"]
+
+    stages = dict(state["stages"])
+    stage = dict(stages[idx])
+    update: dict = {}
+
+    if module == "geom":
+        from salome_agent.specialists.geom import run_geom_specialist
+
+        result = run_geom_specialist(stage_plan, llm, client, cap)
+        stage["call_log"] = result.get("call_log")
+        if "result_names" in result:
+            stage["status"] = "ok"
+            stage["result_names"] = result["result_names"]
+            update["last_error"] = None
+        else:
+            stage["status"] = "failed"
+            update["last_error"] = result.get("last_error")
+    else:
+        from salome_agent.specialists.base import run_specialist
+
+        tools = {}
+        if client is not None:
+            tools = {
+                "api_introspect": lambda name: str(client.introspect([name])),
+                "list_study": lambda: str(client.list_study()),
+            }
+        result = run_specialist(stage_plan, llm, tools, cap)
+        stage["script"] = result["script"]
+
+    stages[idx] = stage
+    update["stages"] = stages
+    goto = route_after_run_stage({**state, "stages": stages})
+    return Command(update=update, goto=goto)
+
+
+def _verify_static_node(state: dict, config: "RunnableConfig"):
+    from langgraph.types import Command
+    from salome_agent.verify.introspect import build_api_map
+    from salome_agent.verify.static import check_static
+
+    idx = state["stage_idx"]
+    stage = state["stages"][idx]
+    client = config["configurable"].get("executor_client")
+    api_map = build_api_map(client)
+    err = check_static(stage["script"], api_map)
+    if err is None:
+        return Command(goto="verify_exec")
+
+    stages = dict(state["stages"])
+    stage = dict(stage)
+    stage["static_retries"] += 1
+    stages[idx] = stage
+    cap = state["config"]["policy"]["static_retries"]
+    goto = "run_stage" if stage["static_retries"] <= cap else "retry_gate"
+    return Command(update={"stages": stages, "last_error": err}, goto=goto)
+
+
+def _verify_exec_node(state: dict, config: "RunnableConfig"):
+    from langgraph.types import Command
+    from salome_agent.verify.exec_check import check_exec
+
+    idx = state["stage_idx"]
+    stage = state["stages"][idx]
+    client = config["configurable"]["executor_client"]
+    timeout = state["config"]["policy"]["exec_timeout_s"]
+    result = check_exec(stage["script"], stage["module"], client, timeout)
+
+    if result == "session_died":
+        return Command(goto="assemble")
+    if result is None:
+        return Command(goto=route_after_verify_exec(state))
+
+    stages = dict(state["stages"])
+    stage = dict(stage)
+    stage["exec_retries"] += 1
+    stages[idx] = stage
+    cap = state["config"]["policy"]["exec_retries"]
+    goto = "run_stage" if stage["exec_retries"] <= cap else "retry_gate"
+    return Command(update={"stages": stages, "last_error": result}, goto=goto)
+
+
+def _advance_node(state: dict):
+    from langgraph.types import Command
+    from salome_agent.nodes.advance import advance
+
+    idx = state["stage_idx"]
+    result_names = state["stages"][idx].get("result_names")
+    update = advance(state, result_names=result_names)
+    goto = "assemble" if update["stage_idx"] >= len(state["plan"]) else "run_stage"
+    return Command(update=update, goto=goto)
+
+
+def _skip_node(state: dict):
+    from langgraph.types import Command
+    from salome_agent.nodes.advance import skip
+
+    update = skip(state)
+    goto = "assemble" if update["stage_idx"] >= len(state["plan"]) else "run_stage"
+    return Command(update=update, goto=goto)
+
+
+def _assemble_node(state: dict):
+    from langgraph.types import Command
+    from salome_agent.nodes.assembler import assemble
+
+    return Command(update={"final_script": assemble(state)}, goto="report")
+
+
+def _report_node(state: dict):
+    import os
+
+    from langgraph.graph import END
+    from langgraph.types import Command
+    from salome_agent.nodes.report import write_report
+
+    report_text = write_report(state)
+    work_dir = os.path.expanduser(state["config"].get("work_dir") or ".")
+    run_dir = os.path.join(work_dir, state["run_id"] or "run")
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "result.py"), "w") as f:
+        f.write(state.get("final_script") or "")
+    with open(os.path.join(run_dir, "report.md"), "w") as f:
+        f.write(report_text)
+    return Command(update={"report": report_text}, goto=END)
+
+
 def build_graph(batch: bool):
     from langgraph.graph import StateGraph, START
     from langgraph.checkpoint.memory import MemorySaver
@@ -20,10 +179,15 @@ def build_graph(batch: bool):
     from salome_agent.nodes.gates import plan_gate, retry_gate
 
     g = StateGraph(RunState)
+    g.add_node("plan", _plan_node)
     g.add_node("plan_gate", plan_gate)
+    g.add_node("run_stage", _run_stage_node)
+    g.add_node("verify_static", _verify_static_node)
+    g.add_node("verify_exec", _verify_exec_node)
     g.add_node("retry_gate", retry_gate)
-    g.add_conditional_edges("run_stage", route_after_run_stage,
-                             {"advance": "advance", "retry_gate": "retry_gate",
-                              "verify_static": "verify_static"})
+    g.add_node("advance", _advance_node)
+    g.add_node("skip", _skip_node)
+    g.add_node("assemble", _assemble_node)
+    g.add_node("report", _report_node)
     g.add_edge(START, "plan")
     return g.compile(checkpointer=MemorySaver())
