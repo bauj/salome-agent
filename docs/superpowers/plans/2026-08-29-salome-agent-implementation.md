@@ -836,6 +836,7 @@ Expected: PASS (2 tests)
 - [ ] **Step 9: Write `salome_agent/session/manager.py`** (no dedicated test — thin orchestration over `discover_port`/`subprocess`/`ExecutorClient`, exercised by Task 13's CLI integration and the Task 14 end-to-end test)
 
 ```python
+import os
 import subprocess
 import time
 
@@ -844,8 +845,27 @@ from salome_agent.session.discovery import discover_port
 from salome_agent.state import SessionHandle
 
 
+def _salome_subprocess_env() -> dict:
+    # Two things confirmed by hands-on testing against a live SALOME
+    # install (2026-08-29, see executor/executor.py's test fixture):
+    # (1) subprocess.Popen's `env=` REPLACES the environment wholesale,
+    # never merges — passing a partial dict here would strip PATH/HOME/
+    # everything `salome shell` itself needs to run at all, not just add
+    # SALOME_PORT. Always start from a full os.environ.copy().
+    # (2) if this process's own venv is active, bare "python3" on PATH
+    # resolves to the venv's python (missing psutil, no SALOME sys.path)
+    # since venv/bin is prepended — must strip it out here.
+    env = os.environ.copy()
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep) if ".venv" not in p
+    )
+    env.pop("VIRTUAL_ENV", None)
+    return env
+
+
 class SessionManager:
-    def __init__(self, socket_dir: str = "/tmp"):
+    def __init__(self, salome_root: str, socket_dir: str = "/tmp"):
+        self.salome_bin = f"{salome_root}/salome"
         self.socket_dir = socket_dir
         self._proc: subprocess.Popen | None = None
 
@@ -856,19 +876,22 @@ class SessionManager:
 
         resolved_port = port or discover_port()
         socket_path = f"{self.socket_dir}/salome_agent_executor.sock"
+        env = _salome_subprocess_env()
 
         if resolved_port is not None:
+            env["SALOME_PORT"] = str(resolved_port)
             self._proc = subprocess.Popen(
-                ["salome", "shell", "--", "python3", "executor/executor.py",
+                [self.salome_bin, "shell", "--", "python3", "executor/executor.py",
                  "--socket", socket_path],
-                env={"SALOME_PORT": str(resolved_port)},
+                env=env,
             )
             client = self._wait_ready(socket_path)
             return {"mode": "attach", "port": resolved_port,
                     "executor_pid": self._proc.pid, "alive": True, "owned": False}, client
 
         self._proc = subprocess.Popen(
-            ["salome", "shell", "--", "python3", "executor/executor.py", "--socket", socket_path],
+            [self.salome_bin, "shell", "--", "python3", "executor/executor.py", "--socket", socket_path],
+            env=env,
         )
         client = self._wait_ready(socket_path)
         return {"mode": "launch", "port": None, "executor_pid": self._proc.pid,
@@ -1946,7 +1969,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.on_failure:
         config["policy"]["on_stage_failure"] = args.on_failure
 
-    manager = SessionManager()
+    manager = SessionManager(salome_root=config["salome"]["root"])
     session_handle, client = manager.resolve(args.no_session, args.port)
     try:
         graph = build_graph(batch=args.batch)
