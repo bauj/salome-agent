@@ -55,8 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     log.info("config: %s (salome root %s, llm %s)", args.config or "config.json",
              config["salome"]["root"], config["llm"].get("base_url"))
     if not args.batch:
-        log.warning("interactive plan/retry gates are not wired into the CLI yet - "
-                    "without --batch the run stops at the plan gate. Use --batch.")
+        log.info("interactive mode: you will be prompted to approve the plan "
+                 "and to handle stage failures (pass --batch to disable)")
 
     if args.no_session:
         log.info("session: --no-session (planner + specialists + static checks only)")
@@ -69,6 +69,9 @@ def main(argv: list[str] | None = None) -> int:
     if client is not None:
         log.info("session ready: mode=%s port=%s executor_pid=%s",
                  session_handle["mode"], session_handle["port"], session_handle["executor_pid"])
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex,
+                            "llm_client": build_llm(config),
+                            "executor_client": client}}
     try:
         graph = build_graph(batch=args.batch)
         final = graph.invoke({
@@ -77,15 +80,16 @@ def main(argv: list[str] | None = None) -> int:
             "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
             "study_ns": "salome_agent_run", "final_script": None, "report": None,
             "run_id": run_id,
-        }, config={"configurable": {"thread_id": uuid.uuid4().hex,
-                                     "llm_client": build_llm(config),
-                                     "executor_client": client}})
+        }, config=cfg)
+        if not args.batch:
+            from salome_agent.interactive import resume_interactive
+
+            final = resume_interactive(graph, final, cfg)
     finally:
         manager.stop()
 
     if final.get("__interrupt__"):
-        log.warning("run paused at an interactive gate and the CLI cannot resume it - "
-                    "re-run with --batch")
+        log.warning("run still paused at an interactive gate - aborting")
         return 1
 
     result_path = os.path.join(run_dir, "result.py")
