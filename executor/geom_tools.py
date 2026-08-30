@@ -114,12 +114,34 @@ TOOLS: dict[str, Callable] = {
     "list_study_objects": tool_list_study_objects,
 }
 
+# Per-tool arg coercion: LLM tool-call args arrive JSON-typed (numbers can
+# come back as strings, e.g. {"height": "40"}), but geompy does not coerce —
+# a string arg is interpreted as a notebook variable-name reference and
+# fails with a misleading RuntimeError ("Variable with name '20' doesn't
+# exist!!!"). Add an entry here when a new tool takes numeric args.
+ARG_TYPES: dict[str, dict[str, Callable]] = {
+    "make_box": {"dx": float, "dy": float, "dz": float},
+    "fillet_edges": {"radius": float},
+}
+
+
+def _coerce_args(name: str, args: dict) -> dict:
+    types = ARG_TYPES.get(name)
+    if not types:
+        return args
+    coerced = dict(args)
+    for key, cast in types.items():
+        if key in coerced:
+            coerced[key] = cast(coerced[key])
+    return coerced
+
 
 def call_tool(executor, name: str, args: dict) -> dict:
     handler = TOOLS.get(name)
     if handler is None:
         return {"ok": False, "error": f"unknown tool {name!r}"}
     try:
+        args = _coerce_args(name, args)
         return handler(executor, args)
     except Exception as e:
         return {"ok": False, "error": str(e)}
