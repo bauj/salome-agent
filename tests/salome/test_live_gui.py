@@ -6,6 +6,12 @@ attaches an executor with --live, publishes a box via a geom tool call, and
 asserts the shape landed in the shared study (proving setSSLMode(False) gave
 us the GUI's own engine, not a private one). Watch the GUI: the box should
 appear in the Object Browser.
+
+WARNING: attaching/detaching external SALOME clients to a live GUI session
+has crashed the session at least once (task 172, 2026-08-31 — no core, root
+cause not found). Run this against a GUI you can afford to lose, save your
+work first, and don't stack it on top of several prior --live-gui runs in
+the same session.
 """
 import json
 import os
@@ -68,7 +74,16 @@ def test_live_attach_shares_the_gui_study():
         study = _send(f, "list_study")
         names = [o["name"] for o in study["objects"]]
         assert "Geometry" in names
+
+        # Graceful shutdown: let the executor close its own CORBA connections
+        # and exit before we fall through to terminate(). A hard SIGTERM while
+        # it still holds handles to the live session is a suspected trigger
+        # for the session crash noted in the module docstring.
         _send(f, "shutdown")
-    finally:
-        proc.terminate()
+        f.close()
+        conn.close()
         proc.wait(timeout=15)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=15)
