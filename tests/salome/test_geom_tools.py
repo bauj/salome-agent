@@ -25,6 +25,21 @@ def test_make_box_returns_call_record_and_publishes(executor_conn):
 
 
 @pytest.mark.salome
+def test_make_box_coerces_string_args(executor_conn):
+    # Real LLM tool-call output can return numeric args as JSON strings
+    # (e.g. {"dx": "10"}) — geompy does not coerce these itself, it
+    # misinterprets a string as a notebook variable-name reference and
+    # fails with "Variable with name '10' doesn't exist!!!".
+    result = call_tool(executor_conn, "make_box", {"dx": "10", "dy": "10", "dz": "10"})
+    assert result["ok"] is True
+    assert result["records"][0]["args"] == [
+        {"kind": "literal", "value": 10.0},
+        {"kind": "literal", "value": 10.0},
+        {"kind": "literal", "value": 10.0},
+    ]
+
+
+@pytest.mark.salome
 def test_fillet_edges_sanity_failure_does_not_publish(executor_conn):
     call_tool(executor_conn, "make_box", {"dx": 1, "dy": 1, "dz": 1})
     # A fillet radius larger than the box's edges is geometrically invalid —
