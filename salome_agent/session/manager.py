@@ -36,10 +36,14 @@ class SessionManager:
         self._socket_path: str | None = None
         self._logfile = None
 
-    def resolve(self, no_session: bool, port: int | None) -> tuple[SessionHandle, ExecutorClient | None]:
+    def resolve(self, no_session: bool, port: int | None,
+                live_gui: bool = False) -> tuple[SessionHandle, ExecutorClient | None]:
         if no_session:
             return {"mode": "none", "port": None, "executor_pid": None,
                     "alive": False, "owned": False}, None
+
+        if live_gui:
+            return self._resolve_live(port)
 
         resolved_port = port or discover_port()
         # A fixed socket path collides across concurrent/crashed runs (a
@@ -73,6 +77,34 @@ class SessionManager:
         client = self._wait_ready(socket_path)
         return {"mode": "launch", "port": None, "executor_pid": self._proc.pid,
                 "alive": True, "owned": True}, client
+
+    def _resolve_live(self, port: int | None) -> tuple[SessionHandle, ExecutorClient]:
+        resolved_port = port or discover_port()
+        if resolved_port is None:
+            raise RuntimeError(
+                "no running SALOME session found (no omniORB config in /tmp)")
+
+        socket_path = f"{self.socket_dir}/salome_agent_executor_{uuid.uuid4().hex}.sock"
+        self._socket_path = socket_path
+        env = _salome_subprocess_env()
+
+        out = err = None
+        if self.executor_log is not None:
+            self._logfile = open(self.executor_log, "w")
+            out = err = self._logfile
+
+        # `salome remote` (not `salome shell`) is the only launcher that
+        # attaches to a live multi-process GUI session; the executor then
+        # calls KernelBasis.setSSLMode(False) under --live so geomBuilder.New()
+        # returns the GUI's own engine instead of a private one.
+        self._proc = subprocess.Popen(
+            [self.salome_bin, "remote", "-p", str(resolved_port), "--",
+             "python3", "executor/executor.py", "--socket", socket_path, "--live"],
+            env=env, stdout=out, stderr=err,
+        )
+        client = self._wait_ready(socket_path)
+        return {"mode": "live", "port": resolved_port, "executor_pid": self._proc.pid,
+                "alive": True, "owned": False}, client
 
     def _wait_ready(self, socket_path: str, timeout: float = 30) -> ExecutorClient:
         deadline = time.time() + timeout

@@ -5,7 +5,7 @@ from salome_agent.executor_client import SessionDied
 
 def check_exec(script: str, module: str, client, timeout: float) -> dict | Literal["session_died"] | None:
     try:
-        run_result = client.run(script, timeout)
+        run_result = client.run(script, timeout, module=module.upper())
     except SessionDied:
         return "session_died"
 

@@ -110,11 +110,11 @@ salome-agent "make a 10mm cube" --batch
 
 The agent will:
 
-1. Start an executor inside SALOME via `salome shell`. This is **always an isolated,
+1. Start an executor inside SALOME via `salome shell`. By default this is an **isolated,
    standalone study** — even if you have a SALOME GUI running, the executor does not
    touch it and objects do not appear in that GUI. (`--port` only picks which omniORB
-   port to hand `salome shell`; it does not change the isolation.) Driving a live GUI
-   session is a separate, not-yet-built mode.
+   port to hand `salome shell`; it does not change the isolation.) To instead publish
+   into an open GUI as the run progresses, use `--live-gui` (see below).
 2. Plan the stages, run each specialist, verify, and assemble — progress is logged to
    stderr as it goes (`planning...`, `stage 1/2 [geom] ...`, `static check: ok`,
    `exec check: ok`, ...). Add `-v` / `--verbose` for per-LLM-call and per-retry detail.
@@ -137,13 +137,43 @@ Run the result on its own, with no agent involved:
 | Flag | Meaning |
 |------|---------|
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
-| `--no-session` | Planner + specialists + static checks only. No live SALOME session, no exec verification. smesh/paravis only (geom needs a live session). |
-| `--port N` | Hand `salome shell` the omniORB port `N` instead of auto-discovering it. Still an isolated study — not live-session injection. |
+| `--no-session` | Planner + specialists + static checks only. No live SALOME session, no exec verification. smesh/paravis only (geom needs a live session). Mutually exclusive with `--live-gui`. |
+| `--live-gui` | Attach to an already-open SALOME GUI and publish into its study as stages run — objects appear in the Object Browser and 3D viewer live. Requires the GUI to have been launched with `salome withsession` (see below). Mutually exclusive with `--no-session`. |
+| `--port N` | Hand the executor the omniORB port `N` instead of auto-discovering it (applies to both the default isolated mode and `--live-gui`). |
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--timeout SECONDS` | Override per-stage exec timeout. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. |
+
+### Live GUI mode (`--live-gui`)
+
+Publishes each stage's objects into a SALOME GUI you already have open, so they show
+up in the Object Browser and 3D viewer as the run progresses (instead of an isolated
+study you never see).
+
+**Prerequisite — launch the GUI with a real session:**
+
+```bash
+/storage/salome_platform/devel/SALOME-master-native-FD44/salome withsession
+```
+
+A plain `salome` GUI runs single-process with an in-process naming service that
+nothing external can attach to — `--live-gui` will fail with a clear message telling
+you to relaunch. With `withsession` the agent auto-discovers the running port
+(`--port N` overrides), attaches the executor via `salome remote`, and calls
+`KernelBasis.setSSLMode(False)` so it shares the GUI's own engine.
+
+```bash
+salome-agent "make a 20mm cube and mesh it with 5mm tets" --live-gui --batch
+```
+
+After a geom stage, the GEOM module is loaded and connected to the study so its tree
+and shapes are visible; the Object Browser is refreshed after every publish.
+
+**Caveat:** hovering the mouse over a *freshly externally-published* Object Browser
+entry has been seen to crash the session once. Click to select is fine; avoid
+hovering brand-new entries until the run finishes.
 
 ### Interactive mode
 
@@ -197,11 +227,10 @@ docs/superpowers/   design spec (rev 6) + implementation plan
 
 ## Known limitations
 
-- **Live GUI mode is incoming** — running stages against an already-open SALOME GUI so
-  objects appear in the Object Browser / 3D viewer as the run progresses. Not built yet;
-  today every run uses an isolated study.
-- Only proven end to end for a single geom stage against a real LLM. Multi-stage
-  (geom → smesh) against a real LLM is untested.
+- **`--live-gui` is new and lightly tested** — the attach path and per-publish refresh
+  work, but it has not been run against a long multi-stage session in a live GUI, and
+  rollback-retry (`reset_and_replay`) re-runs scripts against the live study, which can
+  leave duplicate objects. Use it for demos, not unattended production runs yet.
 - `verify/toplevel_api.json` (the `--no-session` static-check fixture) still holds
   placeholder API member lists — not regenerated from a live `introspect()`.
 - geom tool registry covers `make_box`, `fillet_edges`, `check_shape`,

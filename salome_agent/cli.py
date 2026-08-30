@@ -6,7 +6,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="salome-agent")
     parser.add_argument("request")
     parser.add_argument("--batch", action="store_true")
-    parser.add_argument("--no-session", action="store_true")
+    session_mode = parser.add_mutually_exclusive_group()
+    session_mode.add_argument("--no-session", action="store_true")
+    session_mode.add_argument("--live-gui", action="store_true",
+                              help="attach to an already-open SALOME GUI (launched with "
+                                   "`salome withsession`) so objects appear as stages run")
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--work-dir", default=None)
     parser.add_argument("--config", default=None)
@@ -60,12 +64,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.no_session:
         log.info("session: --no-session (planner + specialists + static checks only)")
+    elif args.live_gui:
+        log.info("session: --live-gui (attaching to your open SALOME GUI; objects will "
+                 "appear in the Object Browser and 3D viewer as stages run)")
     else:
         log.info("session: starting executor inside SALOME (isolated study, this "
                  "takes ~10-20s; SALOME output goes to executor.log)")
 
     manager = SessionManager(salome_root=config["salome"]["root"], executor_log=executor_log)
-    session_handle, client = manager.resolve(args.no_session, args.port)
+    try:
+        session_handle, client = manager.resolve(args.no_session, args.port,
+                                                 live_gui=args.live_gui)
+    except (RuntimeError, TimeoutError) as e:
+        manager.stop()
+        log.error("could not attach to a live SALOME GUI: %s", e)
+        log.error("launch your GUI with `%s withsession` (a plain `salome` GUI has no "
+                  "attachable session), then retry.", config["salome"]["root"] + "/salome")
+        return 1
     if client is not None:
         log.info("session ready: mode=%s port=%s executor_pid=%s",
                  session_handle["mode"], session_handle["port"], session_handle["executor_pid"])
