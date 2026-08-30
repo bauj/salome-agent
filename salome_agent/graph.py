@@ -26,7 +26,7 @@ def route_after_verify_exec(state: dict, session_died: bool = False) -> str:
 
 def _plan_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
-    from salome_agent.nodes.planner import plan
+    from salome_agent.nodes.planner import blank_stages, plan
 
     llm = config["configurable"]["llm_client"]
     log.info("planning...")
@@ -35,12 +35,8 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     for i, p in enumerate(stage_plans):
         log.info("  stage %d/%d [%s] %s", i + 1, len(stage_plans), p["module"],
                  p.get("intent", ""))
-    stages = {
-        i: {"module": p["module"], "status": "pending", "script": None,
-            "call_log": None, "static_retries": 0, "exec_retries": 0}
-        for i, p in enumerate(stage_plans)
-    }
-    return Command(update={"plan": stage_plans, "stages": stages, "stage_idx": 0},
+    return Command(update={"plan": stage_plans, "stages": blank_stages(stage_plans),
+                           "stage_idx": 0},
                    goto="plan_gate")
 
 

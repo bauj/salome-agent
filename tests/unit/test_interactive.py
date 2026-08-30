@@ -29,6 +29,19 @@ def test_prompt_plan_reasks_on_garbage():
     assert d == {"action": "approve"}
 
 
+def test_prompt_plan_edit_returns_edited_plan():
+    new = [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]
+    d = prompt_plan({"plan": [{"module": "smesh"}]}, read=_reader(["e"]),
+                    stream=io.StringIO(), edit_fn=lambda _p: new)
+    assert d == {"action": "edit", "plan": new}
+
+
+def test_prompt_plan_edit_cancelled_falls_back_to_reask():
+    d = prompt_plan({"plan": []}, read=_reader(["e", "y"]), stream=io.StringIO(),
+                    edit_fn=lambda _p: None)
+    assert d == {"action": "approve"}
+
+
 def test_prompt_retry_hint():
     d = prompt_retry({"last_error": {"message": "boom"}},
                      read=_reader(["h", "use MakeBoxDXDYDZ"]), stream=io.StringIO())
@@ -80,6 +93,20 @@ def test_resume_interactive_plan_then_retry_then_done():
                               read=_reader(["y", "s"]), stream=io.StringIO())
     assert final == {"report": "ok"}
     assert len(graph.resumes) == 2
+
+
+def test_resume_interactive_edit_then_approve():
+    edited = [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]
+    first = {"__interrupt__": (_FakeInterrupt({"plan": [{"module": "smesh"}]}),)}
+    graph = _FakeGraph([
+        {"__interrupt__": (_FakeInterrupt({"plan": edited}),)},  # gate re-prompts
+        {"report": "ok"},
+    ])
+    final = resume_interactive(graph, first, {"configurable": {}},
+                              read=_reader(["e", "y"]), stream=io.StringIO(),
+                              edit_fn=lambda _p: edited)
+    assert final == {"report": "ok"}
+    assert graph.resumes[0].resume == {"action": "edit", "plan": edited}
 
 
 def test_resume_interactive_no_interrupt_is_passthrough():

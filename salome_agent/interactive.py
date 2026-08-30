@@ -1,6 +1,41 @@
+import json
+import os
+import subprocess
 import sys
+import tempfile
 
 from salome_agent.logs import log
+
+_PLAN_KEYS = ("module", "intent", "params", "inputs")
+
+
+def _edit_plan_in_editor(plan):
+    """Round-trip the plan through $EDITOR as JSON. Returns the parsed new
+    plan, or None if the editor is unavailable or the result is unusable."""
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
+    if not editor:
+        return None
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(list(plan), fh, indent=2)
+        path = fh.name
+    try:
+        if subprocess.call([editor, path]) != 0:
+            return None
+        with open(path) as fh:
+            edited = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.unlink(path)
+    if not isinstance(edited, list) or not edited:
+        return None
+    for stage in edited:
+        if not isinstance(stage, dict) or stage.get("module") not in ("geom", "smesh", "paravis"):
+            return None
+        stage.setdefault("intent", "")
+        stage.setdefault("params", {})
+        stage.setdefault("inputs", [])
+    return edited
 
 
 def _render_plan(payload, stream):
@@ -10,14 +45,22 @@ def _render_plan(payload, stream):
     stream.flush()
 
 
-def prompt_plan(payload, read=input, stream=sys.stderr):
-    _render_plan(payload, stream)
+def prompt_plan(payload, read=input, stream=sys.stderr, edit_fn=_edit_plan_in_editor):
+    plan = payload.get("plan") or []
     while True:
-        ans = read("approve plan? [Y]es / [n]o abort: ").strip().lower()
+        _render_plan({"plan": plan}, stream)
+        ans = read("approve plan? [Y]es / [e]dit / [n]o abort: ").strip().lower()
         if ans in ("", "y", "yes", "approve"):
             return {"action": "approve"}
         if ans in ("n", "no", "abort", "q"):
             return {"action": "abort"}
+        if ans in ("e", "edit"):
+            edited = edit_fn(plan)
+            if edited is None:
+                stream.write("edit cancelled or unusable (need $EDITOR set, valid JSON, "
+                             "module in geom|smesh|paravis)\n")
+                continue
+            return {"action": "edit", "plan": edited}
 
 
 def prompt_retry(payload, read=input, stream=sys.stderr):
@@ -41,7 +84,8 @@ def prompt_retry(payload, read=input, stream=sys.stderr):
         return {"action": "abort"}
 
 
-def resume_interactive(graph, first_result, cfg, read=input, stream=sys.stderr):
+def resume_interactive(graph, first_result, cfg, read=input, stream=sys.stderr,
+                       edit_fn=_edit_plan_in_editor):
     from langgraph.types import Command
 
     result = first_result
@@ -49,7 +93,7 @@ def resume_interactive(graph, first_result, cfg, read=input, stream=sys.stderr):
         payload = result["__interrupt__"][0].value
         try:
             if "plan" in payload:
-                decision = prompt_plan(payload, read, stream)
+                decision = prompt_plan(payload, read, stream, edit_fn)
             elif "last_error" in payload:
                 decision = prompt_retry(payload, read, stream)
             else:
