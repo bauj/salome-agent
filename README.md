@@ -124,6 +124,8 @@ The agent will:
    - `executor.log` — raw SALOME/paraview startup noise from the executor subprocess
      (this is where all that `vtkSocket ... Connection refused` chatter goes now,
      instead of your terminal)
+   - `gui.log` — only with `--live-gui` when the agent launched the GUI itself:
+     `salome withsession` startup output
 
 Run the result on its own, with no agent involved:
 
@@ -138,7 +140,7 @@ Run the result on its own, with no agent involved:
 |------|---------|
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
 | `--no-session` | Planner + specialists + static checks only. No live SALOME session, no exec verification. smesh/paravis only (geom needs a live session). Mutually exclusive with `--live-gui`. |
-| `--live-gui` | Attach to an already-open SALOME GUI and publish into its study as stages run — objects appear in the Object Browser and 3D viewer live. Requires the GUI to have been launched with `salome withsession` (see below). Mutually exclusive with `--no-session`. |
+| `--live-gui` | Publish into a live SALOME GUI as stages run — objects appear in the Object Browser and 3D viewer. Attaches to a running `salome withsession` GUI, or launches one for you and leaves it open (see below). Mutually exclusive with `--no-session`. |
 | `--port N` | Hand the executor the omniORB port `N` instead of auto-discovering it (applies to both the default isolated mode and `--live-gui`). |
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
@@ -148,25 +150,23 @@ Run the result on its own, with no agent involved:
 
 ### Live GUI mode (`--live-gui`)
 
-Publishes each stage's objects into a SALOME GUI you already have open, so they show
-up in the Object Browser and 3D viewer as the run progresses (instead of an isolated
-study you never see).
-
-**Prerequisite — launch the GUI with a real session:**
-
-```bash
-/storage/salome_platform/devel/SALOME-master-native-FD44/salome withsession
-```
-
-A plain `salome` GUI runs single-process with an in-process naming service that
-nothing external can attach to — `--live-gui` will fail with a clear message telling
-you to relaunch. With `withsession` the agent auto-discovers the running port
-(`--port N` overrides), attaches the executor via `salome remote`, and calls
-`KernelBasis.setSSLMode(False)` so it shares the GUI's own engine.
+Publishes each stage's objects into a live SALOME GUI, so they show up in the Object
+Browser and 3D viewer as the run progresses (instead of an isolated study you never
+see).
 
 ```bash
 salome-agent "make a 20mm cube and mesh it with 5mm tets" --live-gui --batch
 ```
+
+- **If a `salome withsession` GUI is already running**, the agent discovers its port
+  (`--port N` overrides), attaches the executor via `salome remote`, and calls
+  `KernelBasis.setSSLMode(False)` so it shares the GUI's own engine.
+- **If nothing is running**, the agent launches `salome withsession -g` for you
+  (~30-60s first time; on Wayland it sets `QT_QPA_PLATFORM=xcb` automatically) and
+  leaves the window open after the run — the next `--live-gui` run reattaches to it.
+
+A plain `salome` GUI (single-process, in-process naming service) cannot be attached
+to; the agent only ever launches / attaches `withsession`.
 
 After a geom stage, the GEOM module is loaded and connected to the study so its tree
 and shapes are visible; the Object Browser is refreshed after every publish.
@@ -177,8 +177,7 @@ and shapes are visible; the Object Browser is refreshed after every publish.
   crashed the session. Click to select is fine; don't hover brand-new entries mid-run.
 - Repeated attach/detach cycles (several `--live-gui` runs, or the
   `tests/salome/test_live_gui.py` test, against one long-lived GUI) have also brought
-  the session down once, with no core dump and no identified root cause (task 172,
-  2026-08-31).
+  the session down once, with no core dump and no identified root cause (task 181).
 
 Save your work before a `--live-gui` run, and treat the mode as demo/interactive
 only — not for unattended batches.

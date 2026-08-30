@@ -28,13 +28,16 @@ def _salome_subprocess_env() -> dict:
 
 class SessionManager:
     def __init__(self, salome_root: str, socket_dir: str = "/tmp",
-                 executor_log: str | None = None):
+                 executor_log: str | None = None, gui_log: str | None = None):
         self.salome_bin = f"{salome_root}/salome"
         self.socket_dir = socket_dir
         self.executor_log = executor_log
+        self.gui_log = gui_log
         self._proc: subprocess.Popen | None = None
+        self._gui_proc: subprocess.Popen | None = None
         self._socket_path: str | None = None
         self._logfile = None
+        self._gui_logfile = None
 
     def resolve(self, no_session: bool, port: int | None,
                 live_gui: bool = False) -> tuple[SessionHandle, ExecutorClient | None]:
@@ -80,9 +83,10 @@ class SessionManager:
 
     def _resolve_live(self, port: int | None) -> tuple[SessionHandle, ExecutorClient]:
         resolved_port = port or discover_port()
+        owned_gui = False
         if resolved_port is None:
-            raise RuntimeError(
-                "no running SALOME session found (no omniORB config in /tmp)")
+            resolved_port = self._launch_gui()
+            owned_gui = True
 
         socket_path = f"{self.socket_dir}/salome_agent_executor_{uuid.uuid4().hex}.sock"
         self._socket_path = socket_path
@@ -104,7 +108,40 @@ class SessionManager:
         )
         client = self._wait_ready(socket_path)
         return {"mode": "live", "port": resolved_port, "executor_pid": self._proc.pid,
-                "alive": True, "owned": False}, client
+                "alive": True, "owned": owned_gui}, client
+
+    def _launch_gui(self, timeout: float = 120) -> int:
+        env = _salome_subprocess_env()
+        # SALOME's Qt UI does not run under a native Wayland session on this
+        # box; the user sets this by hand. Match that when we launch for them.
+        if os.environ.get("WAYLAND_DISPLAY") and not env.get("QT_QPA_PLATFORM"):
+            env["QT_QPA_PLATFORM"] = "xcb"
+
+        out = err = subprocess.DEVNULL
+        if self.gui_log is not None:
+            self._gui_logfile = open(self.gui_log, "w")
+            out = err = self._gui_logfile
+
+        # `withsession` (not the default single-process `start`) is the only
+        # mode that spawns real CORBA servers an external client can attach
+        # to. Detached (start_new_session) so it outlives this run — the user
+        # keeps the window and its objects after the agent exits.
+        self._gui_proc = subprocess.Popen(
+            [self.salome_bin, "withsession", "-g"],
+            env=env, stdout=out, stderr=err, start_new_session=True,
+        )
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            p = discover_port()
+            if p is not None:
+                return p
+            if self._gui_proc.poll() is not None:
+                raise RuntimeError(
+                    f"`salome withsession` exited (code {self._gui_proc.returncode}) "
+                    f"before a session came up"
+                    + (f"; see {self.gui_log}" if self.gui_log else ""))
+            time.sleep(1.0)
+        raise TimeoutError(f"SALOME GUI did not come up within {timeout:.0f}s")
 
     def _wait_ready(self, socket_path: str, timeout: float = 30) -> ExecutorClient:
         deadline = time.time() + timeout
@@ -129,3 +166,8 @@ class SessionManager:
         if self._logfile is not None:
             self._logfile.close()
             self._logfile = None
+        # A GUI we launched is deliberately left running (detached) so the
+        # user keeps the window; only release our file handle to its log.
+        if self._gui_logfile is not None:
+            self._gui_logfile.close()
+            self._gui_logfile = None
