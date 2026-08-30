@@ -31,8 +31,8 @@ class ExecutorClient:
             raise SessionDied(f"executor socket write failed: {e}") from e
         return self._recv()
 
-    def run(self, code: str, timeout: float) -> dict:
-        return self._call("run", code=code, timeout=timeout)
+    def run(self, code: str, timeout: float, module: str | None = None) -> dict:
+        return self._call("run", code=code, timeout=timeout, module=module)
 
     def reset_and_replay(self, scripts: list[str]) -> dict:
         return self._call("reset_and_replay", scripts=scripts)

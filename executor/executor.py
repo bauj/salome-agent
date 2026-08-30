@@ -84,13 +84,20 @@ def _find_object(name: str):
     return result
 
 
-def build_namespace() -> dict:
+def build_namespace(live: bool = False) -> dict:
     # Real import convention for this SALOME build, confirmed by manual
     # testing 2026-08-29 — NOT `import salome; import geompy; import smesh`
     # as earlier spec drafts assumed. `geompy`/`smesh`/`salome` are still
     # bound under those exact names below, so stage scripts and the static
     # checker (verify/static.py's TOPLEVEL_MODULES) see the same bare
     # top-level names either way.
+    if live:
+        # The one line that makes geomBuilder.New() etc. return the SAME
+        # engine instance as the already-open GUI, instead of a private
+        # disconnected one. Must run BEFORE salome_init(). Confirmed the
+        # entire fix by the task-172 patch matrix (2026-08-30).
+        from salome.kernel import KernelBasis
+        KernelBasis.setSSLMode(False)
     from salome.kernel import salome
     salome.salome_init()
     from salome.geom import geomBuilder
@@ -110,25 +117,48 @@ def build_namespace() -> dict:
 
 
 class Executor:
-    def __init__(self, socket_path: str):
+    def __init__(self, socket_path: str, live: bool = False):
         self.socket_path = socket_path
-        self.namespace = build_namespace()
+        self.live = live
+        self.namespace = build_namespace(live)
         self.accepted_scripts: list[str] = []
         self.geom_bindings: dict[str, object] = {}  # filled in by geom_tools.py
+
+    def _emit_refresh(self, module: str | None) -> None:
+        # Push a live GUI update after something was published. No-op unless
+        # attached to a real GUI (--live). Best-effort: a refresh failure
+        # must never fail the stage. `register_module_in_study/<M>` loads the
+        # module + connects it to the study so its tree/shapes become visible;
+        # `updateObjBrowser` redraws. Both run on the GUI's own Qt thread
+        # (LightApp_Application::onDesktopMessage).
+        if not self.live:
+            return
+        try:
+            salome = self.namespace["salome"]
+            from salome.kernel import SALOME_CMOD
+            sess = salome.naming_service.Resolve("/Kernel/Session")._narrow(SALOME_CMOD.Session)
+            if module:
+                sess.emitMessageOneWay(f"register_module_in_study/{module}")
+            sess.emitMessageOneWay("updateObjBrowser")
+        except Exception as e:
+            print(f"[executor] live GUI refresh failed: {e}", file=sys.stderr)
 
     def handle(self, req: dict) -> dict:
         cmd = req["cmd"]
         if cmd == "run":
             r = _run_with_timeout(req["code"], self.namespace, req["timeout"])
+            if r["ok"]:
+                self._emit_refresh(req.get("module"))
             return {"id": req["id"], **r}
         if cmd == "reset_and_replay":
-            self.namespace = build_namespace()
+            self.namespace = build_namespace(self.live)
             self.geom_bindings.clear()
             for idx, script in enumerate(req["scripts"]):
                 r = _run_with_timeout(script, self.namespace, req.get("timeout", 120))
                 if not r["ok"]:
                     return {"id": req["id"], "ok": False, "failed_index": idx}
             self.accepted_scripts = list(req["scripts"])
+            self._emit_refresh(None)
             return {"id": req["id"], "ok": True, "failed_index": None}
         if cmd == "introspect":
             out = {}
@@ -152,6 +182,8 @@ class Executor:
             return {"id": req["id"], "tools": geom_tools.list_tools()}
         if cmd == "call_tool":
             result = geom_tools.call_tool(self, req["name"], req["args"])
+            if result.get("ok"):
+                self._emit_refresh("GEOM")
             return {"id": req["id"], **result}
         if cmd == "shutdown":
             return {"id": req["id"], "ok": True}
@@ -177,5 +209,8 @@ class Executor:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", required=True)
+    parser.add_argument("--live", action="store_true",
+                        help="attach to a running GUI session (setSSLMode(False)) and "
+                             "push Object Browser refreshes after each publish")
     args = parser.parse_args()
-    Executor(args.socket).serve()
+    Executor(args.socket, live=args.live).serve()

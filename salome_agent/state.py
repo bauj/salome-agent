@@ -26,7 +26,7 @@ class StageRecord(TypedDict):
 
 
 class SessionHandle(TypedDict):
-    mode: Literal["attach", "launch", "none"]
+    mode: Literal["attach", "launch", "live", "none"]
     port: Optional[int]
     executor_pid: Optional[int]
     alive: bool
