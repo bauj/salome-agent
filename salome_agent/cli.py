@@ -52,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     run_dir = os.path.join(work_dir, run_id)
     os.makedirs(run_dir, exist_ok=True)
     executor_log = os.path.join(run_dir, "executor.log")
+    gui_log = os.path.join(run_dir, "gui.log")
 
     log.info("run %s", run_id)
     log.info("request: %s", args.request)
@@ -65,21 +66,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_session:
         log.info("session: --no-session (planner + specialists + static checks only)")
     elif args.live_gui:
-        log.info("session: --live-gui (attaching to your open SALOME GUI; objects will "
-                 "appear in the Object Browser and 3D viewer as stages run)")
+        log.info("session: --live-gui (objects appear in the Object Browser and 3D "
+                 "viewer as stages run; attaches to a running `salome withsession` GUI "
+                 "or launches one for you — the window stays open afterward)")
     else:
         log.info("session: starting executor inside SALOME (isolated study, this "
                  "takes ~10-20s; SALOME output goes to executor.log)")
 
-    manager = SessionManager(salome_root=config["salome"]["root"], executor_log=executor_log)
+    manager = SessionManager(salome_root=config["salome"]["root"], executor_log=executor_log,
+                             gui_log=gui_log)
     try:
         session_handle, client = manager.resolve(args.no_session, args.port,
                                                  live_gui=args.live_gui)
     except (RuntimeError, TimeoutError) as e:
         manager.stop()
-        log.error("could not attach to a live SALOME GUI: %s", e)
-        log.error("launch your GUI with `%s withsession` (a plain `salome` GUI has no "
-                  "attachable session), then retry.", config["salome"]["root"] + "/salome")
+        log.error("live GUI session unavailable: %s", e)
+        log.error("try launching it yourself: `%s/salome withsession` (on Wayland, "
+                  "prefix QT_QPA_PLATFORM=xcb), then retry.", config["salome"]["root"])
         return 1
     if client is not None:
         log.info("session ready: mode=%s port=%s executor_pid=%s",
