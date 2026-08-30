@@ -88,30 +88,50 @@ class SessionManager:
             resolved_port = self._launch_gui()
             owned_gui = True
 
-        socket_path = f"{self.socket_dir}/salome_agent_executor_{uuid.uuid4().hex}.sock"
-        self._socket_path = socket_path
         env = _salome_subprocess_env()
-
-        out = err = None
         if self.executor_log is not None:
             self._logfile = open(self.executor_log, "w")
-            out = err = self._logfile
 
-        # `salome remote` (not `salome shell`) is the only launcher that
-        # attaches to a live multi-process GUI session; the executor then
-        # calls KernelBasis.setSSLMode(False) under --live so geomBuilder.New()
-        # returns the GUI's own engine instead of a private one.
-        self._proc = subprocess.Popen(
-            [self.salome_bin, "remote", "-p", str(resolved_port), "--",
-             "python3", "executor/executor.py", "--socket", socket_path, "--live"],
-            env=env, stdout=out, stderr=err,
-        )
-        # Longer than the default: under --live the executor may retry
-        # salome_init() for up to ~30s while a freshly launched GUI's
-        # ModuleCatalog / Container servers finish registering.
-        client = self._wait_ready(socket_path, timeout=90)
-        return {"mode": "live", "port": resolved_port, "executor_pid": self._proc.pid,
-                "alive": True, "owned": owned_gui}, client
+        # A freshly launched GUI registers its naming service seconds before
+        # the ModuleCatalog / Container servers, so the executor's salome_init()
+        # can fail — and it can't be retried in-process (sticky globals). Each
+        # attempt is therefore a fresh executor process. An already-running
+        # session succeeds on the first try.
+        attempts = 8 if owned_gui else 2
+        last_err: Exception | None = None
+        for i in range(attempts):
+            socket_path = f"{self.socket_dir}/salome_agent_executor_{uuid.uuid4().hex}.sock"
+            self._socket_path = socket_path
+            out = err = self._logfile or None
+            self._proc = subprocess.Popen(
+                [self.salome_bin, "remote", "-p", str(resolved_port), "--",
+                 "python3", "executor/executor.py", "--socket", socket_path, "--live"],
+                env=env, stdout=out, stderr=err,
+            )
+            try:
+                client = self._wait_ready(socket_path, timeout=25)
+                return {"mode": "live", "port": resolved_port,
+                        "executor_pid": self._proc.pid, "alive": True,
+                        "owned": owned_gui}, client
+            except (RuntimeError, TimeoutError) as e:
+                last_err = e
+                self._kill_proc()
+                if i < attempts - 1:
+                    time.sleep(4)
+        raise RuntimeError(f"executor never attached to the live session: {last_err}")
+
+    def _kill_proc(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+        if self._socket_path is not None:
+            try:
+                os.unlink(self._socket_path)
+            except FileNotFoundError:
+                pass
 
     def _launch_gui(self, timeout: float = 120) -> int:
         env = _salome_subprocess_env()
@@ -137,6 +157,10 @@ class SessionManager:
         while time.time() < deadline:
             p = discover_port()
             if p is not None:
+                # The port file appears well before the CORBA servers finish
+                # registering; give them a head start so the executor's first
+                # attach has a chance (it is retried regardless).
+                time.sleep(5)
                 return p
             if self._gui_proc.poll() is not None:
                 raise RuntimeError(
