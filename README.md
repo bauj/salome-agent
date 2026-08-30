@@ -171,9 +171,17 @@ salome-agent "make a 20mm cube and mesh it with 5mm tets" --live-gui --batch
 After a geom stage, the GEOM module is loaded and connected to the study so its tree
 and shapes are visible; the Object Browser is refreshed after every publish.
 
-**Caveat:** hovering the mouse over a *freshly externally-published* Object Browser
-entry has been seen to crash the session once. Click to select is fine; avoid
-hovering brand-new entries until the run finishes.
+**Caveats — this mode can crash your SALOME session:**
+
+- Hovering the mouse over a *freshly externally-published* Object Browser entry has
+  crashed the session. Click to select is fine; don't hover brand-new entries mid-run.
+- Repeated attach/detach cycles (several `--live-gui` runs, or the
+  `tests/salome/test_live_gui.py` test, against one long-lived GUI) have also brought
+  the session down once, with no core dump and no identified root cause (task 172,
+  2026-08-31).
+
+Save your work before a `--live-gui` run, and treat the mode as demo/interactive
+only — not for unattended batches.
 
 ### Interactive mode
 
@@ -228,9 +236,10 @@ docs/superpowers/   design spec (rev 6) + implementation plan
 ## Known limitations
 
 - **`--live-gui` is new and lightly tested** — the attach path and per-publish refresh
-  work, but it has not been run against a long multi-stage session in a live GUI, and
-  rollback-retry (`reset_and_replay`) re-runs scripts against the live study, which can
-  leave duplicate objects. Use it for demos, not unattended production runs yet.
+  work (verified live for geom and geom → smesh), but attaching external clients to a
+  live GUI has crashed the session at least once (no root cause yet), and rollback-retry
+  (`reset_and_replay`) re-runs scripts against the live study, which can leave duplicate
+  objects. Demos only; save your work first.
 - `verify/toplevel_api.json` (the `--no-session` static-check fixture) still holds
   placeholder API member lists — not regenerated from a live `introspect()`.
 - geom tool registry covers `make_box`, `fillet_edges`, `check_shape`,
