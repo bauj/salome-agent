@@ -124,6 +124,40 @@ ARG_TYPES: dict[str, dict[str, Callable]] = {
     "fillet_edges": {"radius": float},
 }
 
+# JSON Schema per tool, sent to the LLM as each function's "parameters" so
+# it knows argument names/types/required-ness. Without this the LLM has to
+# guess shapes — real bug found live: it returned a numeric-looking string
+# for a param that needed to stay a list, and codegen silently mis-iterated
+# over the string's characters instead of erroring.
+TOOL_SCHEMAS: dict[str, dict] = {
+    "make_box": {
+        "type": "object",
+        "properties": {
+            "dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"},
+        },
+        "required": ["dx", "dy", "dz"],
+    },
+    "fillet_edges": {
+        "type": "object",
+        "properties": {
+            "shape": {"type": "string", "description": "published name of the shape to fillet"},
+            "edges": {
+                "description": "\"all\" or a list of edge subshape indices",
+                "oneOf": [{"type": "string", "enum": ["all"]},
+                          {"type": "array", "items": {"type": "integer"}}],
+            },
+            "radius": {"type": "number"},
+        },
+        "required": ["shape", "edges", "radius"],
+    },
+    "check_shape": {
+        "type": "object",
+        "properties": {"shape": {"type": "string"}},
+        "required": ["shape"],
+    },
+    "list_study_objects": {"type": "object", "properties": {}},
+}
+
 
 def _coerce_args(name: str, args: dict) -> dict:
     types = ARG_TYPES.get(name)
@@ -148,4 +182,5 @@ def call_tool(executor, name: str, args: dict) -> dict:
 
 
 def list_tools() -> list[dict]:
-    return [{"name": n} for n in TOOLS]
+    return [{"name": n, "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}})}
+            for n in TOOLS]
