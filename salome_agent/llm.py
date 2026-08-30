@@ -14,12 +14,18 @@ class LLMClient:
         self.model = model
         self.temperature = temperature
 
-    def chat(self, messages: list[dict], tools: list[str] | None = None) -> dict:
+    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
+        # real per-tool schema, not just a bare name, so the LLM knows each
+        # arg's name/type/required-ness instead of guessing.
         payload = {"model": self.model, "messages": messages, "temperature": self.temperature}
         if tools:
             payload["tools"] = [
-                {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
-                for name in tools
+                {"type": "function", "function": {
+                    "name": t["name"],
+                    "parameters": t.get("parameters") or {"type": "object", "properties": {}},
+                }}
+                for t in tools
             ]
             payload["tool_choice"] = "required"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -29,6 +35,8 @@ class LLMClient:
         message = resp.json()["choices"][0]["message"]
 
         if tools:
-            call = message["tool_calls"][0]["function"]
-            return {"tool_call": call["name"], "args": json.loads(call["arguments"])}
+            tool_call = message["tool_calls"][0]
+            call = tool_call["function"]
+            return {"tool_call": call["name"], "args": json.loads(call["arguments"]),
+                    "tool_call_id": tool_call.get("id")}
         return json.loads(message["content"])

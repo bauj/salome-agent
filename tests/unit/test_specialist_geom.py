@@ -10,6 +10,7 @@ def test_finish_stage_returns_call_log_and_result_names():
         {"tool_call": "finish_stage", "args": {"result_names": ["box_1"]}},
     ]
     client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box"}]}
     client.call_tool.return_value = {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
                                                                 "out_vars": ["box_1"], "publish": ["box_1"]}]}
     result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
@@ -22,6 +23,7 @@ def test_exhausted_loop_sets_last_error():
     llm = MagicMock()
     llm.chat.return_value = {"tool_call": "make_box", "args": {"dx": 1, "dy": 1, "dz": 1}}
     client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box"}]}
     client.call_tool.return_value = {"ok": False, "error": "bad box"}
     result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
                                   llm, client, iteration_cap=2)

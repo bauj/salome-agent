@@ -65,14 +65,17 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             update["last_error"] = result.get("last_error")
     else:
         from salome_agent.specialists.base import run_specialist
+        from salome_agent.specialists.paravis import PARAVIS_SYSTEM_PROMPT
+        from salome_agent.specialists.smesh import SMESH_SYSTEM_PROMPT
 
+        system_prompt = {"smesh": SMESH_SYSTEM_PROMPT, "paravis": PARAVIS_SYSTEM_PROMPT}.get(module)
         tools = {}
         if client is not None:
             tools = {
                 "api_introspect": lambda name: str(client.introspect([name])),
                 "list_study": lambda: str(client.list_study()),
             }
-        result = run_specialist(stage_plan, llm, tools, cap)
+        result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt)
         stage["script"] = result["script"]
 
     stages[idx] = stage
