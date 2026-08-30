@@ -136,7 +136,7 @@ Run the result on its own, with no agent involved:
 
 | Flag | Meaning |
 |------|---------|
-| `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). **Currently the only fully working mode — see below.** |
+| `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
 | `--no-session` | Planner + specialists + static checks only. No live SALOME session, no exec verification. smesh/paravis only (geom needs a live session). |
 | `--port N` | Hand `salome shell` the omniORB port `N` instead of auto-discovering it. Still an isolated study — not live-session injection. |
 | `--work-dir DIR` | Override `config.work_dir`. |
@@ -145,12 +145,17 @@ Run the result on its own, with no agent involved:
 | `--timeout SECONDS` | Override per-stage exec timeout. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. |
 
-### Interactive mode is not wired into the CLI yet
+### Interactive mode
 
-Without `--batch`, the graph pauses at the plan-approval gate (and at the retry-help gate on
-stage failure) using a LangGraph `interrupt()`. The CLI does **not** yet handle those
-interrupts — it will plan and then stop without executing the stages. **Use `--batch` for
-now.** Wiring the interactive resume loop into `cli.py` is a known TODO.
+Without `--batch`, the run pauses for you at two points:
+
+- **Plan approval** — after planning, the stage list is printed and you `[Y]es` / `[n]o abort`.
+- **Stage failure** — if a stage exhausts its retries, you get `[h]int` (give the specialist
+  a text hint and retry the stage), `[s]kip stage`, or `[a]bort run`.
+
+Everything up to the pause is preserved (LangGraph checkpointer); your decision resumes the
+same run. If stdin is not a terminal (piped, no input), an unanswered prompt aborts the run —
+use `--batch` for unattended runs.
 
 ---
 
@@ -190,7 +195,6 @@ docs/superpowers/   design spec (rev 6) + implementation plan
 
 ## Known limitations
 
-- Interactive (non-`--batch`) mode isn't hooked up in the CLI (see above).
 - **Live GUI mode is incoming** — running stages against an already-open SALOME GUI so
   objects appear in the Object Browser / 3D viewer as the run progresses. Not built yet;
   today every run uses an isolated study.
