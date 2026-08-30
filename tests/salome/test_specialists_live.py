@@ -141,6 +141,35 @@ def test_smesh_specialist_live_end_to_end(client, live_llm):
     assert exec_err is None, exec_err
 
 
+def test_geom_to_smesh_multistage_live(config, tmp_path):
+    """Full graph, real LLM: geom stage publishes a box, smesh stage must
+    find_object() it by the ACTUAL published name (not the planner's guess)
+    and mesh it. Exercises the cross-stage handoff + verify routing + the
+    assembled result.py."""
+    import ast
+
+    from salome_agent.cli import main
+
+    cfg = dict(config)
+    cfg["work_dir"] = str(tmp_path)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(cfg))
+
+    rc = main(["make a 20mm cube and mesh it with 5mm tetrahedra", "--batch",
+               "--work-dir", str(tmp_path), "--config", str(config_path)])
+    assert rc == 0
+
+    report = next(tmp_path.glob("*/report.md")).read_text()
+    assert "(geom): ok" in report, report
+    assert "(smesh): ok" in report, report
+
+    src = next(tmp_path.glob("*/result.py")).read_text()
+    ast.parse(src)
+    assert "MakeBoxDXDYDZ" in src
+    assert "find_object(" in src
+    assert "Compute()" in src
+
+
 def test_paravis_specialist_live_generates_valid_script(client, live_llm):
     """Lighter than the smesh test: paravis exec-verify needs a real MED file
     on disk from an upstream stage (that path is task 174's geom->smesh->paravis

@@ -18,8 +18,20 @@ TOOL_SCHEMAS = {
 
 
 def run_specialist(stage_plan: dict, llm, tools: dict, iteration_cap: int,
-                    system_prompt: str | None = None) -> dict:
-    messages = [{"role": "user", "content": str(stage_plan)}]
+                    system_prompt: str | None = None,
+                    upstream_names: list[str] | None = None,
+                    last_error: dict | None = None) -> dict:
+    content = str(stage_plan)
+    if upstream_names:
+        # The planner's stage_plan["inputs"] are names it invented from the
+        # request ("cube"); the geom stage actually published something else
+        # ("box_1"). Give the specialist the real study names to find_object.
+        content += ("\n\nObjects already in the study — call find_object() with "
+                    f"exactly these names: {upstream_names}")
+    if last_error:
+        content += ("\n\nYour previous attempt failed at execution with:\n"
+                    f"{last_error.get('message')}\nReturn a corrected script.")
+    messages = [{"role": "user", "content": content}]
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
     tool_defs = [{"name": n, "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}})}

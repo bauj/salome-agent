@@ -87,7 +87,13 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                 "api_introspect": lambda name: str(client.introspect([name])),
                 "list_study": lambda: str(client.list_study()),
             }
-        result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt)
+        upstream: list[str] = []
+        for j in range(idx):
+            prior = state["stages"].get(j)
+            if prior and prior.get("status") == "ok":
+                upstream += prior.get("result_names") or []
+        result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt,
+                                upstream_names=upstream, last_error=state.get("last_error"))
         stage["script"] = result["script"]
         if result.get("warning"):
             log.warning("  %s specialist: %s", module, result["warning"])
@@ -160,6 +166,7 @@ def _advance_node(state: dict):
     idx = state["stage_idx"]
     result_names = state["stages"][idx].get("result_names")
     update = advance(state, result_names=result_names)
+    update["last_error"] = None
     log.info("  stage %d/%d accepted", idx + 1, len(state["plan"]))
     goto = "assemble" if update["stage_idx"] >= len(state["plan"]) else "run_stage"
     return Command(update=update, goto=goto)
