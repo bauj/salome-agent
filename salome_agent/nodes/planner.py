@@ -5,6 +5,14 @@ upstream objects this stage needs). Only emit stages the request actually
 needs. Repeating a module is allowed. Respond as JSON: {"stages": [...]}."""
 
 
+def blank_stages(stage_plans: list[dict]) -> dict:
+    return {
+        i: {"module": p["module"], "status": "pending", "script": None,
+            "call_log": None, "static_retries": 0, "exec_retries": 0}
+        for i, p in enumerate(stage_plans)
+    }
+
+
 def plan(request: str, llm) -> list[dict]:
     response = llm.chat(
         messages=[{"role": "system", "content": PLANNER_SYSTEM_PROMPT},

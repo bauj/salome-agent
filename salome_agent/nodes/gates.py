@@ -11,7 +11,14 @@ def plan_gate(state: dict) -> Command:
     if decision["action"] == "approve":
         return Command(update={"plan_approved": True}, goto="run_stage")
     if decision["action"] == "edit":
-        return Command(update={"plan": decision["plan"]}, goto="plan")
+        from salome_agent.nodes.planner import blank_stages
+
+        new_plan = decision["plan"]
+        # Re-prompt with the edited plan — NOT goto="plan", which would
+        # re-run the planner and throw the edit away. stages must be rebuilt
+        # since the edit can add or drop stages.
+        return Command(update={"plan": new_plan, "stages": blank_stages(new_plan),
+                               "stage_idx": 0}, goto="plan_gate")
     return Command(goto="assemble")
 
 

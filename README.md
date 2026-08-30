@@ -149,7 +149,9 @@ Run the result on its own, with no agent involved:
 
 Without `--batch`, the run pauses for you at two points:
 
-- **Plan approval** — after planning, the stage list is printed and you `[Y]es` / `[n]o abort`.
+- **Plan approval** — after planning, the stage list is printed and you `[Y]es` /
+  `[e]dit` (opens the plan as JSON in `$EDITOR`; add/drop/reorder stages, then it
+  re-prompts) / `[n]o abort`.
 - **Stage failure** — if a stage exhausts its retries, you get `[h]int` (give the specialist
   a text hint and retry the stage), `[s]kip stage`, or `[a]bort run`.
 
