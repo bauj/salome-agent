@@ -106,7 +106,10 @@ class SessionManager:
              "python3", "executor/executor.py", "--socket", socket_path, "--live"],
             env=env, stdout=out, stderr=err,
         )
-        client = self._wait_ready(socket_path)
+        # Longer than the default: under --live the executor may retry
+        # salome_init() for up to ~30s while a freshly launched GUI's
+        # ModuleCatalog / Container servers finish registering.
+        client = self._wait_ready(socket_path, timeout=90)
         return {"mode": "live", "port": resolved_port, "executor_pid": self._proc.pid,
                 "alive": True, "owned": owned_gui}, client
 
@@ -151,7 +154,12 @@ class SessionManager:
                 return ExecutorClient(socket_path)
             except (FileNotFoundError, ConnectionRefusedError) as e:
                 last_err = e
-                time.sleep(0.2)
+            if self._proc is not None and self._proc.poll() is not None:
+                hint = f"; see {self.executor_log}" if self.executor_log else ""
+                raise RuntimeError(
+                    f"executor exited (code {self._proc.returncode}) before it was "
+                    f"ready{hint}")
+            time.sleep(0.2)
         raise TimeoutError(f"executor did not become ready: {last_err}")
 
     def stop(self):
