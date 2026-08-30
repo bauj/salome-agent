@@ -12,6 +12,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--config", default=None)
     parser.add_argument("--on-failure", choices=["abort", "continue"], default=None)
     parser.add_argument("--timeout", type=float, default=None)
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="show per-tool-call / per-retry detail")
     return parser.parse_args(argv)
 
 
@@ -24,34 +26,77 @@ def build_llm(config: dict):
 
 
 def main(argv: list[str] | None = None) -> int:
+    import os
     import uuid
 
     from salome_agent.config import load_config
+    from salome_agent.logs import log, setup_logging
     from salome_agent.session.manager import SessionManager
     from salome_agent.graph import build_graph
 
     args = parse_args(argv if argv is not None else sys.argv[1:])
+    setup_logging(args.verbose)
+
     config = load_config(args.config or "config.json")
     if args.on_failure:
         config["policy"]["on_stage_failure"] = args.on_failure
     if args.work_dir:
         config["work_dir"] = args.work_dir
 
-    manager = SessionManager(salome_root=config["salome"]["root"])
+    run_id = uuid.uuid4().hex[:12]
+    work_dir = os.path.expanduser(config.get("work_dir") or ".")
+    run_dir = os.path.join(work_dir, run_id)
+    os.makedirs(run_dir, exist_ok=True)
+    executor_log = os.path.join(run_dir, "executor.log")
+
+    log.info("run %s", run_id)
+    log.info("request: %s", args.request)
+    log.info("output dir: %s", run_dir)
+    log.info("config: %s (salome root %s, llm %s)", args.config or "config.json",
+             config["salome"]["root"], config["llm"].get("base_url"))
+    if not args.batch:
+        log.warning("interactive plan/retry gates are not wired into the CLI yet - "
+                    "without --batch the run stops at the plan gate. Use --batch.")
+
+    if args.no_session:
+        log.info("session: --no-session (planner + specialists + static checks only)")
+    else:
+        log.info("session: starting executor inside SALOME (isolated study, this "
+                 "takes ~10-20s; SALOME output goes to executor.log)")
+
+    manager = SessionManager(salome_root=config["salome"]["root"], executor_log=executor_log)
     session_handle, client = manager.resolve(args.no_session, args.port)
+    if client is not None:
+        log.info("session ready: mode=%s port=%s executor_pid=%s",
+                 session_handle["mode"], session_handle["port"], session_handle["executor_pid"])
     try:
         graph = build_graph(batch=args.batch)
-        graph.invoke({
+        final = graph.invoke({
             "user_request": args.request, "config": {**config, "batch": args.batch},
             "session": session_handle, "plan": [], "plan_approved": False,
             "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
             "study_ns": "salome_agent_run", "final_script": None, "report": None,
-            "run_id": uuid.uuid4().hex[:12],
+            "run_id": run_id,
         }, config={"configurable": {"thread_id": uuid.uuid4().hex,
                                      "llm_client": build_llm(config),
                                      "executor_client": client}})
     finally:
         manager.stop()
+
+    if final.get("__interrupt__"):
+        log.warning("run paused at an interactive gate and the CLI cannot resume it - "
+                    "re-run with --batch")
+        return 1
+
+    result_path = os.path.join(run_dir, "result.py")
+    report_path = os.path.join(run_dir, "report.md")
+    log.info("done")
+    print()
+    print(final.get("report") or "(no report)")
+    print()
+    print(f"result script: {result_path}")
+    print(f"report:        {report_path}")
+    print(f"executor log:  {executor_log}")
     return 0
 
 

@@ -1,5 +1,7 @@
 import json
 
+from salome_agent.logs import log
+
 GEOM_SYSTEM_PROMPT = """You build geometry by calling tools, not by writing
 geompy source. Reference upstream objects by their published name. Lengths
 are millimetres, unconverted. When done, call finish_stage(result_names)
@@ -23,8 +25,10 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int) -> di
     # found running against a live LLM: it had nothing to call and the
     # response came back with no tool_calls at all).
     tools = client.list_tools()["tools"] + [{"name": "finish_stage", "parameters": FINISH_STAGE_SCHEMA}]
-    for _ in range(iteration_cap):
+    for i in range(iteration_cap):
+        log.debug("    geom iter %d/%d: asking LLM...", i + 1, iteration_cap)
         response = llm.chat(messages=messages, tools=tools)
+        log.debug("    LLM -> %s(%s)", response["tool_call"], response.get("args"))
         # The assistant's own tool-call turn must be echoed back before the
         # tool result — without it the model has no memory of what it just
         # did (each turn looks like a fresh start) and, seen live against a
@@ -47,8 +51,10 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int) -> di
         if result["ok"]:
             call_log.extend(result["records"])
             last_error = None
+            log.debug("    tool %s ok", response["tool_call"])
         else:
             last_error = {"phase": "exec", "message": result["error"],
                            "offending_line": None, "traceback": None}
+            log.debug("    tool %s failed: %s", response["tool_call"], result["error"])
         messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
     return {"call_log": call_log, "last_error": last_error}

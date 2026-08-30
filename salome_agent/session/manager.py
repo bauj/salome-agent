@@ -27,11 +27,14 @@ def _salome_subprocess_env() -> dict:
 
 
 class SessionManager:
-    def __init__(self, salome_root: str, socket_dir: str = "/tmp"):
+    def __init__(self, salome_root: str, socket_dir: str = "/tmp",
+                 executor_log: str | None = None):
         self.salome_bin = f"{salome_root}/salome"
         self.socket_dir = socket_dir
+        self.executor_log = executor_log
         self._proc: subprocess.Popen | None = None
         self._socket_path: str | None = None
+        self._logfile = None
 
     def resolve(self, no_session: bool, port: int | None) -> tuple[SessionHandle, ExecutorClient | None]:
         if no_session:
@@ -47,12 +50,17 @@ class SessionManager:
         self._socket_path = socket_path
         env = _salome_subprocess_env()
 
+        out = err = None
+        if self.executor_log is not None:
+            self._logfile = open(self.executor_log, "w")
+            out = err = self._logfile
+
         if resolved_port is not None:
             env["SALOME_PORT"] = str(resolved_port)
             self._proc = subprocess.Popen(
                 [self.salome_bin, "shell", "--", "python3", "executor/executor.py",
                  "--socket", socket_path],
-                env=env,
+                env=env, stdout=out, stderr=err,
             )
             client = self._wait_ready(socket_path)
             return {"mode": "attach", "port": resolved_port,
@@ -60,7 +68,7 @@ class SessionManager:
 
         self._proc = subprocess.Popen(
             [self.salome_bin, "shell", "--", "python3", "executor/executor.py", "--socket", socket_path],
-            env=env,
+            env=env, stdout=out, stderr=err,
         )
         client = self._wait_ready(socket_path)
         return {"mode": "launch", "port": None, "executor_pid": self._proc.pid,
@@ -86,3 +94,6 @@ class SessionManager:
                 os.unlink(self._socket_path)
             except FileNotFoundError:
                 pass
+        if self._logfile is not None:
+            self._logfile.close()
+            self._logfile = None

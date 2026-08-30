@@ -1,5 +1,7 @@
 from langchain_core.runnables import RunnableConfig
 
+from salome_agent.logs import log
+
 
 def route_after_run_stage(state: dict) -> str:
     stage = state["stages"][state["stage_idx"]]
@@ -27,7 +29,11 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     from salome_agent.nodes.planner import plan
 
     llm = config["configurable"]["llm_client"]
+    log.info("planning...")
     stage_plans = plan(state["user_request"], llm)
+    log.info("plan: %d stage(s)", len(stage_plans))
+    for i, p in enumerate(stage_plans):
+        log.info("  stage %d [%s] %s", i, p["module"], p.get("intent", ""))
     stages = {
         i: {"module": p["module"], "status": "pending", "script": None,
             "call_log": None, "static_retries": 0, "exec_retries": 0}
@@ -43,6 +49,8 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     idx = state["stage_idx"]
     stage_plan = state["plan"][idx]
     module = stage_plan["module"]
+    log.info("stage %d/%d [%s] %s", idx + 1, len(state["plan"]), module,
+             stage_plan.get("intent", ""))
     llm = config["configurable"]["llm_client"]
     client = config["configurable"].get("executor_client")
     cap = state["config"]["policy"]["tool_iteration_cap"]
@@ -60,9 +68,12 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             stage["status"] = "ok"
             stage["result_names"] = result["result_names"]
             update["last_error"] = None
+            log.info("  geom specialist done: %d tool call(s), results=%s",
+                     len(result.get("call_log") or []), result["result_names"])
         else:
             stage["status"] = "failed"
             update["last_error"] = result.get("last_error")
+            log.warning("  geom specialist failed: %s", result.get("last_error"))
     else:
         from salome_agent.specialists.base import run_specialist
         from salome_agent.specialists.paravis import PARAVIS_SYSTEM_PROMPT
@@ -77,6 +88,9 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             }
         result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt)
         stage["script"] = result["script"]
+        if result.get("warning"):
+            log.warning("  %s specialist: %s", module, result["warning"])
+        log.info("  %s specialist produced a %d-char script", module, len(result["script"] or ""))
 
     stages[idx] = stage
     update["stages"] = stages
@@ -95,6 +109,7 @@ def _verify_static_node(state: dict, config: "RunnableConfig"):
     api_map = build_api_map(client)
     err = check_static(stage["script"], api_map)
     if err is None:
+        log.info("  static check: ok")
         return Command(goto="verify_exec")
 
     stages = dict(state["stages"])
@@ -103,6 +118,8 @@ def _verify_static_node(state: dict, config: "RunnableConfig"):
     stages[idx] = stage
     cap = state["config"]["policy"]["static_retries"]
     goto = "run_stage" if stage["static_retries"] <= cap else "retry_gate"
+    log.warning("  static check failed (retry %d/%d): %s", stage["static_retries"], cap,
+                err.get("message"))
     return Command(update={"stages": stages, "last_error": err}, goto=goto)
 
 
@@ -114,11 +131,14 @@ def _verify_exec_node(state: dict, config: "RunnableConfig"):
     stage = state["stages"][idx]
     client = config["configurable"]["executor_client"]
     timeout = state["config"]["policy"]["exec_timeout_s"]
+    log.info("  exec check: running stage script under SALOME (timeout %ss)...", timeout)
     result = check_exec(stage["script"], stage["module"], client, timeout)
 
     if result == "session_died":
+        log.error("  SALOME session died during exec - assembling what we have")
         return Command(goto="assemble")
     if result is None:
+        log.info("  exec check: ok")
         return Command(goto=route_after_verify_exec(state))
 
     stages = dict(state["stages"])
@@ -127,6 +147,8 @@ def _verify_exec_node(state: dict, config: "RunnableConfig"):
     stages[idx] = stage
     cap = state["config"]["policy"]["exec_retries"]
     goto = "run_stage" if stage["exec_retries"] <= cap else "retry_gate"
+    log.warning("  exec check failed (retry %d/%d): %s", stage["exec_retries"], cap,
+                result.get("message"))
     return Command(update={"stages": stages, "last_error": result}, goto=goto)
 
 
@@ -137,6 +159,7 @@ def _advance_node(state: dict):
     idx = state["stage_idx"]
     result_names = state["stages"][idx].get("result_names")
     update = advance(state, result_names=result_names)
+    log.info("  stage %d accepted", idx)
     goto = "assemble" if update["stage_idx"] >= len(state["plan"]) else "run_stage"
     return Command(update=update, goto=goto)
 
@@ -154,6 +177,7 @@ def _assemble_node(state: dict):
     from langgraph.types import Command
     from salome_agent.nodes.assembler import assemble
 
+    log.info("assembling result.py")
     return Command(update={"final_script": assemble(state)}, goto="report")
 
 
