@@ -18,6 +18,20 @@ def route_after_verify_exec(state: dict, session_died: bool = False) -> str:
     return "advance"
 
 
+def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
+    """Names of study objects to hand the specialist for this stage. Every
+    object published by a prior accepted stage is available; if the plan's
+    `inputs` name specific ones that actually exist, scope down to those
+    (keeps multi-stage prompts tight). Otherwise pass everything."""
+    available: list[str] = []
+    for j in range(idx):
+        prior = stages.get(j)
+        if prior and prior.get("status") == "ok":
+            available += prior.get("result_names") or []
+    declared = [n for n in (stage_plan.get("inputs") or []) if n in available]
+    return declared or available
+
+
 # llm_client/executor_client are live, non-serializable objects — they live
 # in the graph's runnable config["configurable"] (never checkpointed), not
 # in RunState itself. Putting them in state made MemorySaver.put() try to
@@ -83,11 +97,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                 "api_introspect": lambda name: str(client.introspect([name])),
                 "list_study": lambda: str(client.list_study()),
             }
-        upstream: list[str] = []
-        for j in range(idx):
-            prior = state["stages"].get(j)
-            if prior and prior.get("status") == "ok":
-                upstream += prior.get("result_names") or []
+        upstream = select_upstream(stage_plan, state["stages"], idx)
         result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt,
                                 upstream_names=upstream, last_error=state.get("last_error"))
         stage["script"] = result["script"]
