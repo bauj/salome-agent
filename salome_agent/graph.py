@@ -33,7 +33,8 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     stage_plans = plan(state["user_request"], llm)
     log.info("plan: %d stage(s)", len(stage_plans))
     for i, p in enumerate(stage_plans):
-        log.info("  stage %d [%s] %s", i, p["module"], p.get("intent", ""))
+        log.info("  stage %d/%d [%s] %s", i + 1, len(stage_plans), p["module"],
+                 p.get("intent", ""))
     stages = {
         i: {"module": p["module"], "status": "pending", "script": None,
             "call_log": None, "static_retries": 0, "exec_retries": 0}
@@ -159,7 +160,7 @@ def _advance_node(state: dict):
     idx = state["stage_idx"]
     result_names = state["stages"][idx].get("result_names")
     update = advance(state, result_names=result_names)
-    log.info("  stage %d accepted", idx)
+    log.info("  stage %d/%d accepted", idx + 1, len(state["plan"]))
     goto = "assemble" if update["stage_idx"] >= len(state["plan"]) else "run_stage"
     return Command(update=update, goto=goto)
 

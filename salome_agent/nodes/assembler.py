@@ -45,10 +45,11 @@ def assemble(state: dict) -> str:
 
     bodies = []
     modules = set()
+    total = len(state["stages"])
     for idx in sorted(state["stages"]):
         stage = state["stages"][idx]
         if stage["status"] == "ok" and stage["script"]:
-            bodies.append(f"# stage {idx}: {stage['module']}\n{stage['script']}")
+            bodies.append(f"# stage {idx + 1}/{total}: {stage['module']}\n{stage['script']}")
             modules.add(stage["module"])
     body = "\n\n".join(bodies)
 
