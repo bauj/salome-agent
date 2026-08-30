@@ -91,12 +91,15 @@ def main(argv: list[str] | None = None) -> int:
     result_path = os.path.join(run_dir, "result.py")
     report_path = os.path.join(run_dir, "report.md")
     log.info("done")
-    print()
+
+    bar = "-" * 60
+    print(f"\n{bar}")
     print(final.get("report") or "(no report)")
-    print()
-    print(f"result script: {result_path}")
-    print(f"report:        {report_path}")
-    print(f"executor log:  {executor_log}")
+    print(bar)
+    print(f"  result script : {result_path}")
+    print(f"  report        : {report_path}")
+    print(f"  executor log  : {executor_log}")
+    print(bar)
     return 0
 
 
