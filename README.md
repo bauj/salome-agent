@@ -47,7 +47,7 @@ Flow: `request → plan → [per stage: specialist → verify static → verify 
 cd /storage/Projects/salome-agent
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e .          # or -e ".[dev]" to also get pytest
 ```
 
 This installs `langgraph` and `requests` and puts a `salome-agent` entry point in
