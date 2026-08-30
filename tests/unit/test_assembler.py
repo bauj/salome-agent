@@ -50,3 +50,16 @@ def test_find_object_helper_included_when_script_uses_it():
     ast.parse(result)
     assert "def find_object" in result
     assert "smeshBuilder" in result
+    # study_ns is only defined when a stage script actually references it
+    assert "study_ns" not in result
+
+
+def test_study_ns_defined_only_when_referenced():
+    state = {
+        "stages": {0: {"module": "smesh", "status": "ok",
+                       "script": 'mesh.Mesh(s, study_ns + "_m")\nmesh.Compute()'}},
+        "run_id": "x", "user_request": "mesh it", "plan": [],
+    }
+    result = assemble(state)
+    ast.parse(result)
+    assert 'study_ns = "salome_agent_run"' in result

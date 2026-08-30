@@ -16,9 +16,7 @@ smesh = smeshBuilder.New()
 
 # Only emitted when a stage actually looks an object up in the study by name
 # (a cross-stage / cross-module reference — codegen emits `find_object("x")`).
-_FIND_OBJECT = """study_ns = "salome_agent_run"
-
-def find_object(name):
+_FIND_OBJECT = """def find_object(name):
     def walk(sobj):
         it = salome.myStudy.NewChildIterator(sobj)
         while it.More():
@@ -60,5 +58,7 @@ def assemble(state: dict) -> str:
         preamble += _SMESH_INIT
     if "find_object(" in body:
         preamble += _FIND_OBJECT
+    if "study_ns" in body:
+        preamble += 'study_ns = "salome_agent_run"\n'
 
     return header + "\n" + preamble + "\n" + body + "\n"
