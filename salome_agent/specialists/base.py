@@ -1,5 +1,7 @@
 import json
 
+from salome_agent.logs import log
+
 TOOL_SCHEMAS = {
     "api_introspect": {
         "type": "object",
@@ -23,8 +25,10 @@ def run_specialist(stage_plan: dict, llm, tools: dict, iteration_cap: int,
     tool_defs = [{"name": n, "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}})}
                  for n in list(tools) + ["emit_script"]]
     last_code = ""
-    for _ in range(iteration_cap):
+    for i in range(iteration_cap):
+        log.debug("    specialist iter %d/%d: asking LLM...", i + 1, iteration_cap)
         response = llm.chat(messages=messages, tools=tool_defs)
+        log.debug("    LLM -> %s", response["tool_call"])
         # Echo the assistant's own tool-call turn back before the tool
         # result — see salome_agent/specialists/geom.py for why (same bug,
         # same fix, found live against a real LLM).

@@ -1,6 +1,34 @@
 import json
+import re
 
 import requests
+
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+
+def _parse_json_content(content: str):
+    """Real LLMs often wrap the JSON in ```json fences or add a sentence of
+    prose around it — try the raw string first, then a fenced block, then the
+    first balanced {...} span."""
+    content = (content or "").strip()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+    m = _FENCE_RE.search(content)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+    start = content.find("{")
+    end = content.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(content[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+    raise ValueError(f"LLM did not return parseable JSON. Raw content:\n{content}")
 
 
 class LLMClient:
@@ -39,4 +67,4 @@ class LLMClient:
             call = tool_call["function"]
             return {"tool_call": call["name"], "args": json.loads(call["arguments"]),
                     "tool_call_id": tool_call.get("id")}
-        return json.loads(message["content"])
+        return _parse_json_content(message["content"])
