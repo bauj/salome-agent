@@ -99,10 +99,6 @@ def build_namespace(live: bool = False) -> dict:
         from salome.kernel import KernelBasis
         KernelBasis.setSSLMode(False)
     from salome.kernel import salome
-    # NB: salome_init() / salome_kernel_init() cache their results in sticky
-    # module globals (`orb`, `lcc`) — a failed first call cannot be retried
-    # in-process. When the GUI is still starting, this whole process must be
-    # relaunched instead; SessionManager does that for --live.
     salome.salome_init()
     from salome.geom import geomBuilder
     geompy = geomBuilder.New()

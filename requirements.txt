@@ -1,0 +1,14 @@
+# Agent-side venv dependencies (the executor runs inside SALOME and uses
+# only its bundled stdlib + salome API — nothing from here).
+#
+#   python -m venv .venv && .venv/bin/pip install -r requirements.txt
+#   .venv/bin/pip install -e .        # for the `salome-agent` entry point
+#
+# Versions are those verified on SALOME-master-native-FD44 / Python 3.14.
+
+# runtime
+langgraph==1.2.11
+requests==2.34.2
+
+# dev / tests
+pytest==9.1.1
