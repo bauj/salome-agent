@@ -115,10 +115,15 @@ The agent will:
    touch it and objects do not appear in that GUI. (`--port` only picks which omniORB
    port to hand `salome shell`; it does not change the isolation.) Driving a live GUI
    session is a separate, not-yet-built mode.
-2. Plan the stages, run each specialist, verify, and assemble.
+2. Plan the stages, run each specialist, verify, and assemble — progress is logged to
+   stderr as it goes (`planning...`, `stage 1/2 [geom] ...`, `static check: ok`,
+   `exec check: ok`, ...). Add `-v` / `--verbose` for per-LLM-call and per-retry detail.
 3. Write output to `<work_dir>/<run_id>/`:
    - `result.py` — the standalone reproducible script
-   - `report.md` — per-stage status and retry counts
+   - `report.md` — per-stage status and retry counts (also printed at the end)
+   - `executor.log` — raw SALOME/paraview startup noise from the executor subprocess
+     (this is where all that `vtkSocket ... Connection refused` chatter goes now,
+     instead of your terminal)
 
 Run the result on its own, with no agent involved:
 
@@ -138,6 +143,7 @@ Run the result on its own, with no agent involved:
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--timeout SECONDS` | Override per-stage exec timeout. |
+| `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. |
 
 ### Interactive mode is not wired into the CLI yet
 
@@ -185,6 +191,9 @@ docs/superpowers/   design spec (rev 6) + implementation plan
 ## Known limitations
 
 - Interactive (non-`--batch`) mode isn't hooked up in the CLI (see above).
+- **Live GUI mode is incoming** — running stages against an already-open SALOME GUI so
+  objects appear in the Object Browser / 3D viewer as the run progresses. Not built yet;
+  today every run uses an isolated study.
 - Only proven end to end for a single geom stage against a real LLM. Multi-stage
   (geom → smesh) against a real LLM is untested.
 - `verify/toplevel_api.json` (the `--no-session` static-check fixture) still holds
