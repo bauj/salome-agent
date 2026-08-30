@@ -124,8 +124,6 @@ The agent will:
    - `executor.log` — raw SALOME/paraview startup noise from the executor subprocess
      (this is where all that `vtkSocket ... Connection refused` chatter goes now,
      instead of your terminal)
-   - `gui.log` — only with `--live-gui` when the agent launched the GUI itself:
-     `salome withsession` startup output
 
 Run the result on its own, with no agent involved:
 
@@ -140,7 +138,7 @@ Run the result on its own, with no agent involved:
 |------|---------|
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
 | `--no-session` | Planner + specialists + static checks only. No live SALOME session, no exec verification. smesh/paravis only (geom needs a live session). Mutually exclusive with `--live-gui`. |
-| `--live-gui` | Publish into a live SALOME GUI as stages run — objects appear in the Object Browser and 3D viewer. Attaches to a running `salome withsession` GUI, or launches one for you and leaves it open (see below). Mutually exclusive with `--no-session`. |
+| `--live-gui` | Publish into a live SALOME GUI as stages run — objects appear in the Object Browser and 3D viewer. Requires a `salome withsession` GUI already running (see below). Mutually exclusive with `--no-session`. |
 | `--port N` | Hand the executor the omniORB port `N` instead of auto-discovering it (applies to both the default isolated mode and `--live-gui`). |
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
@@ -154,22 +152,27 @@ Publishes each stage's objects into a live SALOME GUI, so they show up in the Ob
 Browser and 3D viewer as the run progresses (instead of an isolated study you never
 see).
 
+**Prerequisite — launch the GUI yourself, in a real session:**
+
+```bash
+# on Wayland, prefix QT_QPA_PLATFORM=xcb
+/storage/salome_platform/devel/SALOME-master-native-FD44/salome withsession
+```
+
+A plain `salome` GUI is single-process with an in-process naming service that nothing
+can attach to — only `withsession` (multiple servers, real omniNames) works. Then:
+
 ```bash
 salome-agent "make a 20mm cube and mesh it with 5mm tets" --live-gui --batch
 ```
 
-- **If a `salome withsession` GUI is already running**, the agent discovers its port
-  (`--port N` overrides), attaches the executor via `salome remote`, and calls
-  `KernelBasis.setSSLMode(False)` so it shares the GUI's own engine.
-- **If nothing is running**, the agent launches `salome withsession -g` for you
-  (~30-60s first time; on Wayland it sets `QT_QPA_PLATFORM=xcb` automatically) and
-  leaves the window open after the run — the next `--live-gui` run reattaches to it.
+The agent discovers the running port (`--port N` overrides), attaches the executor via
+`salome remote`, and calls `KernelBasis.setSSLMode(False)` so it shares the GUI's own
+engine. After a geom stage, the GEOM module is loaded and connected to the study so
+its tree and shapes are visible; the Object Browser is refreshed after every publish.
 
-A plain `salome` GUI (single-process, in-process naming service) cannot be attached
-to; the agent only ever launches / attaches `withsession`.
-
-After a geom stage, the GEOM module is loaded and connected to the study so its tree
-and shapes are visible; the Object Browser is refreshed after every publish.
+> Auto-launching the GUI from the agent was tried and reverted — `salome withsession`
+> started non-interactively from the agent failed to come up reliably (task 182).
 
 **Caveats — this mode can crash your SALOME session:**
 
