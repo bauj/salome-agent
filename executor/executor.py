@@ -99,26 +99,15 @@ def build_namespace(live: bool = False) -> dict:
         from salome.kernel import KernelBasis
         KernelBasis.setSSLMode(False)
     from salome.kernel import salome
-
-    # When the agent just launched the GUI itself, the naming service
-    # registers before the ModuleCatalog / Container servers do — salome_init()
-    # then dies with "'NoneType' object has no attribute '_narrow'" (a failed
-    # Resolve). Retry through that startup window.
-    import time as _t
-    last_exc = None
-    for _ in range(15):
-        try:
-            salome.salome_init()
-            from salome.geom import geomBuilder
-            geompy = geomBuilder.New()
-            from salome.smesh import smeshBuilder
-            smesh = smeshBuilder.New()
-            break
-        except (AttributeError, RuntimeError) as e:
-            last_exc = e
-            _t.sleep(2)
-    else:
-        raise RuntimeError(f"salome_init did not succeed after retries: {last_exc}")
+    # NB: salome_init() / salome_kernel_init() cache their results in sticky
+    # module globals (`orb`, `lcc`) — a failed first call cannot be retried
+    # in-process. When the GUI is still starting, this whole process must be
+    # relaunched instead; SessionManager does that for --live.
+    salome.salome_init()
+    from salome.geom import geomBuilder
+    geompy = geomBuilder.New()
+    from salome.smesh import smeshBuilder
+    smesh = smeshBuilder.New()
     try:
         import pvsimple
     except ImportError:
