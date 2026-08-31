@@ -1,11 +1,14 @@
 from typing import Literal
 
-from salome_agent.executor_client import SessionDied
+from salome_agent.executor_client import SessionDied, SessionPoisoned
 
 
-def check_exec(script: str, module: str, client, timeout: float) -> dict | Literal["session_died"] | None:
+def check_exec(script: str, module: str, client, timeout: float
+               ) -> dict | Literal["session_died", "session_poisoned"] | None:
     try:
         run_result = client.run(script, timeout, module=module.upper())
+    except SessionPoisoned:
+        return "session_poisoned"
     except SessionDied:
         return "session_died"
 

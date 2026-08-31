@@ -74,6 +74,9 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         from salome_agent.specialists.geom import run_geom_specialist
 
         result = run_geom_specialist(stage_plan, llm, client, cap)
+        if "fatal" in result:
+            log.error("  %s", result["fatal"])
+            return Command(update={"fatal": result["fatal"]}, goto="assemble")
         stage["call_log"] = result.get("call_log")
         if "result_names" in result:
             stage["status"] = "ok"
@@ -150,6 +153,10 @@ def _verify_exec_node(state: dict, config: "RunnableConfig"):
     if result == "session_died":
         log.error("  SALOME session died during exec - assembling what we have")
         return Command(goto="assemble")
+    if result == "session_poisoned":
+        log.error("  SALOME agent server poisoned by a timeout - aborting run")
+        return Command(update={"fatal": "SALOME agent server poisoned by a stage timeout"},
+                       goto="assemble")
     if result is None:
         log.info("  exec check: ok")
         return Command(goto=route_after_verify_exec(state))

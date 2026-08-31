@@ -24,3 +24,10 @@ def test_session_died_returns_sentinel():
     client = MagicMock()
     client.run.side_effect = SessionDied()
     assert check_exec("code", "geom", client, timeout=5) == "session_died"
+
+
+def test_session_poisoned_returns_sentinel():
+    from salome_agent.executor_client import SessionPoisoned
+    client = MagicMock()
+    client.run.side_effect = SessionPoisoned("boom")
+    assert check_exec("code", "geom", client, timeout=5) == "session_poisoned"
