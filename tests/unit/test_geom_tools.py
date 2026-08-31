@@ -1258,3 +1258,54 @@ class TestDisplayTools:
         assert record["fn"] == "setDisplayMode"
         assert record["out_vars"] == []
         assert record["args"][0] == {"kind": "literal", "value": 1}
+
+
+class TestShapeInfoFeedback:
+    """call_tool attaches bbox/size/centre feedback to a successful result."""
+
+    def _ex(self, geompy):
+        return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                               geom_bindings={})
+
+    def test_call_tool_attaches_shape_info(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeBoxDXDYDZ.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        geompy.BoundingBox.return_value = [0.0, 10.0, 0.0, 20.0, 5.0, 8.0]
+        ex = self._ex(geompy)
+
+        result = geom_tools.call_tool(ex, "make_box", {"dx": 10, "dy": 20, "dz": 3})
+
+        assert result["ok"] is True
+        assert result["result_shape"] == "sa_box_1"
+        assert result["shape_info"] == {
+            "bbox": [0.0, 10.0, 0.0, 20.0, 5.0, 8.0],
+            "size": [10.0, 20.0, 3.0],
+            "centre": [5.0, 10.0, 6.5],
+        }
+
+    def test_no_shape_info_for_display_tools(self, monkeypatch):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        monkeypatch.setattr("sys.modules", {**sys.modules, "salome": MagicMock()}, raising=False)
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"box_1": MagicMock()})
+
+        result = geom_tools.call_tool(ex, "set_transparency", {"shape": "box_1", "transparency": 0.5})
+
+        assert result["ok"] is True
+        assert "shape_info" not in result
+
+    def test_shape_info_survives_a_bounding_box_failure(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeBoxDXDYDZ.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        geompy.BoundingBox.side_effect = RuntimeError("nope")
+        ex = self._ex(geompy)
+
+        result = geom_tools.call_tool(ex, "make_box", {"dx": 1, "dy": 1, "dz": 1})
+
+        assert result["ok"] is True
+        assert "shape_info" not in result

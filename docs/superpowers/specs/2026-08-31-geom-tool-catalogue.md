@@ -54,6 +54,15 @@ template.
 - `executor.namespace["geompy"]` → the `geomBuilder.New()` instance.
 - `executor.namespace["find_object"]` → whole-study lookup by name (used by the `study` ArgRef kind).
 
+### Spatial feedback — attached centrally, not per handler
+
+`call_tool` calls `_attach_shape_info()` on every successful result: the
+last published shape's `{bbox, size, centre}` (mm, bbox-midpoint centre)
+goes into `result["shape_info"]` + `result["result_shape"]`. Handlers do
+**not** add this themselves, and it is **not** part of any `CallRecord` —
+it is feedback for the specialist to check placement (task 188). Fails
+soft (a `BoundingBox` error just omits the key).
+
 ### Sanity check — do it in every shape-producing tool
 
 ```python
