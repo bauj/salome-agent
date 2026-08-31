@@ -21,7 +21,7 @@ class Core:
             return {"id": rid, "ready": True, "proto": handshake.PROTO,
                     "mode": b.mode, "name_prefix": b.name_prefix}
         if cmd == "run":
-            r = b.run_code(req["code"], req["timeout"])
+            r = b.run_code(req["code"], req["timeout"], req.get("module"))
             if r["ok"]:
                 b.refresh(req.get("module"))
             return {"id": rid, **r}

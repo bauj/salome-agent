@@ -86,7 +86,21 @@ class GuiBackend:
     def end_session(self):
         pass
 
-    def run_code(self, code, timeout):
+    def _ensure_pvsimple(self):
+        if self.namespace.get("pvsimple") is not None:
+            return
+
+        def _do():
+            try:
+                import pvsimple
+                self.namespace["pvsimple"] = pvsimple
+            except ImportError:
+                pass
+        self._invoker.run_on_main(_do, timeout=120)
+
+    def run_code(self, code, timeout, module=None):
+        if module == "PARAVIS":
+            self._ensure_pvsimple()
         try:
             self._invoker.run_on_main(
                 lambda: exec(compile(code, "<stage>", "exec"), self.namespace),

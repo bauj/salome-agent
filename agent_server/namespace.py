@@ -37,10 +37,15 @@ def build_namespace(live: bool) -> dict:
     geompy = geomBuilder.New()
     from salome.smesh import smeshBuilder
     smesh = smeshBuilder.New()
-    try:
-        import pvsimple
-    except ImportError:
-        pvsimple = None
+    pvsimple = None
+    if not live:
+        # In the GUI process `import pvsimple` boots ParaView and opens a
+        # render view — a multi-second freeze on plugin launch. Defer it to
+        # the first paravis stage (GuiBackend.run_code loads it on demand).
+        try:
+            import pvsimple
+        except ImportError:
+            pvsimple = None
     return {
         "salome": salome, "geompy": geompy, "smesh": smesh, "pvsimple": pvsimple,
         "study_ns": "salome_agent_run",
