@@ -19,7 +19,13 @@ multi_rotate, offset_shape), round or bevel edges (fillet_edges,
 chamfer_edges), and set display properties (set_color, set_transparency,
 set_display_mode). Refer to any shape, point, vector or plane by the name it
 was published under. For an axis you may pass "OX", "OY" or "OZ" instead of
-building a vector. Angles are in degrees."""
+building a vector. Angles are in degrees.
+
+Apply display properties (set_color, set_transparency, set_display_mode)
+LAST, once, on the final shape — after every primitive, boolean and
+transform. A transform (translate, rotate, ...) produces a NEW shape that
+does not inherit the source's colour, so colouring before transforming
+loses the colour."""
 
 FINISH_STAGE_SCHEMA = {
     "type": "object",
