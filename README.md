@@ -194,6 +194,9 @@ Everything up to the pause is preserved (LangGraph checkpointer); your decision 
 same run. If stdin is not a terminal (piped, no input), an unanswered prompt aborts the run —
 use `--batch` for unattended runs.
 
+Aborting at either gate stops immediately with exit 1 and writes nothing — no
+`result.py`, no `report.md`, no run directory.
+
 ---
 
 ## Development

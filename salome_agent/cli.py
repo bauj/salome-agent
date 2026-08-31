@@ -48,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     run_id = uuid.uuid4().hex[:12]
     work_dir = os.path.expanduser(config.get("work_dir") or ".")
     run_dir = os.path.join(work_dir, run_id)
-    os.makedirs(run_dir, exist_ok=True)
+    # run_dir is created by _report_node when it actually has output to write;
+    # a run aborted at an interactive gate leaves nothing behind.
 
     log.info("run %s", run_id)
     log.info("request: %s", args.request)
@@ -82,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
             "session": session_handle, "plan": [], "plan_approved": False,
             "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
             "study_ns": "salome_agent_run", "final_script": None, "report": None,
-            "fatal": None, "run_id": run_id,
+            "fatal": None, "aborted": False, "run_id": run_id,
         }, config=cfg)
         if not args.batch:
             from salome_agent.interactive import resume_interactive
@@ -97,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if final.get("__interrupt__"):
         log.warning("run still paused at an interactive gate - aborting")
+        return 1
+
+    if final.get("aborted"):
+        log.info("run aborted at your request - no result.py / report.md written")
         return 1
 
     result_path = os.path.join(run_dir, "result.py")

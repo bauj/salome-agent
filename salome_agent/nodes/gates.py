@@ -1,3 +1,4 @@
+from langgraph.graph import END
 from langgraph.types import Command, interrupt
 
 from salome_agent.logs import log
@@ -19,7 +20,10 @@ def plan_gate(state: dict) -> Command:
         # since the edit can add or drop stages.
         return Command(update={"plan": new_plan, "stages": blank_stages(new_plan),
                                "stage_idx": 0}, goto="plan_gate")
-    return Command(goto="assemble")
+    # User aborted at the plan gate: stop now, do NOT run assemble/report
+    # (which would write result.py / report.md for a run that produced nothing).
+    log.info("plan rejected - run aborted, nothing written")
+    return Command(update={"aborted": True}, goto=END)
 
 
 def retry_gate(state: dict) -> Command:
@@ -36,4 +40,5 @@ def retry_gate(state: dict) -> Command:
                         goto="run_stage")
     if decision["action"] == "skip":
         return Command(goto="skip")
-    return Command(goto="assemble")
+    log.info("run aborted at the retry gate - nothing written")
+    return Command(update={"aborted": True}, goto=END)

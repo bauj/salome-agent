@@ -1,4 +1,9 @@
-from salome_agent.graph import route_after_run_stage, route_after_verify_exec, select_upstream
+from unittest.mock import MagicMock
+
+from langgraph.types import Command
+
+from salome_agent.graph import (build_graph, route_after_run_stage,
+                                route_after_verify_exec, select_upstream)
 
 
 def test_select_upstream_passes_all_published_names_by_default():
@@ -41,3 +46,32 @@ def test_smesh_ok_routes_to_verify_static():
 def test_verify_exec_session_died_routes_to_assemble():
     state = {"last_error": {"phase": "exec", "message": "SessionDied"}}
     assert route_after_verify_exec(state, session_died=True) == "assemble"
+
+
+def _initial_state(work_dir):
+    return {
+        "user_request": "make a cube", "run_id": "testrun",
+        "config": {"batch": False, "work_dir": str(work_dir),
+                   "policy": {"tool_iteration_cap": 3}},
+        "session": {"mode": "none", "pid": None, "salome_port": None, "name_prefix": ""},
+        "plan": [], "plan_approved": False, "stage_idx": 0, "stages": {},
+        "last_error": None, "history": [], "study_ns": "salome_agent_run",
+        "final_script": None, "report": None, "fatal": None, "aborted": False,
+    }
+
+
+def test_abort_at_plan_gate_writes_no_output_files(tmp_path):
+    llm = MagicMock()
+    llm.chat.return_value = {
+        "stages": [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]}
+    graph = build_graph(batch=False)
+    cfg = {"configurable": {"thread_id": "t1", "llm_client": llm, "executor_client": None}}
+
+    first = graph.invoke(_initial_state(tmp_path), config=cfg)
+    assert first.get("__interrupt__")
+
+    final = graph.invoke(Command(resume={"action": "abort"}), config=cfg)
+    assert final.get("aborted") is True
+    assert not final.get("report")
+    assert not final.get("final_script")
+    assert list(tmp_path.iterdir()) == []
