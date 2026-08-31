@@ -133,6 +133,13 @@ planning, so the executor stays "dumb" in the same sense as `run`.
 
 ### 3.2 Components
 
+> **Superseded (2026-08-31):** the `salome shell -- executor.py` subprocess and the
+> `--live-gui` `salome remote` attach are replaced by an in-GUI plugin server the agent
+> reaches over loopback TCP. `executor/executor.py` and `salome_agent/session/` are
+> gone; their roles move to `agent_server/`. See
+> `2026-08-31-gui-plugin-server-design.md`. The component/protocol tables below describe
+> the original design.
+
 | Component | Process | Responsibility |
 |-----------|---------|----------------|
 | **CLI** (`salome_agent/cli.py`) | agent | Parse prompt + flags, resolve the session and start/attach the one executor (unless `--no-session` — §7.1), build and invoke the graph, stream progress, write outputs, resume the graph after an interrupt. |

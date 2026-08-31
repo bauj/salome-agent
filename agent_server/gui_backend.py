@@ -1,0 +1,147 @@
+import threading
+
+import SalomePyQt
+
+if SalomePyQt.usePySide():
+    from PySide2.QtCore import QObject, Signal as _Signal, Qt
+else:
+    from PyQt5.QtCore import QObject, pyqtSignal as _Signal, Qt
+
+from executor import geom_tools
+
+
+class _Job:
+    __slots__ = ("fn", "box", "ev")
+
+    def __init__(self, fn):
+        self.fn = fn
+        self.box: dict = {}
+        self.ev = threading.Event()
+
+
+class MainThreadInvoker(QObject):
+    _invoke = _Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self._lock = threading.Lock()
+        self._busy = False
+        self._invoke.connect(self._on_invoke, Qt.QueuedConnection)
+
+    def _on_invoke(self, job):
+        # Runs on the Qt main thread. An escaped exception here reaches Qt as
+        # an unhandled slot exception -> qFatal() -> the GUI aborts. The guard
+        # must be total and ev.set() must always run.
+        try:
+            job.box["r"] = job.fn()
+        except BaseException as e:  # noqa: BLE001
+            job.box["e"] = e
+        finally:
+            job.ev.set()
+
+    def run_on_main(self, fn, timeout):
+        with self._lock:
+            if self._busy:
+                raise RuntimeError("a marshalled call is already in flight")
+            self._busy = True
+        job = _Job(fn)
+        timed_out = False
+        try:
+            self._invoke.emit(job)
+            if not job.ev.wait(timeout):
+                timed_out = True
+                raise TimeoutError(f"main-thread call exceeded {timeout}s")
+            if "e" in job.box:
+                raise job.box["e"]
+            return job.box["r"]
+        finally:
+            if not timed_out:            # leave _busy LATCHED after a timeout
+                with self._lock:
+                    self._busy = False
+
+
+class GuiBackend:
+    mode = "gui"
+
+    def __init__(self, invoker: MainThreadInvoker, build_namespace=None):
+        if build_namespace is None:
+            from agent_server.namespace import build_namespace as bn
+            build_namespace = bn
+        self._invoker = invoker
+        # __init__ runs on the Qt main thread (the plugin's launch()), so build
+        # the namespace directly — marshalling from the main thread would
+        # deadlock (ev.wait blocks the thread that must dispatch the slot).
+        self.namespace = build_namespace(True)
+        self.name_prefix = ""
+        self.geom_bindings: dict = {}
+        self.accepted_scripts: list = []
+        self._poisoned = False
+
+    def begin_session(self, run_id):
+        self.name_prefix = f"sa_{run_id}_" if run_id else ""
+        geom_tools.reset_counters()
+        self.geom_bindings.clear()
+        self.accepted_scripts = []
+
+    def end_session(self):
+        pass
+
+    def _ensure_pvsimple(self):
+        if self.namespace.get("pvsimple") is not None:
+            return
+
+        def _do():
+            try:
+                import pvsimple
+                self.namespace["pvsimple"] = pvsimple
+            except ImportError:
+                pass
+        self._invoker.run_on_main(_do, timeout=120)
+
+    def run_code(self, code, timeout, module=None):
+        if module == "PARAVIS":
+            self._ensure_pvsimple()
+        try:
+            self._invoker.run_on_main(
+                lambda: exec(compile(code, "<stage>", "exec"), self.namespace),
+                timeout,
+            )
+            return {"ok": True, "stdout": "", "stderr": "", "exception": None,
+                    "traceback": None, "offending_line": None}
+        except TimeoutError:
+            self._poisoned = True
+            return {"ok": False, "stdout": "", "stderr": "",
+                    "exception": f"timeout after {timeout}s",
+                    "traceback": None, "offending_line": None}
+        except BaseException as e:  # noqa: BLE001
+            import traceback
+            return {"ok": False, "stdout": "", "stderr": "", "exception": str(e),
+                    "traceback": traceback.format_exc(), "offending_line": None}
+
+    def reset(self, scripts):
+        return {"ok": False, "error": "no rollback in a live GUI study"}
+
+    def refresh(self, module):
+        # salome.sg does not exist on this build (Phase 0 spike, 2026-08-31);
+        # SALOMEGUI_Swig().updateObjBrowser() does, and runs a direct inline
+        # Execute() on the session thread — which is where this already is,
+        # having been marshalled by run_on_main.
+        def _do():
+            import libSALOME_Swig
+            libSALOME_Swig.SALOMEGUI_Swig().updateObjBrowser()
+        try:
+            self._invoker.run_on_main(_do, timeout=10)
+        except Exception:
+            pass
+
+    def find_object(self, name):
+        def _do():
+            fo = self.namespace["find_object"]
+            try:
+                return fo(self.name_prefix + name)
+            except LookupError:
+                return fo(name)
+        return self._invoker.run_on_main(_do, timeout=30)
+
+    def poisoned(self):
+        return self._poisoned

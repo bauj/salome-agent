@@ -13,7 +13,7 @@ pytestmark = [
 ]
 
 
-def test_cube_and_mesh_produces_runnable_result(tmp_path):
+def test_cube_and_mesh_produces_runnable_result(tmp_path, running_server):
     # No config.json is checked into the repo (config.example.json is the
     # template — real configs carry an api_key). build_llm() is patched out
     # below, so the llm.* values here only need to satisfy load_config's

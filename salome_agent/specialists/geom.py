@@ -1,5 +1,6 @@
 import json
 
+from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.logs import log
 
 GEOM_SYSTEM_PROMPT = """You build geometry by calling tools, not by writing
@@ -16,6 +17,13 @@ FINISH_STAGE_SCHEMA = {
 
 
 def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int) -> dict:
+    try:
+        return _run(stage_plan, llm, client, iteration_cap)
+    except (SessionDied, SessionPoisoned) as e:
+        return {"fatal": f"SALOME agent server unavailable: {e}"}
+
+
+def _run(stage_plan: dict, llm, client, iteration_cap: int) -> dict:
     messages = [{"role": "system", "content": GEOM_SYSTEM_PROMPT},
                 {"role": "user", "content": str(stage_plan)}]
     call_log: list[dict] = []

@@ -6,19 +6,39 @@ class SessionDied(Exception):
     pass
 
 
+class SessionPoisoned(Exception):
+    pass
+
+
+class ServerBusy(Exception):
+    pass
+
+
 class ExecutorClient:
-    def __init__(self, socket_path: str):
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.connect(socket_path)
+    def __init__(self, host: str, port: int, token: str, run_id: str):
+        self._sock = socket.create_connection((host, port), timeout=10)
         self._f = self._sock.makefile("rwb")
-        ready = self._recv()
-        assert ready.get("ready") is True
         self._next_id = 1
+        self._f.write((json.dumps(
+            {"id": 0, "cmd": "hello", "token": token, "run_id": run_id}) + "\n"
+        ).encode())
+        self._f.flush()
+        ready = self._recv()
+        if ready.get("fatal"):
+            raise SessionPoisoned(ready.get("error", "poisoned"))
+        if ready.get("error") == "busy":
+            raise ServerBusy("another agent run is in progress")
+        assert ready.get("ready") is True
+        self.mode = ready.get("mode")
+        self.name_prefix = ready.get("name_prefix", "")
 
     def _recv(self) -> dict:
-        line = self._f.readline()
+        try:
+            line = self._f.readline()
+        except (BrokenPipeError, ConnectionResetError, OSError) as e:
+            raise SessionDied(f"server socket read failed: {e}") from e
         if not line:
-            raise SessionDied("executor socket closed")
+            raise SessionDied("server socket closed")
         return json.loads(line)
 
     def _call(self, cmd: str, **payload) -> dict:
@@ -28,29 +48,32 @@ class ExecutorClient:
             self._f.write((json.dumps({"id": req_id, "cmd": cmd, **payload}) + "\n").encode())
             self._f.flush()
         except (BrokenPipeError, ConnectionResetError, OSError) as e:
-            raise SessionDied(f"executor socket write failed: {e}") from e
-        return self._recv()
+            raise SessionDied(f"server socket write failed: {e}") from e
+        resp = self._recv()
+        if resp.get("fatal"):
+            raise SessionPoisoned(resp.get("error", "poisoned"))
+        return resp
 
-    def run(self, code: str, timeout: float, module: str | None = None) -> dict:
+    def run(self, code, timeout, module=None):
         return self._call("run", code=code, timeout=timeout, module=module)
 
-    def reset_and_replay(self, scripts: list[str]) -> dict:
+    def reset_and_replay(self, scripts):
         return self._call("reset_and_replay", scripts=scripts)
 
-    def introspect(self, names: list[str]) -> dict:
+    def introspect(self, names):
         return self._call("introspect", names=names)
 
-    def list_study(self) -> dict:
+    def list_study(self):
         return self._call("list_study")
 
-    def sanity(self, module: str, expectations: dict) -> dict:
+    def sanity(self, module, expectations):
         return self._call("sanity", module=module, expectations=expectations)
 
-    def list_tools(self) -> dict:
+    def list_tools(self):
         return self._call("list_tools")
 
-    def call_tool(self, name: str, args: dict) -> dict:
+    def call_tool(self, name, args):
         return self._call("call_tool", name=name, args=args)
 
-    def shutdown(self) -> dict:
+    def shutdown(self):
         return self._call("shutdown")
