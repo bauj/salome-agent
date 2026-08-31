@@ -224,6 +224,13 @@ class TestTransformationTools:
         result = agent_client.call_tool("offset_shape", {"shape": "box_1", "offset": 1.0})
         assert result["ok"] is True
 
+    def test_position(self, agent_client):
+        """position places a copy at a target frame."""
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        result = agent_client.call_tool("position", {"shape": "box_1", "origin": [50, 0, 0]})
+        assert result["ok"] is True, result.get("error")
+        assert [r["fn"] for r in result["records"]] == ["MakeMarker", "MakePosition"]
+
 
 class TestLocalEdgeOps:
     """Test local edge operations."""

@@ -1039,6 +1039,31 @@ class TestTransformationTools:
         record = result["records"][0]
         assert record["fn"] == "MakeOffset"
 
+    def test_position_defaults_and_records(self):
+        """position builds a target marker + MakePosition(shape, None, marker)."""
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeMarker.return_value = MagicMock()
+        geompy.MakePosition.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": MagicMock()})
+
+        result = geom_tools.tool_position(ex, {"shape": "shape", "origin": ["50", 0, 0]})
+
+        assert result["ok"] is True
+        # string coords coerced
+        geompy.MakeMarker.assert_called_once_with(50.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+        marker_rec, pos_rec = result["records"]
+        assert marker_rec["fn"] == "MakeMarker"
+        assert pos_rec["fn"] == "MakePosition"
+        assert pos_rec["args"][0] == {"kind": "ref", "value": "shape"}
+        assert pos_rec["args"][1] == {"kind": "literal", "value": None}
+        assert pos_rec["args"][2] == {"kind": "ref", "value": marker_rec["out_vars"][0]}
+        # start LCS is the global frame -> literal None in the generated call
+        geompy.MakePosition.assert_called_once_with(
+            ex.geom_bindings["shape"], None, geompy.MakeMarker.return_value)
+
 
 class TestLocalOpsTools:
     """Unit tests for local edge operation tools."""

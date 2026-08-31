@@ -15,7 +15,9 @@ make_sphere, make_cone, make_torus, make_face, make_disk), basic objects
 (make_prism, make_revolution, make_pipe, make_thick_solid, make_filling),
 combine shapes (fuse, cut, common, partition), transform them — always
 producing a copy — (translate, rotate, mirror, scale, multi_translate,
-multi_rotate, offset_shape), round or bevel edges (fillet_edges,
+multi_rotate, offset_shape, position — place a shape's local frame at a
+target origin + axis directions, good for assembling parts), round or
+bevel edges (fillet_edges,
 chamfer_edges), and set display properties (set_color, set_transparency,
 set_display_mode). Refer to any shape, point, vector or plane by the name it
 was published under. For an axis you may pass "OX", "OY" or "OZ" instead of
