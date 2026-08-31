@@ -39,7 +39,8 @@ class LLMClient:
     (spec §9/decision 10 — provider-agnostic, configured by endpoint+key+model).
     No retry/streaming — out of scope per the plan's Task 14 note."""
 
-    def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "", temperature: float = 0):
+    def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
+                 temperature: float = 0, request_timeout: float = 120):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -47,6 +48,7 @@ class LLMClient:
         # the system trust store — never "" / False, which disables TLS checks).
         self.ssl_cert_file = ssl_cert_file or True
         self.temperature = temperature
+        self.request_timeout = request_timeout
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
@@ -64,15 +66,22 @@ class LLMClient:
             payload["tool_choice"] = "required"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         tool_names = [t["name"] for t in tools] if tools else None
-        log.debug("LLM request: model=%s, %d message(s), tools=%s",
-                  self.model, len(messages), tool_names or "-")
+        log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
+                  self.model, len(messages), tool_names or "-", self.request_timeout)
         t0 = time.monotonic()
-        try:
-            resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
-                                  headers=headers, verify=self.ssl_cert_file, timeout=120)
-        except requests.RequestException as e:
-            log.debug("LLM request failed after %.1fs: %s", time.monotonic() - t0, e)
-            raise
+        resp = None
+        for attempt in (1, 2):
+            try:
+                resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
+                                     headers=headers, verify=self.ssl_cert_file,
+                                     timeout=self.request_timeout)
+                break
+            except (requests.Timeout, requests.ConnectionError) as e:
+                log.debug("LLM request attempt %d failed after %.1fs: %s",
+                          attempt, time.monotonic() - t0, e)
+                if attempt == 2:
+                    raise
+                t0 = time.monotonic()
         resp.raise_for_status()
         body = resp.json()
         message = body["choices"][0]["message"]
