@@ -36,10 +36,13 @@ class LLMClient:
     (spec §9/decision 10 — provider-agnostic, configured by endpoint+key+model).
     No retry/streaming — out of scope per the plan's Task 14 note."""
 
-    def __init__(self, base_url: str, api_key: str, model: str, temperature: float = 0):
+    def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "", temperature: float = 0):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        # requests `verify`: a CA-bundle path, else True (default: verify against
+        # the system trust store — never "" / False, which disables TLS checks).
+        self.ssl_cert_file = ssl_cert_file or True
         self.temperature = temperature
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
@@ -58,7 +61,7 @@ class LLMClient:
             payload["tool_choice"] = "required"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
-                              headers=headers, timeout=120)
+                              headers=headers, verify=self.ssl_cert_file, timeout=120)
         resp.raise_for_status()
         message = resp.json()["choices"][0]["message"]
 

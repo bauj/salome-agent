@@ -1,5 +1,5 @@
 {
-  "llm": { "base_url": "", "api_key": "", "model": "", "temperature": 0 },
+  "llm": { "base_url": "", "api_key": "", "model": "", "ssl_cert_file": "", "temperature": 0 },
   "salome": {
     "root": "/storage/salome_platform/devel/SALOME-master-native-FD44"
   },

@@ -47,7 +47,8 @@ def live_llm(config):
 
     c = config["llm"]
     return LLMClient(base_url=c["base_url"], api_key=c.get("api_key", ""),
-                     model=c["model"], temperature=c.get("temperature", 0))
+                     model=c["model"], ssl_cert_file=c.get("ssl_cert_file", ""),
+                     temperature=c.get("temperature", 0))
 
 
 @pytest.fixture

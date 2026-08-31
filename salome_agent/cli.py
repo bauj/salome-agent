@@ -26,7 +26,8 @@ def build_llm(config: dict):
 
     llm_config = config["llm"]
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
-                      model=llm_config["model"], temperature=llm_config.get("temperature", 0))
+                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
+                      temperature=llm_config.get("temperature", 0))
 
 
 def main(argv: list[str] | None = None) -> int:
