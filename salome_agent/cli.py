@@ -6,12 +6,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="salome-agent")
     parser.add_argument("request")
     parser.add_argument("--batch", action="store_true")
-    session_mode = parser.add_mutually_exclusive_group()
-    session_mode.add_argument("--no-session", action="store_true")
-    session_mode.add_argument("--live-gui", action="store_true",
-                              help="attach to an already-open SALOME GUI (launched with "
-                                   "`salome withsession`) so objects appear as stages run")
-    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--no-session", action="store_true",
+                        help="planner + specialists + static checks only; "
+                             "no connection to a SALOME agent server")
     parser.add_argument("--work-dir", default=None)
     parser.add_argument("--config", default=None)
     parser.add_argument("--on-failure", choices=["abort", "continue"], default=None)
@@ -26,18 +23,18 @@ def build_llm(config: dict):
 
     llm_config = config["llm"]
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
-                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
-                      temperature=llm_config.get("temperature", 0))
+                     model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
+                     temperature=llm_config.get("temperature", 0))
 
 
 def main(argv: list[str] | None = None) -> int:
     import os
     import uuid
 
+    from salome_agent import server_conn
     from salome_agent.config import load_config
-    from salome_agent.logs import log, setup_logging
-    from salome_agent.session.manager import SessionManager
     from salome_agent.graph import build_graph
+    from salome_agent.logs import log, setup_logging
 
     args = parse_args(argv if argv is not None else sys.argv[1:])
     setup_logging(args.verbose)
@@ -52,39 +49,29 @@ def main(argv: list[str] | None = None) -> int:
     work_dir = os.path.expanduser(config.get("work_dir") or ".")
     run_dir = os.path.join(work_dir, run_id)
     os.makedirs(run_dir, exist_ok=True)
-    executor_log = os.path.join(run_dir, "executor.log")
 
     log.info("run %s", run_id)
     log.info("request: %s", args.request)
     log.info("output dir: %s", run_dir)
-    log.info("config: %s (salome root %s, llm %s)", args.config or "config.json",
-             config["salome"]["root"], config["llm"].get("base_url"))
     if not args.batch:
         log.info("interactive mode: you will be prompted to approve the plan "
                  "and to handle stage failures (pass --batch to disable)")
 
     if args.no_session:
         log.info("session: --no-session (planner + specialists + static checks only)")
-    elif args.live_gui:
-        log.info("session: --live-gui (attaching to your open `salome withsession` GUI; "
-                 "objects appear in the Object Browser and 3D viewer as stages run)")
+        client = None
+        session_handle = {"mode": "none", "pid": None, "salome_port": None,
+                          "name_prefix": ""}
     else:
-        log.info("session: starting executor inside SALOME (isolated study, this "
-                 "takes ~10-20s; SALOME output goes to executor.log)")
+        try:
+            client = server_conn.connect(run_id)
+        except server_conn.ServerUnavailable as e:
+            log.error("%s", e)
+            return 1
+        session_handle = {"mode": client.mode, "pid": None, "salome_port": None,
+                          "name_prefix": client.name_prefix}
+        log.info("session: connected to the %s agent server", client.mode)
 
-    manager = SessionManager(salome_root=config["salome"]["root"], executor_log=executor_log)
-    try:
-        session_handle, client = manager.resolve(args.no_session, args.port,
-                                                 live_gui=args.live_gui)
-    except (RuntimeError, TimeoutError) as e:
-        manager.stop()
-        log.error("could not attach to a live SALOME GUI: %s", e)
-        log.error("launch the GUI first with `%s/salome withsession` (on Wayland, "
-                  "prefix QT_QPA_PLATFORM=xcb), then retry.", config["salome"]["root"])
-        return 1
-    if client is not None:
-        log.info("session ready: mode=%s port=%s executor_pid=%s",
-                 session_handle["mode"], session_handle["port"], session_handle["executor_pid"])
     cfg = {"configurable": {"thread_id": uuid.uuid4().hex,
                             "llm_client": build_llm(config),
                             "executor_client": client}}
@@ -95,14 +82,18 @@ def main(argv: list[str] | None = None) -> int:
             "session": session_handle, "plan": [], "plan_approved": False,
             "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
             "study_ns": "salome_agent_run", "final_script": None, "report": None,
-            "run_id": run_id,
+            "fatal": None, "run_id": run_id,
         }, config=cfg)
         if not args.batch:
             from salome_agent.interactive import resume_interactive
 
             final = resume_interactive(graph, final, cfg)
     finally:
-        manager.stop()
+        if client is not None:
+            try:
+                client.shutdown()
+            except Exception:
+                pass
 
     if final.get("__interrupt__"):
         log.warning("run still paused at an interactive gate - aborting")
@@ -110,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result_path = os.path.join(run_dir, "result.py")
     report_path = os.path.join(run_dir, "report.md")
+    hs = server_conn.read_handshake() or {}
     log.info("done")
 
     bar = "-" * 60
@@ -118,9 +110,9 @@ def main(argv: list[str] | None = None) -> int:
     print(bar)
     print(f"  result script : {result_path}")
     print(f"  report        : {report_path}")
-    print(f"  executor log  : {executor_log}")
+    print(f"  server log    : {hs.get('log_path', '(n/a)')}")
     print(bar)
-    return 0
+    return 1 if final.get("fatal") else 0
 
 
 if __name__ == "__main__":
