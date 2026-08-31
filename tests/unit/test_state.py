@@ -24,3 +24,7 @@ def test_history_reducer_is_additive():
     history = history + [{"event": "plan_approved"}]
     history = history + [{"event": "stage_0_ok"}]
     assert [h["event"] for h in history] == ["plan_approved", "stage_0_ok"]
+
+
+def test_runstate_has_fatal_key():
+    assert "fatal" in RunState.__annotations__
