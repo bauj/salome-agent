@@ -63,3 +63,39 @@ def test_study_ns_defined_only_when_referenced():
     result = assemble(state)
     ast.parse(result)
     assert 'study_ns = "salome_agent_run"' in result
+
+
+def test_salomeds_import_added_when_color_used():
+    state = {
+        "stages": {0: {"module": "geom", "status": "ok",
+                       "script": "box_1 = geompy.MakeBoxDXDYDZ(10,10,10)\nbox_1.SetColor(SALOMEDS.Color(1.0, 0.0, 0.0))"}},
+        "run_id": "x", "user_request": "make a red box", "plan": [],
+    }
+    result = assemble(state)
+    ast.parse(result)
+    assert "from salome.kernel import SALOMEDS" in result
+    assert "SALOMEDS.Color" in result
+
+
+def test_gui_import_added_when_gg_used():
+    state = {
+        "stages": {0: {"module": "geom", "status": "ok",
+                       "script": "box_1 = geompy.MakeBoxDXDYDZ(10,10,10)\ntry:\n    gg.setTransparency(salome.ObjectToID(box_1), 0.5)\nexcept Exception:\n    pass"}},
+        "run_id": "x", "user_request": "make a transparent box", "plan": [],
+    }
+    result = assemble(state)
+    ast.parse(result)
+    assert 'gg = salome.ImportComponentGUI("GEOM")' in result
+    assert "gg.setTransparency" in result
+
+
+def test_both_salomeds_and_gui_imports_when_both_used():
+    state = {
+        "stages": {0: {"module": "geom", "status": "ok",
+                       "script": "box_1 = geompy.MakeBoxDXDYDZ(10,10,10)\nbox_1.SetColor(SALOMEDS.Color(1.0, 0.0, 0.0))\ntry:\n    gg.setTransparency(salome.ObjectToID(box_1), 0.5)\nexcept Exception:\n    pass"}},
+        "run_id": "x", "user_request": "make a colored and transparent box", "plan": [],
+    }
+    result = assemble(state)
+    ast.parse(result)
+    assert "from salome.kernel import SALOMEDS" in result
+    assert 'gg = salome.ImportComponentGUI("GEOM")' in result
