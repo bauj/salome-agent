@@ -55,20 +55,23 @@ def live_llm(config):
 def client(config):
     from salome_agent.executor_client import ExecutorClient
 
-    sock_path = tempfile.mktemp(suffix=".sock")
+    hs = os.path.expanduser("~/.salome_agent/server.json")
+    if os.path.exists(hs):
+        os.unlink(hs)
     proc = subprocess.Popen(
         [f"{config['salome']['root']}/salome", "shell", "--", "python3",
-         str(REPO_ROOT / "executor" / "executor.py"), "--socket", sock_path],
-        env=_salome_subprocess_env(),
+         "-m", "agent_server", "--serve-forever"],
+        cwd=str(REPO_ROOT), env=_salome_subprocess_env(),
     )
     try:
         for _ in range(400):
-            if os.path.exists(sock_path):
+            if os.path.exists(hs):
                 break
             time.sleep(0.2)
         else:
-            raise RuntimeError("executor socket never appeared")
-        yield ExecutorClient(sock_path)
+            raise RuntimeError("agent_server handshake never appeared")
+        data = json.loads(open(hs).read())
+        yield ExecutorClient(data["host"], data["port"], data["token"], "test")
     finally:
         try:
             proc.terminate()
@@ -142,7 +145,7 @@ def test_smesh_specialist_live_end_to_end(client, live_llm):
     assert exec_err is None, exec_err
 
 
-def test_geom_to_smesh_multistage_live(config, tmp_path):
+def test_geom_to_smesh_multistage_live(config, tmp_path, running_server):
     """Full graph, real LLM: geom stage publishes a box, smesh stage must
     find_object() it by the ACTUAL published name (not the planner's guess)
     and mesh it. Exercises the cross-stage handoff + verify routing + the
