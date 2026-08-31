@@ -1,21 +1,29 @@
 PLANNER_SYSTEM_PROMPT = """You turn a natural-language SALOME request into an
 ordered list of stages. Each stage has: module (geom|smesh|paravis), intent
-(short description), params (dims in millimetres, unconverted), inputs (named
-upstream objects this stage needs). Only emit stages the request actually
-needs. Repeating a module is allowed. Respond as JSON: {"stages": [...]}.
+(short description of the WHOLE job for that module), params (dims in
+millimetres, unconverted), inputs (named upstream objects this stage needs).
+Respond as JSON: {"stages": [...]}.
+
+**One stage per module.** A stage is a whole module's worth of work, not a
+single operation. All the geometry -- every primitive, boolean, transform,
+fillet and colour -- is ONE geom stage; the geom specialist builds it step
+by step itself. Do NOT make "create the trunk", "create the leaves", "move
+the leaves", "colour it" into separate stages -- that splits one shape's
+construction across stages and the names stop lining up.
+
+Emit more than one stage only when:
+- the work crosses modules (geom -> smesh -> paravis), or
+- the request is genuinely independent deliverables (e.g. "make part A,
+  then separately make part B").
 
 Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
   AND display properties of geometry (colour, transparency, display mode).
-  "make it red", "colour the shape blue", "50% transparent" are geom stages.
+  "make it red", "colour the shape blue", "50% transparent" are geom.
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
 - paravis: post-processing an existing simulation result (a MED file) --
   contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
-  Only use paravis when the request involves a results/field/MED file.
-
-If colour / transparency / display is its own stage, it must be the LAST
-stage and act on the final shape -- a transform after colouring produces a
-new, uncoloured shape."""
+  Only use paravis when the request involves a results/field/MED file."""
 
 
 def blank_stages(stage_plans: list[dict]) -> dict:
