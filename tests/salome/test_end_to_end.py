@@ -4,10 +4,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-SALOME_ROOT = "/storage/salome_platform/devel/SALOME-master-native-FD44"
+from ._salome_root import SALOME_ROOT
+
+pytestmark = [
+    pytest.mark.salome,
+    pytest.mark.skipif(SALOME_ROOT is None,
+                       reason="set SALOME_ROOT or salome.root in config.json"),
+]
 
 
-@pytest.mark.salome
 def test_cube_and_mesh_produces_runnable_result(tmp_path):
     # No config.json is checked into the repo (config.example.json is the
     # template — real configs carry an api_key). build_llm() is patched out
@@ -34,7 +39,7 @@ def test_cube_and_mesh_produces_runnable_result(tmp_path):
         {"tool_call": "emit_script", "args": {"code": (
             # smesh.NETGEN_1D2D3D does not exist — the constant lives on
             # the smeshBuilder *module*, not the smeshBuilder.New() instance
-            # bound to "smesh" (confirmed live against SALOME-master-native-FD44).
+            # bound to "smesh" (confirmed live).
             "from salome.smesh import smeshBuilder\n"
             "shape = find_object('box_1')\n"
             "m = smesh.Mesh(shape)\n"

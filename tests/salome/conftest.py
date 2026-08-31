@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-SALOME_ROOT = "/storage/salome_platform/devel/SALOME-master-native-FD44"
+from ._salome_root import SALOME_ROOT
 
 
 def _salome_subprocess_env() -> dict:
@@ -27,6 +27,8 @@ def _salome_subprocess_env() -> dict:
 
 @pytest.fixture
 def executor_conn():
+    if SALOME_ROOT is None:
+        pytest.skip("set SALOME_ROOT or salome.root in config.json")
     sock_path = tempfile.mktemp(suffix=".sock")
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     proc = subprocess.Popen(

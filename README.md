@@ -34,9 +34,8 @@ Flow: `request → plan → [per stage: specialist → verify static → verify 
 ## Requirements
 
 - **Python 3.10+**
-- A working **SALOME install**. Developed against `SALOME-master-native-FD44` at
-  `/storage/salome_platform/devel/SALOME-master-native-FD44`.
-  The `SALOME-9.16.0-native-FD44` dev install is broken — do not use it.
+- A working **SALOME install** (developed against a recent `master` native build;
+  point `salome.root` at its top directory).
 - An **OpenAI-compatible, tool-calling LLM endpoint** (base URL + API key + model name).
 
 ---
@@ -77,7 +76,7 @@ cp config.example.json config.json
     "temperature": 0
   },
   "salome": {
-    "root": "/storage/salome_platform/devel/SALOME-master-native-FD44"
+    "root": "/path/to/your/SALOME"
   },
   "policy": {
     "static_retries": 3,
@@ -131,7 +130,7 @@ The agent will:
 Run the result on its own, with no agent involved:
 
 ```bash
-/storage/salome_platform/devel/SALOME-master-native-FD44/salome shell -- \
+"$SALOME_ROOT"/salome shell -- \
   python3 ~/.local/share/salome-agent/runs/<run_id>/result.py
 ```
 
@@ -159,7 +158,7 @@ see).
 
 ```bash
 # on Wayland, prefix QT_QPA_PLATFORM=xcb
-/storage/salome_platform/devel/SALOME-master-native-FD44/salome withsession
+"$SALOME_ROOT"/salome withsession
 ```
 
 A plain `salome` GUI is single-process with an in-process naming service that nothing
@@ -215,6 +214,8 @@ pytest -m salome
 ```
 
 Tests marked `salome` are skipped unless a real SALOME install is present.
+They locate it via `$SALOME_ROOT`, else `salome.root` in `config.json`; with
+neither set the `salome` tests skip.
 
 ### Layout
 
