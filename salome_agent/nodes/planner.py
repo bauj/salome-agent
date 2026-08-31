@@ -4,15 +4,20 @@ ordered list of stages. Each stage has: module (geom|smesh|paravis), intent
 unconverted), inputs (named upstream objects this stage needs). Respond as
 JSON: {"stages": [...]}.
 
-**Never split the construction of a single connected shape across stages.**
-Every primitive, boolean, transform, fillet and colour that goes into one
-shape belongs to one stage -- the specialist builds it step by step itself.
-Splitting it breaks the object-name handoff between stages.
+A **part** is one primitive plus only the operations that shape that same
+piece of material -- a boolean that cuts or rounds it, its transform, its
+colour. An **assembly** is several parts combined (fused, or just placed
+together).
 
-Separate stages ARE fine (and expected) for: work that crosses modules
-(geom -> smesh -> paravis); genuinely independent parts; and the distinct
-named sub-assemblies of a larger model, as long as each such stage produces
-one finished, clearly-named part that later stages combine by that name.
+**Never split one part's construction across stages** -- all of its
+operations belong to one stage; splitting breaks the object-name handoff.
+
+For an assembly you MAY give each part (or each group of identical parts)
+its own stage, plus a final stage that combines them by name. Do that when
+the parts are distinct enough to name. A car is an assembly: body, cabin,
+wheels are separate parts even though they are fused at the end. Also use
+separate stages whenever the work crosses modules (geom -> smesh -> paravis)
+or the request asks for genuinely independent deliverables.
 
 Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
@@ -24,12 +29,13 @@ Module scope:
   Only use paravis when the request involves a results/field/MED file."""
 
 _DETAIL_HINT = {
-    "coarse": "\n\nPrefer the fewest stages possible: fold sub-assemblies "
-              "into one stage unless they are truly independent.",
+    "coarse": "\n\nPrefer the fewest stages: keep an assembly's parts in one "
+              "stage unless they are truly independent deliverables.",
     "balanced": "",
-    "fine": "\n\nLean towards a stage per named sub-assembly or major part "
-            "of the model -- but only when each stage still produces exactly "
-            "one finished, named part. Still never split one part's build.",
+    "fine": "\n\nFor any assembly, give EACH part (or group of identical "
+            "parts) its own stage and add a final stage that combines them. "
+            "The final result being one fused solid does not make the parts "
+            "one part. Still never split a single part's own construction.",
 }
 
 
