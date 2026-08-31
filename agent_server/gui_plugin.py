@@ -13,11 +13,12 @@ _CORE = None
 
 
 def _status(text):
+    print(f"[agent-server] {text}", flush=True)
     try:
         import SalomePyQt
-        SalomePyQt.SalomePyQt().message(text, False)
+        SalomePyQt.SalomePyQt().message(text, False)   # -> the Message dock
     except Exception:
-        print(f"[agent-server] {text}")
+        pass
 
 
 def stop() -> None:
