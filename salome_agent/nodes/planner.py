@@ -4,15 +4,12 @@ ordered list of stages. Each stage has: module (geom|smesh|paravis), intent
 millimetres, unconverted), inputs (named upstream objects this stage needs).
 Respond as JSON: {"stages": [...]}.
 
-**One stage per module.** A stage is a whole module's worth of work, not a
-single operation. All the geometry -- every primitive, boolean, transform,
-fillet and colour -- is ONE geom stage; the specialist builds it step by
-step itself. Splitting one shape's construction across stages breaks the
-object-name handoff between them.
-
-Emit more than one stage only when the work crosses modules
-(geom -> smesh -> paravis) or the request is genuinely independent
-deliverables.
+**One stage per connected shape.** A stage is a whole shape's construction
+-- every primitive, boolean, transform, fillet and colour that goes into it
+-- not a single operation; the specialist builds it step by step itself.
+Splitting one shape's build across stages breaks the object-name handoff
+between them. Separate stages for separate parts is fine (and separate
+stages when the work crosses modules, geom -> smesh -> paravis).
 
 Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
