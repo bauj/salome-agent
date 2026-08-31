@@ -20,7 +20,7 @@ class FakeBackend:
     def end_session(self):
         pass
 
-    def run_code(self, code, timeout):
+    def run_code(self, code, timeout, module=None):
         return {"ok": True, "stdout": "", "exception": None}
 
     def reset(self, scripts):
