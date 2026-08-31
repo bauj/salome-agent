@@ -11,7 +11,11 @@ Module scope:
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
 - paravis: post-processing an existing simulation result (a MED file) --
   contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
-  Only use paravis when the request involves a results/field/MED file."""
+  Only use paravis when the request involves a results/field/MED file.
+
+If colour / transparency / display is its own stage, it must be the LAST
+stage and act on the final shape -- a transform after colouring produces a
+new, uncoloured shape."""
 
 
 def blank_stages(stage_plans: list[dict]) -> dict:
