@@ -1,10 +1,7 @@
 import importlib
 import sys
 
-import pytest
 
-
-@pytest.mark.xfail(reason="core/backend land in later tasks", strict=False)
 def test_core_and_backend_import_without_qt(monkeypatch):
     # Simulate the dev venv: no PySide2, no SalomePyQt.
     for mod in list(sys.modules):
