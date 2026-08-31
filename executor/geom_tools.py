@@ -1603,13 +1603,45 @@ def _coerce_args(name: str, args: dict) -> dict:
     return coerced
 
 
+def _shape_info(geompy, shape) -> dict | None:
+    """World-space bounding box, size and centre (bbox midpoint) of a shape,
+    in mm, rounded. Spatial feedback for the specialist -- lets it catch a
+    misplaced part ("my wheel is at the origin") without a rendered view."""
+    if shape is None:
+        return None
+    try:
+        xmin, xmax, ymin, ymax, zmin, zmax = geompy.BoundingBox(shape)
+    except Exception:
+        return None
+    r = lambda v: round(v, 4)
+    return {
+        "bbox": [r(xmin), r(xmax), r(ymin), r(ymax), r(zmin), r(zmax)],
+        "size": [r(xmax - xmin), r(ymax - ymin), r(zmax - zmin)],
+        "centre": [r((xmin + xmax) / 2), r((ymin + ymax) / 2), r((zmin + zmax) / 2)],
+    }
+
+
+def _attach_shape_info(executor, result: dict) -> None:
+    published = [n for rec in result.get("records", []) for n in (rec.get("publish") or [])]
+    if not published:
+        return
+    name = published[-1]
+    info = _shape_info(executor.namespace["geompy"], executor.geom_bindings.get(name))
+    if info:
+        result["result_shape"] = name
+        result["shape_info"] = info
+
+
 def call_tool(executor, name: str, args: dict) -> dict:
     handler = TOOLS.get(name)
     if handler is None:
         return {"ok": False, "error": f"unknown tool {name!r}"}
     try:
         args = _coerce_args(name, args)
-        return handler(executor, args)
+        result = handler(executor, args)
+        if result.get("ok"):
+            _attach_shape_info(executor, result)
+        return result
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

@@ -231,6 +231,14 @@ class TestTransformationTools:
         assert result["ok"] is True, result.get("error")
         assert [r["fn"] for r in result["records"]] == ["MakeMarker", "MakePosition"]
 
+    def test_shape_info_reports_placement(self, agent_client):
+        """Every successful tool result carries bbox/size/centre; a translate shifts it."""
+        box = agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        assert box["shape_info"]["size"] == [10.0, 10.0, 10.0]
+        assert box["shape_info"]["centre"] == [5.0, 5.0, 5.0]
+        moved = agent_client.call_tool("translate", {"shape": "box_1", "dx": 100, "dy": 0, "dz": 0})
+        assert moved["shape_info"]["centre"][0] == pytest.approx(105.0, abs=1e-3)
+
 
 class TestLocalEdgeOps:
     """Test local edge operations."""

@@ -23,6 +23,10 @@ set_display_mode). Refer to any shape, point, vector or plane by the name it
 was published under. For an axis you may pass "OX", "OY" or "OZ" instead of
 building a vector. Angles are in degrees.
 
+Every successful tool result reports the shape's bbox, size and centre (mm)
+in `shape_info` — check it before moving on, especially after a transform,
+to confirm each part landed where you intended.
+
 Apply display properties (set_color, set_transparency, set_display_mode)
 LAST, once, on the final shape — after every primitive, boolean and
 transform. A transform (translate, rotate, ...) produces a NEW shape that
