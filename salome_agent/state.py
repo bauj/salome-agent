@@ -26,11 +26,10 @@ class StageRecord(TypedDict):
 
 
 class SessionHandle(TypedDict):
-    mode: Literal["attach", "launch", "live", "none"]
-    port: Optional[int]
-    executor_pid: Optional[int]
-    alive: bool
-    owned: bool
+    mode: Literal["gui", "headless", "none"]
+    pid: Optional[int]
+    salome_port: Optional[int]
+    name_prefix: str
 
 
 class RunState(TypedDict):
@@ -51,3 +50,4 @@ class RunState(TypedDict):
 
     final_script: Optional[str]
     report: Optional[str]
+    fatal: Optional[str]

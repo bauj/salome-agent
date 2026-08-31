@@ -16,9 +16,13 @@ class CallRecord(TypedDict):
 _counters: dict[str, int] = {}
 
 
-def _next_name(prefix: str) -> str:
+def reset_counters() -> None:
+    _counters.clear()
+
+
+def _next_name(executor, prefix: str) -> str:
     _counters[prefix] = _counters.get(prefix, 0) + 1
-    return f"{prefix}_{_counters[prefix]}"
+    return f"{executor.name_prefix}{prefix}_{_counters[prefix]}"
 
 
 def _resolve(executor, arg: ArgRef):
@@ -42,7 +46,7 @@ def _publish(executor, shape, name: str):
 def tool_make_box(executor, args: dict):
     geompy = executor.namespace["geompy"]
     box = geompy.MakeBoxDXDYDZ(args["dx"], args["dy"], args["dz"])
-    name = _next_name("box")
+    name = _next_name(executor, "box")
     _publish(executor, box, name)
     return {
         "ok": True,
@@ -75,7 +79,7 @@ def tool_fillet_edges(executor, args: dict):
         # failed call) holds by construction rather than by an explicit
         # delete step.
         return {"ok": False, "error": f"fillet_edges: CheckShape failed on result ({msg})"}
-    name = _next_name("fillet")
+    name = _next_name(executor, "fillet")
     _publish(executor, filleted, name)
     return {
         "ok": True,

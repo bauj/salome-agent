@@ -100,8 +100,17 @@ Required keys: `llm.base_url`, `llm.model`, `salome.root`. Missing any of them i
 
 ## Usage
 
-Run **from the repo root** (the executor is launched via the relative path
-`executor/executor.py`, and `config.json` is resolved relative to the current directory).
+Run **from the repo root** (`config.json` is resolved relative to the current directory).
+
+The agent talks to a **SALOME agent server** — the executor loop running inside a
+SALOME process. Start it first (once per SALOME session):
+
+- **GUI:** launch `"$SALOME_ROOT"/salome`, then **Tools ▸ Plugins ▸ Launch SALOME
+  agent server** — see [GUI plugin setup](#gui-plugin-setup) for the one-time install.
+- **Headless (CI / batch):** `scripts/start-headless-server.sh` (needs `SALOME_ROOT`)
+  — isolated study, no GUI.
+
+Then:
 
 ```bash
 cd /storage/Projects/salome-agent
@@ -112,20 +121,17 @@ salome-agent "make a 10mm cube" --batch
 
 The agent will:
 
-1. Start an executor inside SALOME via `salome shell`. By default this is an **isolated,
-   standalone study** — even if you have a SALOME GUI running, the executor does not
-   touch it and objects do not appear in that GUI. (`--port` only picks which omniORB
-   port to hand `salome shell`; it does not change the isolation.) To instead publish
-   into an open GUI as the run progresses, use `--live-gui` (see below).
+1. Connect to the running server via `~/.salome_agent/server.json`. If none is
+   running it exits with a message telling you to start one.
 2. Plan the stages, run each specialist, verify, and assemble — progress is logged to
    stderr as it goes (`planning...`, `stage 1/2 [geom] ...`, `static check: ok`,
    `exec check: ok`, ...). Add `-v` / `--verbose` for per-LLM-call and per-retry detail.
 3. Write output to `<work_dir>/<run_id>/`:
    - `result.py` — the standalone reproducible script
    - `report.md` — per-stage status and retry counts (also printed at the end)
-   - `executor.log` — raw SALOME/paraview startup noise from the executor subprocess
-     (this is where all that `vtkSocket ... Connection refused` chatter goes now,
-     instead of your terminal)
+
+Raw SALOME/paraview noise (`vtkSocket ... Connection refused` etc.) goes to
+`~/.salome_agent/server.log`, not your terminal.
 
 Run the result on its own, with no agent involved:
 
@@ -139,53 +145,40 @@ Run the result on its own, with no agent involved:
 | Flag | Meaning |
 |------|---------|
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
-| `--no-session` | Planner + specialists + static checks only. No live SALOME session, no exec verification. smesh/paravis only (geom needs a live session). Mutually exclusive with `--live-gui`. |
-| `--live-gui` | Publish into a live SALOME GUI as stages run — objects appear in the Object Browser and 3D viewer. Requires a `salome withsession` GUI already running (see below). Mutually exclusive with `--no-session`. |
-| `--port N` | Hand the executor the omniORB port `N` instead of auto-discovering it (applies to both the default isolated mode and `--live-gui`). |
+| `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. smesh/paravis only (geom needs a session). |
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--timeout SECONDS` | Override per-stage exec timeout. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. |
 
-### Live GUI mode (`--live-gui`)
+### GUI plugin setup
 
-Publishes each stage's objects into a live SALOME GUI, so they show up in the Object
-Browser and 3D viewer as the run progresses (instead of an isolated study you never
-see).
+One-time: `scripts/install-plugin.sh` — appends a self-bootstrapping block to
+`~/.config/salome/Plugins/salome_plugins.py` (adds the repo to `sys.path` and
+imports `salome_agent_plugin`). No env vars needed.
 
-**Prerequisite — launch the GUI yourself, in a real session:**
+Each session: launch `"$SALOME_ROOT"/salome` (single-process is fine), then
+**Tools ▸ Plugins ▸ Launch SALOME agent server**. A status message shows
+`127.0.0.1:<port>`. Run the agent normally — it finds the server via
+`~/.salome_agent/server.json`.
 
-```bash
-# on Wayland, prefix QT_QPA_PLATFORM=xcb
-"$SALOME_ROOT"/salome withsession
-```
+Objects a run publishes appear in the Object Browser and 3D viewer, prefixed
+`sa_<run_id>_`. A failed stage attempt can leave debris under that prefix —
+`report.md` names it; bulk-delete by prefix.
 
-A plain `salome` GUI is single-process with an in-process naming service that nothing
-can attach to — only `withsession` (multiple servers, real omniNames) works. Then:
+A second menu click **restarts** the server (new token, new port). A stage timeout
+**poisons** the server: the run aborts (exit 1) and you restart it from the same menu
+— or, if the GUI is frozen by a runaway stage, kill it.
 
-```bash
-salome-agent "make a 20mm cube and mesh it with 5mm tets" --live-gui --batch
-```
+> Auto-launching SALOME from the agent was tried and reverted (task 182). Repeated
+> external attach/detach against a long-lived GUI has crashed the session before
+> (task 181) — save your work; treat live-GUI use as demo/interactive, not unattended
+> batch. Headless (`scripts/start-headless-server.sh`) is the unattended path.
 
-The agent discovers the running port (`--port N` overrides), attaches the executor via
-`salome remote`, and calls `KernelBasis.setSSLMode(False)` so it shares the GUI's own
-engine. After a geom stage, the GEOM module is loaded and connected to the study so
-its tree and shapes are visible; the Object Browser is refreshed after every publish.
-
-> Auto-launching the GUI from the agent was tried and reverted — `salome withsession`
-> started non-interactively from the agent failed to come up reliably (task 182).
-
-**Caveats — this mode can crash your SALOME session:**
-
-- Hovering the mouse over a *freshly externally-published* Object Browser entry has
-  crashed the session. Click to select is fine; don't hover brand-new entries mid-run.
-- Repeated attach/detach cycles (several `--live-gui` runs, or the
-  `tests/salome/test_live_gui.py` test, against one long-lived GUI) have also brought
-  the session down once, with no core dump and no identified root cause (task 181).
-
-Save your work before a `--live-gui` run, and treat the mode as demo/interactive
-only — not for unattended batches.
+**Headless:** do **not** run `python -m agent_server` from an activated venv — the
+wrapper script strips `.venv` from `PATH` first (the venv python lacks `psutil` and
+SALOME's `sys.path`).
 
 ### Interactive mode
 
@@ -229,26 +222,38 @@ salome_agent/
   nodes/            planner, gates (plan/retry), advance, assembler, report
   specialists/      geom (tool-calling), smesh, paravis (raw script), base
   verify/           static (top-level API check), exec_check, introspect
-  session/          manager (launch/attach SALOME), discovery (omniORB port)
+  server_conn.py    finds + connects to the SALOME agent server
+  executor_client.py  TCP client for the server (hello handshake, framing)
   codegen.py        geom call-log -> Python source
+agent_server/       the server that runs inside SALOME
+  core.py           command dispatch + poison gate
+  backend.py        Backend protocol + HeadlessBackend
+  gui_backend.py    GuiBackend + Qt main-thread marshal
+  wire.py           loopback TCP + token listener
+  handshake.py      ~/.salome_agent/server.json
+  gui_plugin.py     the Tools > Plugins entry point
+  __main__.py       headless entry (`python -m agent_server`)
 executor/
-  executor.py       the in-SALOME process (socket server)
   geom_tools.py     geom tool implementations + per-tool JSON schemas
-docs/superpowers/   design spec (rev 6) + implementation plan
+plugin/             salome_agent_plugin.py (drop into ~/.config/salome/Plugins)
+scripts/            install-plugin.sh, start-headless-server.sh
+docs/superpowers/   design specs + implementation plans
 ```
 
 ---
 
 ## Known limitations
 
-- **`--live-gui` is new and lightly tested** — the attach path and per-publish refresh
-  work (verified live for geom and geom → smesh), but attaching external clients to a
-  live GUI has crashed the session at least once (no root cause yet), and rollback-retry
-  (`reset_and_replay`) re-runs scripts against the live study, which can leave duplicate
-  objects. Demos only; save your work first.
+- **The GUI plugin server is new and lightly tested.** External driving of a live
+  GUI has crashed the session before (task 181). GUI mode does not roll back — a
+  failed stage attempt leaves `sa_<run_id>_`-prefixed debris in the study. A stage
+  timeout poisons the server (run aborts, exit 1); recovery may need killing the GUI.
+  Demos only; save your work first. Headless mode is the unattended path.
 - `verify/toplevel_api.json` (the `--no-session` static-check fixture) still holds
   placeholder API member lists — not regenerated from a live `introspect()`.
 - geom tool registry covers `make_box`, `fillet_edges`, `check_shape`,
   `list_study_objects` only. Add more (`make_cylinder`, `boolean_*`, `chamfer_edges`)
   using the existing `TOOL_SCHEMAS` pattern in `executor/geom_tools.py`.
+- `reset_and_replay` (rollback) is wired only for the headless backend and has no
+  graph-level caller yet — retries re-run the full stage script.
 - RAG / documentation retrieval was cut from v1.

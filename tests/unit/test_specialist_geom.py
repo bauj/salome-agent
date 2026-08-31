@@ -28,3 +28,13 @@ def test_exhausted_loop_sets_last_error():
     result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
                                   llm, client, iteration_cap=2)
     assert result["last_error"]["message"] == "bad box"
+
+
+def test_geom_specialist_returns_fatal_on_session_poisoned():
+    from salome_agent.executor_client import SessionPoisoned
+    llm = MagicMock()
+    client = MagicMock()
+    client.list_tools.side_effect = SessionPoisoned("dead")
+    out = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": []},
+                              llm, client, iteration_cap=5)
+    assert "fatal" in out
