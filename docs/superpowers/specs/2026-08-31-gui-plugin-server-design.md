@@ -487,3 +487,26 @@ fatal path), and all deletions land together. No deprecation window.
   `verify/exec_check.py` `client.run` on `None`) — recorded as a known gap;
   `plan_gate` should reject geom stages under `--no-session`, still
   unimplemented.
+
+## Phase 0 result (2026-08-31)
+
+Ran on `SALOME-master-native-FD44`, single-process `QT_QPA_PLATFORM=xcb ./salome`,
+throwaway plugin clicked from Tools ▸ Plugins.
+
+- **Gate A — PASS.** `SalomePyQt.usePySide()` is `True` (PySide2). A `Signal(object)`
+  on a `QObject` created in the plugin function, connected `Qt.QueuedConnection`,
+  fires from a bare `threading.Thread`: `fired=True ran_on=MainThread`. Also verified
+  with the `QObject` held only by a module global + `gc.collect()` before the emit.
+  No `QThread` fallback needed.
+- **Gate B — PASS, with a correction.** `salome.sg` does **not** exist on this build.
+  Both `context.sg.updateObjBrowser()` (the plugin `context`) and
+  `libSALOME_Swig.SALOMEGUI_Swig().updateObjBrowser()` work. `gui_backend.py` now uses
+  the `libSALOME_Swig` form (no `context` needed on the server thread). No
+  `emitMessageOneWay` / `register_module_in_study` required — a plain
+  `updateObjBrowser()` after `addToStudy` is enough in single-process mode.
+- **Gate C — PASS.** The box published by the marshalled code appeared in the GUI's
+  own Object Browser and 3D viewer immediately — the colocated GEOM engine is the
+  GUI's, no attach.
+
+Automated proxy: `tests/salome/test_gui_marshal.py` (3 tests) passes under
+`salome shell -- pytest`.

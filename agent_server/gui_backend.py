@@ -108,8 +108,13 @@ class GuiBackend:
         return {"ok": False, "error": "no rollback in a live GUI study"}
 
     def refresh(self, module):
+        # salome.sg does not exist on this build (Phase 0 spike, 2026-08-31);
+        # SALOMEGUI_Swig().updateObjBrowser() does, and runs a direct inline
+        # Execute() on the session thread — which is where this already is,
+        # having been marshalled by run_on_main.
         def _do():
-            self.namespace["salome"].sg.updateObjBrowser()
+            import libSALOME_Swig
+            libSALOME_Swig.SALOMEGUI_Swig().updateObjBrowser()
         try:
             self._invoker.run_on_main(_do, timeout=10)
         except Exception:
