@@ -333,6 +333,18 @@ Every one produces a **new** published shape; the input is untouched.
 - ARG_TYPES: `{offset: float}`
 - prefix: `off`
 
+#### `position`  (Modify Location)
+- geompy: `MakeMarker(*origin, *x_dir, *y_dir)` then
+  `MakePosition(theObject, None, marker)` (start LCS `None` = global frame)
+- args: `shape` (ref, R), `origin` (list[3], default `[0,0,0]`),
+  `x_dir` (list[3], default `[1,0,0]`), `y_dir` (list[3], default `[0,1,0]`)
+- coercion: element-wise `float()` in the handler (list args, not ARG_TYPES)
+- two CallRecords: `MakeMarker` (prefix `lcs`, 9 literal floats) then
+  `MakePosition` (prefix `pos`, args `[ref shape, literal None, ref marker]`)
+- copy semantics verified; place a shape's local frame onto a target frame
+  — for assembling parts. `MakePosition` accepts a `None` start LCS so only
+  the target marker is built.
+
 ### 4.6 Local edge operations
 
 #### `fillet_edges`  — **FIX the existing tool**

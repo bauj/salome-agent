@@ -1041,6 +1041,40 @@ def tool_offset_shape(executor, args: dict):
     }
 
 
+def tool_position(executor, args: dict):
+    """Modify Location: place a shape so its local frame lands on the given
+    target frame (origin + X/Y axis directions). Copy semantics -- the
+    source is untouched. Start LCS is the global frame (None)."""
+    geompy = executor.namespace["geompy"]
+    shape = executor.geom_bindings[args["shape"]]
+    origin = [float(v) for v in args.get("origin", [0.0, 0.0, 0.0])]
+    x_dir = [float(v) for v in args.get("x_dir", [1.0, 0.0, 0.0])]
+    y_dir = [float(v) for v in args.get("y_dir", [0.0, 1.0, 0.0])]
+    marker = geompy.MakeMarker(*origin, *x_dir, *y_dir)
+    marker_name = _next_name(executor, "lcs")
+    _publish(executor, marker, marker_name)
+    result = geompy.MakePosition(shape, None, marker)
+    is_valid, msg = geompy.CheckShape(result, True, 1)
+    if not is_valid:
+        return {"ok": False, "error": f"position: CheckShape failed ({msg})"}
+    name = _next_name(executor, "pos")
+    _publish(executor, result, name)
+    return {
+        "ok": True,
+        "records": [
+            {"fn": "MakeMarker",
+             "args": [{"kind": "literal", "value": v} for v in (*origin, *x_dir, *y_dir)],
+             "out_vars": [marker_name], "publish": [marker_name]},
+            {"fn": "MakePosition",
+             "args": [{"kind": "ref", "value": args["shape"]},
+                      {"kind": "literal", "value": None},
+                      {"kind": "ref", "value": marker_name}],
+             "out_vars": [name], "publish": [name]},
+        ],
+        "sanity": {"ok": True},
+    }
+
+
 def tool_set_color(executor, args: dict):
     # Live call for immediate GUI update
     shape = executor.geom_bindings[args["shape"]]
@@ -1151,6 +1185,7 @@ TOOLS: dict[str, Callable] = {
     "multi_translate": tool_multi_translate,
     "multi_rotate": tool_multi_rotate,
     "offset_shape": tool_offset_shape,
+    "position": tool_position,
     "fillet_edges": tool_fillet_edges,
     "chamfer_edges": tool_chamfer_edges,
     "set_color": tool_set_color,
@@ -1481,6 +1516,19 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "offset": {"type": "number"},
         },
         "required": ["shape", "offset"],
+    },
+    "position": {
+        "type": "object",
+        "properties": {
+            "shape": {"type": "string", "description": "shape to place (a copy is made)"},
+            "origin": {"type": "array", "items": {"type": "number"},
+                       "description": "target frame origin [x,y,z]; default [0,0,0]"},
+            "x_dir": {"type": "array", "items": {"type": "number"},
+                      "description": "target frame X-axis direction; default [1,0,0]"},
+            "y_dir": {"type": "array", "items": {"type": "number"},
+                      "description": "target frame Y-axis direction; default [0,1,0]"},
+        },
+        "required": ["shape"],
     },
     "fillet_edges": {
         "type": "object",
