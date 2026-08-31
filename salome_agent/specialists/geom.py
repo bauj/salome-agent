@@ -7,7 +7,19 @@ GEOM_SYSTEM_PROMPT = """You build geometry by calling tools, not by writing
 geompy source. Reference upstream objects by their published name. Lengths
 are millimetres, unconverted. When done, call finish_stage(result_names)
 naming which of your published objects matter — everything they transitively
-depend on is kept, everything else is dropped."""
+depend on is kept, everything else is dropped.
+
+You can create primitives (make_box, make_box_two_pnt, make_cylinder,
+make_sphere, make_cone, make_torus, make_face, make_disk), basic objects
+(make_point, make_vector, make_line, make_plane, make_circle), swept shapes
+(make_prism, make_revolution, make_pipe, make_thick_solid, make_filling),
+combine shapes (fuse, cut, common, partition), transform them — always
+producing a copy — (translate, rotate, mirror, scale, multi_translate,
+multi_rotate, offset_shape), round or bevel edges (fillet_edges,
+chamfer_edges), and set display properties (set_color, set_transparency,
+set_display_mode). Refer to any shape, point, vector or plane by the name it
+was published under. For an axis you may pass "OX", "OY" or "OZ" instead of
+building a vector. Angles are in degrees."""
 
 FINISH_STAGE_SCHEMA = {
     "type": "object",
