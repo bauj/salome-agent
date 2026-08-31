@@ -12,19 +12,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--work-dir", default=None)
     parser.add_argument("--config", default=None)
     parser.add_argument("--on-failure", choices=["abort", "continue"], default=None)
-    parser.add_argument("--timeout", type=float, default=None)
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="per-request LLM timeout in seconds (overrides llm.timeout in config)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show per-tool-call / per-retry detail")
     return parser.parse_args(argv)
 
 
-def build_llm(config: dict):
+def build_llm(config: dict, request_timeout: float | None = None):
     from salome_agent.llm import LLMClient
 
     llm_config = config["llm"]
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
-                     temperature=llm_config.get("temperature", 0))
+                     temperature=llm_config.get("temperature", 0),
+                     request_timeout=request_timeout or llm_config.get("timeout", 120))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -74,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         log.info("session: connected to the %s agent server", client.mode)
 
     cfg = {"configurable": {"thread_id": uuid.uuid4().hex,
-                            "llm_client": build_llm(config),
+                            "llm_client": build_llm(config, args.timeout),
                             "executor_client": client}}
     try:
         graph = build_graph(batch=args.batch)
