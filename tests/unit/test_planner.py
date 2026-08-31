@@ -24,3 +24,22 @@ def test_geom_only_request_yields_no_smesh_stage():
     stages = plan("make a box", llm)
     assert len(stages) == 1
     assert stages[0]["module"] == "geom"
+
+
+def test_plan_detail_hint_appended_to_system_prompt():
+    from salome_agent.nodes.planner import _DETAIL_HINT
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("make a widget", llm, detail="fine")
+    system = llm.chat.call_args.kwargs["messages"][0]["content"]
+    assert _DETAIL_HINT["fine"] in system
+    assert system.startswith("You turn a natural-language SALOME request")
+
+
+def test_plan_unknown_detail_falls_back_to_no_hint():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("x", llm, detail="bogus")  # no crash, no extra hint
+    system = llm.chat.call_args.kwargs["messages"][0]["content"]
+    from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT
+    assert system == PLANNER_SYSTEM_PROMPT
