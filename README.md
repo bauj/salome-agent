@@ -154,12 +154,9 @@ Run the result on its own, with no agent involved:
 
 ### GUI plugin setup
 
-One-time:
-
-1. `scripts/install-plugin.sh` — registers the plugin and prints the
-   `SALOME_PLUGINS_PATH` you need.
-2. `export SALOME_PLUGINS_PATH="<repo>/plugin:<repo>"` in the shell that launches
-   SALOME.
+One-time: `scripts/install-plugin.sh` — appends a self-bootstrapping block to
+`~/.config/salome/Plugins/salome_plugins.py` (adds the repo to `sys.path` and
+imports `salome_agent_plugin`). No env vars needed.
 
 Each session: launch `"$SALOME_ROOT"/salome` (single-process is fine), then
 **Tools ▸ Plugins ▸ Launch SALOME agent server**. A status message shows
