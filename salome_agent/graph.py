@@ -44,7 +44,7 @@ def _plan_node(state: dict, config: "RunnableConfig"):
 
     llm = config["configurable"]["llm_client"]
     detail = state["config"]["policy"].get("plan_detail", "balanced")
-    log.info("planning...")
+    log.info("planning... (plan_detail=%s)", detail)
     stage_plans = plan(state["user_request"], llm, detail)
     log.info("plan: %d stage(s)", len(stage_plans))
     for i, p in enumerate(stage_plans):
