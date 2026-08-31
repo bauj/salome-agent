@@ -19,15 +19,16 @@ Two processes:
 | Process   | Runs where | Does |
 |-----------|-----------|------|
 | **agent**    | your Python venv | planning, LLM calls, static verification, script assembly (LangGraph `StateGraph`) |
-| **executor** | inside SALOME, launched via `salome shell -- executor.py` | executes stage scripts, geom tool calls, introspection, sanity checks, timeout kills |
+| **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes stage scripts, geom tool calls, introspection, sanity checks, timeout kills |
 
-They talk over a Unix socket (line-delimited JSON).
+The agent connects to the server over loopback TCP (token-authenticated,
+line-delimited JSON); it discovers a running server via `~/.salome_agent/server.json`.
 
 Flow: `request → plan → [per stage: specialist → verify static → verify exec → advance] → assemble result.py → report`
 
-- **geom** stages run as tool calls (`make_box`, `fillet_edges`, ...) against the executor; the script is generated from the call log.
+- **geom** stages run as tool calls (`make_box`, `fillet_edges`, ...) against the server; the script is generated from the call log.
 - **smesh / paravis** stages are raw scripts, statically checked (top-level API existence) then executed under a timeout with per-module sanity checks.
-- Rollback on retry = replay the accepted stages (no MED checkpoints — GEOM can't export MED).
+- Stage retry re-runs the full stage script (no MED checkpoints — GEOM can't export MED). GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
 
 ---
 
@@ -43,7 +44,7 @@ Flow: `request → plan → [per stage: specialist → verify static → verify 
 ## Install
 
 ```bash
-cd /storage/Projects/salome-agent
+cd /path/to/salome-agent   # the repo root
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .          # or -e ".[dev]" to also get pytest
@@ -113,7 +114,7 @@ SALOME process. Start it first (once per SALOME session):
 Then:
 
 ```bash
-cd /storage/Projects/salome-agent
+cd /path/to/salome-agent   # the repo root
 source .venv/bin/activate
 
 salome-agent "make a 10mm cube" --batch
@@ -155,8 +156,9 @@ Run the result on its own, with no agent involved:
 ### GUI plugin setup
 
 One-time: `scripts/install-plugin.sh` — appends a self-bootstrapping block to
-`~/.config/salome/Plugins/salome_plugins.py` (adds the repo to `sys.path` and
-imports `salome_agent_plugin`). No env vars needed.
+`~/.config/salome/Plugins/salome_plugins.py` that puts the repo on `sys.path` and
+registers the menu entry with a direct `AddFunction` call (an `import`-only
+indirection does not reach the plugin manager). No env vars needed.
 
 Each session: launch `"$SALOME_ROOT"/salome` (single-process is fine), then
 **Tools ▸ Plugins ▸ Launch SALOME agent server**. A status message shows
@@ -234,11 +236,13 @@ agent_server/       the server that runs inside SALOME
   gui_backend.py    GuiBackend + Qt main-thread marshal
   wire.py           loopback TCP + token listener
   handshake.py      ~/.salome_agent/server.json
-  gui_plugin.py     the Tools > Plugins entry point
+  gui_plugin.py     the Tools > Plugins entry point (launch/restart)
+  namespace.py      builds the exec namespace (geompy/smesh/... ; defers pvsimple)
   __main__.py       headless entry (`python -m agent_server`)
 executor/
   geom_tools.py     geom tool implementations + per-tool JSON schemas
-plugin/             salome_agent_plugin.py (drop into ~/.config/salome/Plugins)
+plugin/             salome_agent_plugin.py — standalone manual-registration variant
+                    (install-plugin.sh inlines the same call; not imported by it)
 scripts/            install-plugin.sh, start-headless-server.sh
 docs/superpowers/   design specs + implementation plans
 ```
