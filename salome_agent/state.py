@@ -51,3 +51,4 @@ class RunState(TypedDict):
     final_script: Optional[str]
     report: Optional[str]
     fatal: Optional[str]
+    aborted: Optional[bool]
