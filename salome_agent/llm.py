@@ -1,7 +1,10 @@
 import json
 import re
+import time
 
 import requests
+
+from salome_agent.logs import log
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
@@ -60,14 +63,31 @@ class LLMClient:
             ]
             payload["tool_choice"] = "required"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
-                              headers=headers, verify=self.ssl_cert_file, timeout=120)
+        tool_names = [t["name"] for t in tools] if tools else None
+        log.debug("LLM request: model=%s, %d message(s), tools=%s",
+                  self.model, len(messages), tool_names or "-")
+        t0 = time.monotonic()
+        try:
+            resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
+                                  headers=headers, verify=self.ssl_cert_file, timeout=120)
+        except requests.RequestException as e:
+            log.debug("LLM request failed after %.1fs: %s", time.monotonic() - t0, e)
+            raise
         resp.raise_for_status()
-        message = resp.json()["choices"][0]["message"]
+        body = resp.json()
+        message = body["choices"][0]["message"]
+        finish = body["choices"][0].get("finish_reason")
 
         if tools:
+            calls = message.get("tool_calls") or []
+            log.debug("LLM response in %.1fs: finish=%s, tool_calls=%s",
+                      time.monotonic() - t0, finish,
+                      [c["function"]["name"] for c in calls] or "none")
             tool_call = message["tool_calls"][0]
             call = tool_call["function"]
             return {"tool_call": call["name"], "args": json.loads(call["arguments"]),
                     "tool_call_id": tool_call.get("id")}
-        return _parse_json_content(message["content"])
+        content = message["content"]
+        log.debug("LLM response in %.1fs: finish=%s, %d chars of content",
+                  time.monotonic() - t0, finish, len(content or ""))
+        return _parse_json_content(content)
