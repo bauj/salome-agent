@@ -25,14 +25,17 @@ import pytest
 
 from salome_agent.session.discovery import discover_port
 
+from ._salome_root import SALOME_ROOT
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SALOME_ROOT = "/storage/salome_platform/devel/SALOME-master-native-FD44"
 _PORT = discover_port()
 
 pytestmark = [
     pytest.mark.salome,
     pytest.mark.skipif(_PORT is None,
                        reason="no running SALOME session — launch `salome withsession` first"),
+    pytest.mark.skipif(SALOME_ROOT is None,
+                       reason="set SALOME_ROOT or salome.root in config.json"),
 ]
 
 

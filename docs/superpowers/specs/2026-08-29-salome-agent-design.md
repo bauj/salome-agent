@@ -81,7 +81,7 @@ them but they are out of scope for v1.
 | 9 | Interaction: interactive by default (plan gate + retry-help gate). `--batch` disables both. |
 | 10 | LLM: provider-agnostic. Any OpenAI-compatible, tool-calling chat model, configured by endpoint + key + model in `config.json`. |
 | 11 | *(Deferred to v2 — see decision 19, revision 6.)* ~~RAG: `rag_and_chatbot` is made importable...~~ Originally: `rag_and_chatbot` made importable and installed `-e`; `rag_search` called `DocumentationChatbot.ask()` and returned `sources[].full_content`, not the generated `answer`, reranker disabled. |
-| 12 | SALOME build: `/storage/salome_platform/devel/SALOME-master-native-FD44` (the 9.16.0 dev install is broken). GUI launch, when a human wants it, is `QT_QPA_PLATFORM=xcb ./salome` — done by the user, not the agent. |
+| 12 | SALOME build: a recent `master` native build, path in `config.json` (`salome.root`). GUI launch, when a human wants it, is `QT_QPA_PLATFORM=xcb ./salome` — done by the user, not the agent. |
 | 13 | **GEOM as intent-level tools, not raw scripts (v1 pivot).** *(Process placement superseded by decision 17 — see revision 5.)* The `geom` stage no longer runs through the raw-script path. Intent-level, primitive+op-tier tools over `geompy` (one tool per primitive/operation family) each validate params and sanity-check their own result inline. The geom specialist becomes a tool-calling client. `smesh` and `paravis` are unaffected in v1 — they keep the raw-script + executor + static/exec verify path from decision 3/4; their own tool surfaces are a later evolution (§13). "MCP" here names the *shape* of the interface (intent-level tools, a client loop), not an interoperability requirement — reusability from other MCP clients was explicitly not a goal. See §3.4, §5.4, §6.5. |
 | 14 | *(Superseded by decision 17 — see revision 5.)* ~~One shared session, held by two attached processes.~~ Originally: `session/manager.py` launches (or attaches to) exactly one SALOME session per run, with `executor` and a separate `geom_mcp/server.py` both attached to it. Round-3 review found this split was never actually reconciled (launch ordering, geom-only plans starting no executor, `reset_and_replay` not resetting `geom_mcp`'s own state) — decision 17 removes the split instead of continuing to patch it. |
 | 15 | **Geom codegen runs incrementally, not at assemble time.** The moment a geom stage's `finish_stage` succeeds and `advance` fires, its call log is translated to geompy source immediately, filling `StageRecord.script` — the same field smesh/paravis populate on their own success. This is required for `reset_and_replay` (decision 5) to work: a later stage's retry replays *all* prior accepted stage scripts, geom included, and that only works if the script already exists. Confirmed still correct by the round-3 review. See §3.4, §4.3. |
@@ -725,7 +725,7 @@ is gitignored and was never tracked — not a leak, no rotation needed.
 {
   "llm": { "base_url": "", "api_key": "", "model": "", "temperature": 0 },
   "salome": {
-    "root": "/storage/salome_platform/devel/SALOME-master-native-FD44"
+    "root": "/path/to/your/SALOME"
   },
   "policy": {
     "static_retries": 3,

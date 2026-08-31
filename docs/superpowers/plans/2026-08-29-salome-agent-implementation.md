@@ -427,7 +427,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `pytest tests/salome/test_executor.py -v -m salome`
-Expected: PASS (3 tests). Requires a working `SALOME-master-native-FD44` install on `PATH`.
+Expected: PASS (3 tests). Requires a working SALOME install on `PATH`.
 
 - [ ] **Step 5: Verify no agent-side imports leaked in**
 
@@ -1913,7 +1913,7 @@ def load_config(path: str) -> dict:
 {
   "llm": { "base_url": "", "api_key": "", "model": "", "temperature": 0 },
   "salome": {
-    "root": "/storage/salome_platform/devel/SALOME-master-native-FD44"
+    "root": "/path/to/your/SALOME"
   },
   "policy": {
     "static_retries": 3,
