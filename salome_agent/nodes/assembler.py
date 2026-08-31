@@ -14,6 +14,12 @@ _SMESH_INIT = """from salome.smesh import smeshBuilder
 smesh = smeshBuilder.New()
 """
 
+_SALOMEDS_INIT = """from salome.kernel import SALOMEDS
+"""
+
+_GUI_INIT = """gg = salome.ImportComponentGUI("GEOM")
+"""
+
 # Only emitted when a stage actually looks an object up in the study by name
 # (a cross-stage / cross-module reference — codegen emits `find_object("x")`).
 _FIND_OBJECT = """def find_object(name):
@@ -56,6 +62,10 @@ def assemble(state: dict) -> str:
         preamble += _GEOM_INIT
     if {"smesh", "paravis"} & modules or "smesh" in body:
         preamble += _SMESH_INIT
+    if "SALOMEDS.Color(" in body:
+        preamble += _SALOMEDS_INIT
+    if "gg." in body:
+        preamble += _GUI_INIT
     if "find_object(" in body:
         preamble += _FIND_OBJECT
     if "study_ns" in body:

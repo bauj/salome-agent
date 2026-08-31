@@ -31,7 +31,7 @@ def build_namespace(live: bool) -> dict:
     if not live:
         from salome.kernel import KernelBasis
         KernelBasis.setSSLMode(True)
-    from salome.kernel import salome
+    from salome.kernel import salome, SALOMEDS
     salome.salome_init()   # guarded — no-op if the GUI already ran it (live=True)
     from salome.geom import geomBuilder
     geompy = geomBuilder.New()
@@ -48,6 +48,7 @@ def build_namespace(live: bool) -> dict:
             pvsimple = None
     return {
         "salome": salome, "geompy": geompy, "smesh": smesh, "pvsimple": pvsimple,
+        "SALOMEDS": SALOMEDS,
         "study_ns": "salome_agent_run",
         "find_object": _find_object_factory(salome),
     }

@@ -2,7 +2,16 @@ PLANNER_SYSTEM_PROMPT = """You turn a natural-language SALOME request into an
 ordered list of stages. Each stage has: module (geom|smesh|paravis), intent
 (short description), params (dims in millimetres, unconverted), inputs (named
 upstream objects this stage needs). Only emit stages the request actually
-needs. Repeating a module is allowed. Respond as JSON: {"stages": [...]}."""
+needs. Repeating a module is allowed. Respond as JSON: {"stages": [...]}.
+
+Module scope:
+- geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
+  AND display properties of geometry (colour, transparency, display mode).
+  "make it red", "colour the shape blue", "50% transparent" are geom stages.
+- smesh: meshing a geometry (algorithms, hypotheses, compute).
+- paravis: post-processing an existing simulation result (a MED file) --
+  contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
+  Only use paravis when the request involves a results/field/MED file."""
 
 
 def blank_stages(stage_plans: list[dict]) -> dict:
