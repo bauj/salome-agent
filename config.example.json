@@ -8,6 +8,7 @@
     "exec_retries": 2,
     "exec_timeout_s": 120,
     "tool_iteration_cap": 12,
+    "plan_detail": "balanced",
     "on_stage_failure": "abort",
     "assembler_smoke_run": true
   },

@@ -43,8 +43,9 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     from salome_agent.nodes.planner import blank_stages, plan
 
     llm = config["configurable"]["llm_client"]
+    detail = state["config"]["policy"].get("plan_detail", "balanced")
     log.info("planning...")
-    stage_plans = plan(state["user_request"], llm)
+    stage_plans = plan(state["user_request"], llm, detail)
     log.info("plan: %d stage(s)", len(stage_plans))
     for i, p in enumerate(stage_plans):
         log.info("  stage %d/%d [%s] %s", i + 1, len(stage_plans), p["module"],
