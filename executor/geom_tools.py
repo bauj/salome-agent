@@ -1152,6 +1152,15 @@ def tool_list_study_objects(executor, args: dict):
             "names": list(executor.geom_bindings.keys())}
 
 
+def tool_measure(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    out = {}
+    for name in args["names"]:
+        shape = executor.geom_bindings.get(name)
+        out[name] = _shape_info(geompy, shape) if shape is not None else None
+    return {"ok": True, "records": [], "sanity": {"ok": True}, "measurements": out}
+
+
 # Registry: tool name -> handler(executor, args) -> ToolResult.
 # make_cylinder/boolean_*/chamfer_edges/finish_stage follow the same shape
 # as tool_make_box/tool_fillet_edges above and are added the same way —
@@ -1194,6 +1203,7 @@ TOOLS: dict[str, Callable] = {
     "set_display_mode": tool_set_display_mode,
     "check_shape": tool_check_shape,
     "list_study_objects": tool_list_study_objects,
+    "measure": tool_measure,
 }
 
 # Per-tool arg coercion: LLM tool-call args arrive JSON-typed (numbers can
@@ -1590,6 +1600,14 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "required": ["shape"],
     },
     "list_study_objects": {"type": "object", "properties": {}},
+    "measure": {
+        "type": "object",
+        "properties": {
+            "names": {"type": "array", "items": {"type": "string"},
+                      "description": "published shape names to measure"},
+        },
+        "required": ["names"],
+    },
 }
 
 # One line per tool: what it produces and the implicit placement/orientation
@@ -1634,6 +1652,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "set_display_mode": "Set display mode of `shape` (0=wireframe, 1=shading, 2=shading+edges).",
     "check_shape": "Report whether `shape` is a valid geometry, with a diagnostic message.",
     "list_study_objects": "List the names of every object currently published in the study.",
+    "measure": "Report bbox/size/centre (mm) of one or more published shapes by name. Use it to check where a shape landed and to see upstream shapes you did not build.",
 }
 
 
