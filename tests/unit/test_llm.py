@@ -58,6 +58,23 @@ def test_trace_writes_request_and_raw_response(tmp_path, monkeypatch):
     assert entry["response"]["finish_reason"] == "stop"
 
 
+def test_chat_forwards_tool_description(monkeypatch):
+    captured = {}
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResp({"choices": [{"finish_reason": "tool_calls", "message": {
+            "tool_calls": [{"id": "c1", "function": {"name": "make_box", "arguments": "{}"}}]}}]})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "make_box", "parameters": {"type": "object"}, "description": "a solid box"}],
+    )
+    fn = captured["payload"]["tools"][0]["function"]
+    assert fn["description"] == "a solid box"
+
+
 def test_no_trace_path_writes_nothing(tmp_path, monkeypatch):
     body = {"choices": [{"finish_reason": "stop",
                          "message": {"content": '{"stages": []}'}}]}

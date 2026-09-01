@@ -16,6 +16,12 @@ TOOL_SCHEMAS = {
     },
 }
 
+TOOL_DESCRIPTIONS = {
+    "api_introspect": "Report the members (methods/attributes) of a SALOME API object by name.",
+    "list_study": "List the names of every object currently published in the study.",
+    "emit_script": "Submit the finished Python script for this stage as `code`. Call once, when done.",
+}
+
 
 def run_specialist(stage_plan: dict, llm, tools: dict, iteration_cap: int,
                     system_prompt: str | None = None,
@@ -34,7 +40,9 @@ def run_specialist(stage_plan: dict, llm, tools: dict, iteration_cap: int,
     messages = [{"role": "user", "content": content}]
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
-    tool_defs = [{"name": n, "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}})}
+    tool_defs = [{"name": n,
+                  "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}}),
+                  "description": TOOL_DESCRIPTIONS.get(n, "")}
                  for n in list(tools) + ["emit_script"]]
     last_code = ""
     for i in range(iteration_cap):

@@ -4,40 +4,37 @@ from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.logs import log
 
 GEOM_SYSTEM_PROMPT = """You build geometry by calling tools, not by writing
-geompy source. Reference upstream objects by their published name. Lengths
-are millimetres, unconverted. When done, call finish_stage(result_names)
-naming which of your published objects matter — everything they transitively
-depend on is kept, everything else is dropped.
+geompy source. Each tool carries its own description — read it, especially
+for the default placement and orientation of primitives. Reference any
+shape, point, vector or plane by the name it was published under. For an
+axis you may pass "OX", "OY" or "OZ" instead of building a vector. Lengths
+are millimetres, unconverted; angles are in degrees.
 
-You can create primitives (make_box, make_box_two_pnt, make_cylinder,
-make_sphere, make_cone, make_torus, make_face, make_disk), basic objects
-(make_point, make_vector, make_line, make_plane, make_circle), swept shapes
-(make_prism, make_revolution, make_pipe, make_thick_solid, make_filling),
-combine shapes (fuse, cut, common, partition), transform them — always
-producing a copy — (translate, rotate, mirror, scale, multi_translate,
-multi_rotate, offset_shape, position — place a shape's local frame at a
-target origin + axis directions, good for assembling parts), round or
-bevel edges (fillet_edges,
-chamfer_edges), and set display properties (set_color, set_transparency,
-set_display_mode). Refer to any shape, point, vector or plane by the name it
-was published under. For an axis you may pass "OX", "OY" or "OZ" instead of
-building a vector. Angles are in degrees.
+When done, call finish_stage(result_names) naming which of your published
+objects matter — everything they transitively depend on is kept, everything
+else is dropped.
+
+Do only what the request asks. Do not invent colours, transparency or
+display modes that were not requested.
 
 Every successful tool result reports the shape's bbox, size and centre (mm)
-in `shape_info` — check it before moving on, especially after a transform,
-to confirm each part landed where you intended.
+in `shape_info` — check it before moving on, especially after a transform
+or a boolean, to confirm each part landed where you intended.
 
-Apply display properties (set_color, set_transparency, set_display_mode)
-LAST, once, on the final shape — after every primitive, boolean and
-transform. A transform (translate, rotate, ...) produces a NEW shape that
-does not inherit the source's colour, so colouring before transforming
-loses the colour."""
+Every transform (translate, rotate, ...) produces a NEW shape that does not
+inherit the source's colour. So apply display properties (set_color,
+set_transparency, set_display_mode) LAST, once, on the final shape — after
+every primitive, boolean and transform."""
 
 FINISH_STAGE_SCHEMA = {
     "type": "object",
     "properties": {"result_names": {"type": "array", "items": {"type": "string"}}},
     "required": ["result_names"],
 }
+FINISH_STAGE_DESCRIPTION = (
+    "Finish this stage. `result_names` = the published names that matter; "
+    "their dependencies are kept, everything else is dropped."
+)
 
 
 def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int) -> dict:
@@ -56,7 +53,9 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int) -> dict:
     # offering only finish_stage leaves it no way to build anything (real bug
     # found running against a live LLM: it had nothing to call and the
     # response came back with no tool_calls at all).
-    tools = client.list_tools()["tools"] + [{"name": "finish_stage", "parameters": FINISH_STAGE_SCHEMA}]
+    tools = client.list_tools()["tools"] + [
+        {"name": "finish_stage", "parameters": FINISH_STAGE_SCHEMA,
+         "description": FINISH_STAGE_DESCRIPTION}]
     for i in range(iteration_cap):
         log.debug("    geom iter %d/%d: asking LLM...", i + 1, iteration_cap)
         response = llm.chat(messages=messages, tools=tools)

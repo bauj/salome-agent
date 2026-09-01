@@ -8,6 +8,16 @@ import pytest
 from executor import geom_tools
 
 
+class TestToolDescriptions:
+    def test_every_llm_facing_tool_has_a_description(self):
+        for name in geom_tools.TOOLS:
+            assert geom_tools.TOOL_DESCRIPTIONS.get(name), f"no description for {name}"
+
+    def test_list_tools_carries_name_params_description(self):
+        for t in geom_tools.list_tools():
+            assert t["name"] and t["parameters"] and t["description"]
+
+
 class TestResolverHelpers:
     """Unit tests for _resolve_axis, _resolve_plane, _resolve_point helpers."""
 
