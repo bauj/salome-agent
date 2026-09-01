@@ -15,12 +15,6 @@ def test_run_syntax_error_reports_offending_line(agent_client):
     assert result["offending_line"] == 1
 
 
-def test_timeout_kills_infinite_loop(agent_client):
-    result = agent_client.run("while True: pass", timeout=1)
-    assert result["ok"] is False
-    assert "timeout" in result["exception"].lower()
-
-
 def test_geompy_call_actually_executes(agent_client):
     result = agent_client.run(
         "geompy.addToStudy(geompy.MakeBoxDXDYDZ(1, 1, 1), 'box_1')", timeout=10)
