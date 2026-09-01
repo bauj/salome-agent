@@ -8,11 +8,6 @@ smesh/paravis path against the configured LLM and a live SALOME session.
 Skipped unless BOTH a real ./config.json is present AND -m salome is run.
 """
 import json
-import os
-import socket
-import subprocess
-import tempfile
-import time
 from pathlib import Path
 
 import pytest
@@ -25,15 +20,6 @@ pytestmark = [
     pytest.mark.skipif(not CONFIG_PATH.exists(),
                        reason="no config.json — needs a real LLM endpoint"),
 ]
-
-
-def _salome_subprocess_env() -> dict:
-    env = os.environ.copy()
-    env["PATH"] = os.pathsep.join(
-        p for p in env.get("PATH", "").split(os.pathsep) if ".venv" not in p
-    )
-    env.pop("VIRTUAL_ENV", None)
-    return env
 
 
 @pytest.fixture(scope="module")
@@ -52,32 +38,30 @@ def live_llm(config):
 
 
 @pytest.fixture
-def client(config):
+def client():
+    """Own throwaway server per test (check_exec here can poison the backend).
+
+    Uses conftest's _start_server / _kill_tree so the SALOME tree is spawned in
+    its own process group and reaped -- a bare proc.terminate(); proc.kill()
+    with no follow-up wait() left the launcher <defunct> under pytest (issue #5).
+    """
     from salome_agent.executor_client import ExecutorClient
 
-    hs = os.path.expanduser("~/.salome_agent/server.json")
-    if os.path.exists(hs):
-        os.unlink(hs)
-    proc = subprocess.Popen(
-        [f"{config['salome']['root']}/salome", "shell", "--", "python3",
-         "-m", "agent_server", "--serve-forever"],
-        cwd=str(REPO_ROOT), env=_salome_subprocess_env(),
-    )
+    from .conftest import _HS, SALOME_ROOT, _kill_tree, _repo_root, _start_server
+
+    if SALOME_ROOT is None:
+        pytest.skip("set SALOME_ROOT or salome.root in config.json")
+    proc = _start_server(_repo_root())
+    data = json.loads(open(_HS).read())
+    conn = ExecutorClient(data["host"], data["port"], data["token"], "test")
     try:
-        for _ in range(400):
-            if os.path.exists(hs):
-                break
-            time.sleep(0.2)
-        else:
-            raise RuntimeError("agent_server handshake never appeared")
-        data = json.loads(open(hs).read())
-        yield ExecutorClient(data["host"], data["port"], data["token"], "test")
+        yield conn
     finally:
         try:
-            proc.terminate()
-            proc.wait(timeout=15)
+            conn._sock.close()
         except Exception:
-            proc.kill()
+            pass
+        _kill_tree(proc)
 
 
 def _smesh_tools(client):
