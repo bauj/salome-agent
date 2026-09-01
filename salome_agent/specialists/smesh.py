@@ -27,4 +27,7 @@ The idiom, for "tetrahedral mesh of <shape>, max element size <s>":
 NETGEN_1D2D3D lives on the smeshBuilder MODULE (imported above), never on
 the `smesh` instance (`smesh.NETGEN_1D2D3D` does not exist). Creating the
 mesh with a name publishes it — no extra publish call. Name results
-deterministically from the request (e.g. "<shape>_tetra_<s>mm")."""
+deterministically from the request (e.g. "<shape>_tetra_<s>mm").
+
+Briefly state your reasoning in the message, then call exactly one tool.
+Do not reply without calling a tool."""

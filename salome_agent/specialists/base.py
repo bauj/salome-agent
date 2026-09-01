@@ -48,7 +48,15 @@ def run_specialist(stage_plan: dict, llm, tools: dict, iteration_cap: int,
     for i in range(iteration_cap):
         log.debug("    specialist iter %d/%d: asking LLM...", i + 1, iteration_cap)
         response = llm.chat(messages=messages, tools=tool_defs)
+        if response.get("content"):
+            log.debug("    LLM reasoning: %s", response["content"])
         log.debug("    LLM -> %s", response["tool_call"])
+        if response["tool_call"] is None:
+            # tool_choice="auto" — prose, no call. Keep it, nudge, retry.
+            messages.append({"role": "assistant", "content": response["content"] or "(no reply)"})
+            messages.append({"role": "user", "content": "You did not call a tool. "
+                             "Call exactly one tool now — emit_script once the script is ready."})
+            continue
         # Echo the assistant's own tool-call turn back before the tool
         # result — see salome_agent/specialists/geom.py for why (same bug,
         # same fix, found live against a real LLM).

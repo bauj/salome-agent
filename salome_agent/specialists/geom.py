@@ -17,6 +17,9 @@ else is dropped.
 Do only what the request asks. Do not invent colours, transparency or
 display modes that were not requested.
 
+Each turn: briefly state your reasoning in the message, then call exactly
+one tool. Do not reply without calling a tool.
+
 Every successful tool result reports the shape's bbox, size and centre (mm)
 in `shape_info` — check it before moving on, especially after a transform
 or a boolean, to confirm each part landed where you intended.
@@ -59,7 +62,16 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int) -> dict:
     for i in range(iteration_cap):
         log.debug("    geom iter %d/%d: asking LLM...", i + 1, iteration_cap)
         response = llm.chat(messages=messages, tools=tools)
+        if response.get("content"):
+            log.debug("    LLM reasoning: %s", response["content"])
         log.debug("    LLM -> %s(%s)", response["tool_call"], response.get("args"))
+        if response["tool_call"] is None:
+            # tool_choice="auto" — the model replied with prose and no call.
+            # Keep its message, nudge it, and let the loop try again.
+            messages.append({"role": "assistant", "content": response["content"] or "(no reply)"})
+            messages.append({"role": "user", "content": "You did not call a tool. "
+                             "Call exactly one tool now — finish_stage once the geometry is done."})
+            continue
         # The assistant's own tool-call turn must be echoed back before the
         # tool result — without it the model has no memory of what it just
         # did (each turn looks like a fresh start) and, seen live against a

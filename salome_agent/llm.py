@@ -82,7 +82,10 @@ class LLMClient:
                 }}
                 for t in tools
             ]
-            payload["tool_choice"] = "required"
+            # "auto", not "required": the model may narrate its reasoning in
+            # `content` before the call, and some models only do so when not
+            # forced. A turn with no tool call at all is handled by the caller.
+            payload["tool_choice"] = "auto"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         tool_names = [t["name"] for t in tools] if tools else None
         log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
@@ -114,13 +117,17 @@ class LLMClient:
 
         if tools:
             calls = message.get("tool_calls") or []
-            log.debug("LLM response in %.1fs: finish=%s, tool_calls=%s",
+            content = message.get("content") or ""
+            log.debug("LLM response in %.1fs: finish=%s, tool_calls=%s%s",
                       time.monotonic() - t0, finish,
-                      [c["function"]["name"] for c in calls] or "none")
-            tool_call = message["tool_calls"][0]
-            call = tool_call["function"]
+                      [c["function"]["name"] for c in calls] or "none",
+                      f'\n    said: {content[:500]}' if content else "")
+            if not calls:
+                return {"tool_call": None, "args": None, "tool_call_id": None,
+                        "content": content}
+            call = calls[0]["function"]
             return {"tool_call": call["name"], "args": json.loads(call["arguments"]),
-                    "tool_call_id": tool_call.get("id")}
+                    "tool_call_id": calls[0].get("id"), "content": content}
         content = message["content"]
         log.debug("LLM response in %.1fs: finish=%s, %d chars of content",
                   time.monotonic() - t0, finish, len(content or ""))
