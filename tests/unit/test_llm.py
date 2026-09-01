@@ -113,6 +113,22 @@ def test_chat_keeps_reasoning_content_alongside_the_tool_call(monkeypatch):
     assert out["content"] == "I'll make a box"
 
 
+def test_prompt_is_logged_before_the_request_is_sent(tmp_path, monkeypatch, caplog):
+    import logging
+
+    import requests as _requests
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        raise _requests.ConnectionError("boom")
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    caplog.set_level(logging.DEBUG, logger="salome_agent")
+    client = LLMClient("http://x/v1", "", "auto", trace_path=str(tmp_path / "t.jsonl"))
+    with pytest.raises(_requests.ConnectionError):
+        client.chat(messages=[{"role": "user", "content": "PROMPT-MARKER"}])
+    assert any("PROMPT-MARKER" in r.message for r in caplog.records)
+
+
 def test_no_trace_path_writes_nothing(tmp_path, monkeypatch):
     body = {"choices": [{"finish_reason": "stop",
                          "message": {"content": '{"stages": []}'}}]}
