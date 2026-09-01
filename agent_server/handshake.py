@@ -36,6 +36,26 @@ def write(*, port: int, token: str, mode: str, log_path: str,
     os.replace(tmp, p)
 
 
+def live_owner() -> dict | None:
+    """The handshake's server if its pid is still alive and is the same
+    process that wrote it (pid_start guards against pid reuse). Else None --
+    stale file, dead pid, or a recycled pid.
+    """
+    data = read()
+    if data is None:
+        return None
+    pid = data.get("pid")
+    if not isinstance(pid, int) or pid == os.getpid():
+        return None
+    live = _pid_start(pid)
+    if live is None:
+        return None                       # pid not running
+    stored = data.get("pid_start")
+    if stored is not None and stored != live:
+        return None                       # pid was reused by an unrelated process
+    return data
+
+
 def read() -> dict | None:
     try:
         data = json.loads(path().read_text())
