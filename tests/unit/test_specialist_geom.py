@@ -19,6 +19,22 @@ def test_finish_stage_returns_call_log_and_result_names():
     assert len(result["call_log"]) == 1
 
 
+def test_no_tool_call_is_nudged_then_loop_continues():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        {"tool_call": None, "content": "let me think"},
+        {"tool_call": "finish_stage", "args": {"result_names": ["box_1"]}},
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box"}]}
+    result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                                  llm, client, iteration_cap=5)
+    assert result["result_names"] == ["box_1"]
+    second = llm.chat.call_args_list[1].kwargs["messages"]
+    assert any(isinstance(m.get("content"), str) and "did not call a tool" in m["content"]
+               for m in second)
+
+
 def test_exhausted_loop_sets_last_error():
     llm = MagicMock()
     llm.chat.return_value = {"tool_call": "make_box", "args": {"dx": 1, "dy": 1, "dz": 1}}

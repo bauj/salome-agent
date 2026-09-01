@@ -75,6 +75,44 @@ def test_chat_forwards_tool_description(monkeypatch):
     assert fn["description"] == "a solid box"
 
 
+def test_chat_uses_tool_choice_auto(monkeypatch):
+    captured = {}
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResp({"choices": [{"finish_reason": "tool_calls", "message": {
+            "tool_calls": [{"id": "c1", "function": {"name": "mk", "arguments": "{}"}}]}}]})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert captured["payload"]["tool_choice"] == "auto"
+
+
+def test_chat_returns_none_toolcall_when_model_only_talks(monkeypatch):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"content": "let me think about this"}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["tool_call"] is None
+    assert out["content"] == "let me think about this"
+
+
+def test_chat_keeps_reasoning_content_alongside_the_tool_call(monkeypatch):
+    body = {"choices": [{"finish_reason": "tool_calls", "message": {
+        "content": "I'll make a box",
+        "tool_calls": [{"id": "c1", "function": {"name": "mk", "arguments": '{"dx": 1}'}}]}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["tool_call"] == "mk"
+    assert out["content"] == "I'll make a box"
+
+
 def test_no_trace_path_writes_nothing(tmp_path, monkeypatch):
     body = {"choices": [{"finish_reason": "stop",
                          "message": {"content": '{"stages": []}'}}]}

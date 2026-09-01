@@ -23,6 +23,20 @@ def test_upstream_names_and_last_error_are_injected_into_the_prompt():
     assert "no study object named 'cube'" in sent
 
 
+def test_no_tool_call_is_nudged_then_loop_continues():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        {"tool_call": None, "content": "thinking"},
+        {"tool_call": "emit_script", "args": {"code": "x"}},
+    ]
+    result = run_specialist({"module": "smesh", "intent": "mesh it", "params": {}, "inputs": []},
+                             llm, tools={}, iteration_cap=5)
+    assert result["script"] == "x"
+    second = llm.chat.call_args_list[1].kwargs["messages"]
+    assert any(isinstance(m.get("content"), str) and "did not call a tool" in m["content"]
+               for m in second)
+
+
 def test_iteration_cap_emits_best_so_far_with_warning():
     llm = MagicMock()
     llm.chat.return_value = {"tool_call": "api_introspect", "args": {"name": "smesh"}}
