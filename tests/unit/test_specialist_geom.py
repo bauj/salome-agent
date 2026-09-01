@@ -62,6 +62,13 @@ def test_no_upstream_leaves_the_prompt_unchanged():
     assert "already in the study" not in sent
 
 
+def test_system_prompt_mandates_a_placement_self_check():
+    from salome_agent.specialists.geom import GEOM_SYSTEM_PROMPT
+    p = GEOM_SYSTEM_PROMPT.lower()
+    assert "measure" in p
+    assert "fuse" in p and "translate" in p
+
+
 def test_exhausted_loop_sets_last_error():
     llm = MagicMock()
     llm.chat.return_value = {"tool_call": "make_box", "args": {"dx": 1, "dy": 1, "dz": 1}}

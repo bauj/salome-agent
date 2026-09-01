@@ -21,8 +21,11 @@ Each turn: briefly state your reasoning in the message, then call exactly
 one tool. Do not reply without calling a tool.
 
 Every successful tool result reports the shape's bbox, size and centre (mm)
-in `shape_info` — check it before moving on, especially after a transform
-or a boolean, to confirm each part landed where you intended.
+in `shape_info`. After each translate, rotate, fuse or cut, read that
+`shape_info` (or call `measure`) and confirm the shape's centre and extent
+match what you intended before continuing — if a part is in the wrong
+place, correct it now, not at the end. Call `measure` on any upstream
+object whose position you need but did not build yourself.
 
 Every transform (translate, rotate, ...) produces a NEW shape that does not
 inherit the source's colour. So apply display properties (set_color,
