@@ -9,6 +9,11 @@ from salome_agent.logs import log
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
+# Retry a 502/503/504 only when it comes back fast (a real transient blip). A
+# slow one is the proxy's upstream-timeout firing — retrying wastes another
+# full timeout for the same slow backend.
+_GATEWAY_RETRY_MAX_ELAPSED = 30.0
+
 
 def _parse_json_content(content: str):
     """Real LLMs often wrap the JSON in ```json fences or add a sentence of
@@ -38,7 +43,8 @@ def _parse_json_content(content: str):
 class LLMClient:
     """Minimal wrapper over any OpenAI-compatible tool-calling chat endpoint
     (spec §9/decision 10 — provider-agnostic, configured by endpoint+key+model).
-    No retry/streaming — out of scope per the plan's Task 14 note."""
+    Retries transient failures (timeout, connection drop, HTTP 502/503/504)
+    with backoff; no streaming."""
 
     def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
                  temperature: float = 0, request_timeout: float = 120,
@@ -103,20 +109,41 @@ class LLMClient:
         self._trace_prompt(trace_request)
         t0 = time.monotonic()
         resp = None
-        for attempt in (1, 2):
+        attempts = 3
+        for attempt in range(1, attempts + 1):
             try:
                 resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
                                      headers=headers, verify=self.ssl_cert_file,
                                      timeout=self.request_timeout)
+                # A fast gateway error (proxy up, model backend down/overloaded)
+                # crashes the planner/specialist node otherwise — retry with backoff.
+                # A *slow* 502/503/504 means the proxy's own upstream timeout fired
+                # (e.g. Manifest aborts at 180s): the backend is just slow, not
+                # blipping — retrying only burns another full timeout, so give up.
+                elapsed = time.monotonic() - t0
+                if (resp.status_code in (502, 503, 504)
+                        and attempt < attempts and elapsed < _GATEWAY_RETRY_MAX_ELAPSED):
+                    log.debug("LLM request attempt %d got HTTP %d after %.1fs, retrying",
+                              attempt, resp.status_code, elapsed)
+                    time.sleep(2 * attempt)
+                    t0 = time.monotonic()
+                    continue
                 break
             except (requests.Timeout, requests.ConnectionError) as e:
                 log.debug("LLM request attempt %d failed after %.1fs: %s",
                           attempt, time.monotonic() - t0, e)
-                if attempt == 2:
+                if attempt == attempts:
                     raise
+                time.sleep(2 * attempt)
                 t0 = time.monotonic()
         resp.raise_for_status()
-        body = resp.json()
+        try:
+            body = resp.json()
+        except ValueError:
+            snippet = (resp.text or "").strip()[:500]
+            raise RuntimeError(
+                f"LLM endpoint returned HTTP {resp.status_code} with a non-JSON body "
+                f"(is the model/proxy healthy?). Body:\n{snippet or '<empty>'}")
         message = body["choices"][0]["message"]
         finish = body["choices"][0].get("finish_reason")
         self._trace(trace_request,
