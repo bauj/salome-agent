@@ -35,6 +35,33 @@ def test_no_tool_call_is_nudged_then_loop_continues():
                for m in second)
 
 
+def test_upstream_shape_info_is_injected_into_the_opening_prompt():
+    llm = MagicMock()
+    llm.chat.return_value = {"tool_call": "finish_stage", "args": {"result_names": ["x"]}}
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box"}]}
+    run_geom_specialist(
+        {"module": "geom", "intent": "walls", "params": {}, "inputs": []},
+        llm, client, iteration_cap=3,
+        upstream={"fuse_1": {"bbox": [0, 100, 0, 100, 0, 20],
+                             "size": [100, 100, 20], "centre": [50, 50, 10]}},
+    )
+    sent = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "fuse_1" in sent
+    assert "centre [50, 50, 10]" in sent
+
+
+def test_no_upstream_leaves_the_prompt_unchanged():
+    llm = MagicMock()
+    llm.chat.return_value = {"tool_call": "finish_stage", "args": {"result_names": ["x"]}}
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box"}]}
+    run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=3)
+    sent = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "already in the study" not in sent
+
+
 def test_exhausted_loop_sets_last_error():
     llm = MagicMock()
     llm.chat.return_value = {"tool_call": "make_box", "args": {"dx": 1, "dy": 1, "dz": 1}}

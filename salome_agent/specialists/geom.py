@@ -40,16 +40,29 @@ FINISH_STAGE_DESCRIPTION = (
 )
 
 
-def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int) -> dict:
+def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
+                        upstream: dict | None = None) -> dict:
     try:
-        return _run(stage_plan, llm, client, iteration_cap)
+        return _run(stage_plan, llm, client, iteration_cap, upstream)
     except (SessionDied, SessionPoisoned) as e:
         return {"fatal": f"SALOME agent server unavailable: {e}"}
 
 
-def _run(stage_plan: dict, llm, client, iteration_cap: int) -> dict:
+def _run(stage_plan: dict, llm, client, iteration_cap: int,
+         upstream: dict | None = None) -> dict:
+    content = str(stage_plan)
+    if upstream:
+        lines = []
+        for name, info in upstream.items():
+            if info:
+                lines.append(f"  {name} — bbox {info['bbox']}, size {info['size']}, "
+                             f"centre {info['centre']}")
+            else:
+                lines.append(f"  {name} — (geometry unavailable)")
+        content += ("\n\nObjects already in the study — reference them by these "
+                    "exact names:\n" + "\n".join(lines))
     messages = [{"role": "system", "content": GEOM_SYSTEM_PROMPT},
-                {"role": "user", "content": str(stage_plan)}]
+                {"role": "user", "content": content}]
     call_log: list[dict] = []
     last_error = None
     # The LLM must see the actual geom tool registry, not just finish_stage —
