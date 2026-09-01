@@ -6,7 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "salome-agent"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = ["langgraph", "requests"]
+dependencies = [
+    "langgraph",
+    "requests",
+    "typing-extensions>=4.16.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest"]

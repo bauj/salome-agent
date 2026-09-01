@@ -1,5 +1,6 @@
 import math
-from typing import Any, Callable, NotRequired, TypedDict
+from typing import Any, Callable, TypedDict
+from typing_extensions import NotRequired
 
 
 class ArgRef(TypedDict):
