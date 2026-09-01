@@ -49,3 +49,26 @@ def test_launch_starts_server_and_writes_handshake(monkeypatch, tmp_path):
     assert hs["mode"] == "gui"
     gui_plugin.stop()
     assert started["stopped"] is True
+
+
+def test_launch_refuses_when_another_process_owns_the_server(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _install_fakes(monkeypatch)
+
+    from agent_server import gui_plugin, handshake
+
+    monkeypatch.setattr(handshake, "live_owner",
+                        lambda: {"pid": 4242, "mode": "headless", "port": 9})
+    msgs = []
+    monkeypatch.setattr(gui_plugin, "_status", msgs.append)
+
+    import agent_server.wire as wire
+
+    def _boom(*a, **k):
+        raise AssertionError("must not build a server while one is running")
+
+    monkeypatch.setattr(wire, "Server", _boom)
+
+    gui_plugin.launch(context=types.SimpleNamespace(sg=None))
+    assert any("already running" in m for m in msgs)
+    assert handshake.read() is None

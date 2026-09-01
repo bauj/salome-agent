@@ -36,6 +36,13 @@ def launch(context) -> None:
     from agent_server.gui_backend import GuiBackend, MainThreadInvoker
 
     stop()                                    # 2nd click == restart
+
+    owner = handshake.live_owner()             # a server in ANOTHER process
+    if owner is not None:
+        _status(f"agent server already running elsewhere (pid {owner['pid']}, "
+                f"{owner.get('mode')} mode); stop it first")
+        return
+
     try:
         if _INVOKER is None:
             _INVOKER = MainThreadInvoker()

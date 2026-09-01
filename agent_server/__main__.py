@@ -19,6 +19,17 @@ def parse_args(argv):
 
 def main(argv=None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
+
+    # Before redirecting stdio to the log: a second server would clobber the
+    # first's handshake and leave it orphaned (issue #5). Bail while the user
+    # can still see why on the terminal.
+    owner = handshake.live_owner()
+    if owner is not None:
+        print(f"agent server already running (pid {owner['pid']}, "
+              f"{owner.get('mode')} mode on port {owner.get('port')}); "
+              f"stop it first", file=sys.stderr)
+        return 2
+
     log_path = os.path.expanduser("~/.salome_agent/server.log")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     logf = open(log_path, "w")
