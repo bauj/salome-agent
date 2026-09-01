@@ -1592,6 +1592,50 @@ TOOL_SCHEMAS: dict[str, dict] = {
     "list_study_objects": {"type": "object", "properties": {}},
 }
 
+# One line per tool: what it produces and the implicit placement/orientation
+# defaults that the JSON Schema alone does not convey. Sent to the LLM as each
+# function's "description". Keep every key in TOOLS listed here (guarded by a
+# unit test).
+TOOL_DESCRIPTIONS: dict[str, str] = {
+    "make_box": "Axis-aligned solid box with one corner at the origin, extending +X/+Y/+Z by dx/dy/dz.",
+    "make_box_two_pnt": "Axis-aligned solid box spanning two opposite corner points.",
+    "make_cylinder": "Solid cylinder, base centred at the origin, axis along +Z.",
+    "make_sphere": "Solid sphere centred at the origin (or at `center` if given).",
+    "make_cone": "Solid (truncated) cone, base radius1 at the origin, radius2 at height, axis along +Z. radius2=0 for a sharp tip.",
+    "make_torus": "Solid torus centred at the origin, axis along +Z; radius_major = ring centre-line, radius_minor = tube.",
+    "make_face": "Planar rectangular face height x width. orientation 1=XOY, 2=YOZ, 3=ZOX.",
+    "make_disk": "Planar circular face of the given radius. orientation 1=XOY, 2=YOZ, 3=ZOX.",
+    "make_point": "A vertex at (x, y, z).",
+    "make_vector": "A free vector with components (dx, dy, dz) from the origin.",
+    "make_line": "An infinite line through two points.",
+    "make_plane": "An unbounded plane through `point` with the given `normal` vector (trimmed for display at trim_size).",
+    "make_circle": "A circular edge (wire), centre point, `normal` axis, radius.",
+    "make_prism": "Linear extrusion of a face/wire/edge by the vector (dx, dy, dz).",
+    "make_revolution": "Revolve a face/wire/edge about `axis` by angle_deg. The profile must not touch the axis.",
+    "make_pipe": "Sweep a cross-section `base` along a `path` wire/edge.",
+    "make_thick_solid": "Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened).",
+    "make_filling": "A surface filling a set of boundary contour edges/wires.",
+    "fuse": "Boolean union of two or more shapes into one.",
+    "cut": "Boolean subtraction: `main` minus every shape in `tools`.",
+    "common": "Boolean intersection of two or more shapes.",
+    "partition": "Split `shapes` by each other (and optional `tools`), keeping all resulting pieces in one compound.",
+    "translate": "A COPY of `shape` moved by (dx, dy, dz); the source is unchanged -- refer to the new name afterwards.",
+    "rotate": "A COPY of `shape` rotated about `axis` by angle_deg; the source is unchanged.",
+    "mirror": "A COPY of `shape` mirrored across a plane, axis or point (`by` picks which; `entity` names it or a shortcut).",
+    "scale": "A COPY of `shape` scaled about `center` -- uniform `factor`, or per-axis factor_x/y/z.",
+    "multi_translate": "A COPY of `shape` replicated `count` times along `vector` at spacing `step` (add vector2/step2/count2 for a 2D grid).",
+    "multi_rotate": "A COPY of `shape` replicated `count` times about `axis` (angle_deg = step, default full circle).",
+    "offset_shape": "A COPY of `shape` with every face offset outward (+) or inward (-) by `offset`.",
+    "position": "A COPY of `shape` with its local frame placed at target `origin` with axes `x_dir`/`y_dir` -- use to assemble parts.",
+    "fillet_edges": "Round edges of `shape` with the given `radius`. `edges` = \"all\" or a list of edge subshape indices.",
+    "chamfer_edges": "Bevel edges of `shape` by distances d1/d2. `edges` = \"all\" or a list of edge subshape indices.",
+    "set_color": "Set the display colour of `shape` (r/g/b 0-255). Apply once, last, on the final shape.",
+    "set_transparency": "Set display transparency of `shape` (0 opaque .. 1 invisible).",
+    "set_display_mode": "Set display mode of `shape` (0=wireframe, 1=shading, 2=shading+edges).",
+    "check_shape": "Report whether `shape` is a valid geometry, with a diagnostic message.",
+    "list_study_objects": "List the names of every object currently published in the study.",
+}
+
 
 def _coerce_args(name: str, args: dict) -> dict:
     types = ARG_TYPES.get(name)
@@ -1648,5 +1692,7 @@ def call_tool(executor, name: str, args: dict) -> dict:
 
 
 def list_tools() -> list[dict]:
-    return [{"name": n, "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}})}
+    return [{"name": n,
+             "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}}),
+             "description": TOOL_DESCRIPTIONS.get(n, "")}
             for n in TOOLS]

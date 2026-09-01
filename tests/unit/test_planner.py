@@ -26,6 +26,13 @@ def test_geom_only_request_yields_no_smesh_stage():
     assert stages[0]["module"] == "geom"
 
 
+def test_planner_prompt_lists_geom_tool_catalogue():
+    from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT
+    assert "make_thick_solid" in PLANNER_SYSTEM_PROMPT
+    assert "make_box" in PLANNER_SYSTEM_PROMPT
+    assert "fillet_edges" in PLANNER_SYSTEM_PROMPT
+
+
 def test_plan_detail_hint_appended_to_system_prompt():
     from salome_agent.nodes.planner import _DETAIL_HINT
     llm = MagicMock()

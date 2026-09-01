@@ -1,4 +1,14 @@
-PLANNER_SYSTEM_PROMPT = """You turn a natural-language SALOME request into an
+from executor.geom_tools import TOOL_DESCRIPTIONS
+
+
+def _geom_catalogue() -> str:
+    # Names + one-liners only (no arg schemas) so the planner knows what a
+    # single geom stage can actually do and stops over-splitting parts.
+    lines = [f"  {n} -- {d}" for n, d in TOOL_DESCRIPTIONS.items()]
+    return "geom tools available to a single geom stage:\n" + "\n".join(lines)
+
+
+_PLANNER_BASE = """You turn a natural-language SALOME request into an
 ordered list of stages. Each stage has: module (geom|smesh|paravis), intent
 (short description of the job for that stage), params (dims in millimetres,
 unconverted), inputs (named upstream objects this stage needs). Respond as
@@ -27,6 +37,8 @@ Module scope:
 - paravis: post-processing an existing simulation result (a MED file) --
   contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
   Only use paravis when the request involves a results/field/MED file."""
+
+PLANNER_SYSTEM_PROMPT = _PLANNER_BASE + "\n\n" + _geom_catalogue()
 
 _DETAIL_HINT = {
     "coarse": "\n\nPrefer the fewest stages: keep an assembly's parts in one "

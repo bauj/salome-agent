@@ -77,6 +77,7 @@ class LLMClient:
             payload["tools"] = [
                 {"type": "function", "function": {
                     "name": t["name"],
+                    **({"description": t["description"]} if t.get("description") else {}),
                     "parameters": t.get("parameters") or {"type": "object", "properties": {}},
                 }}
                 for t in tools
