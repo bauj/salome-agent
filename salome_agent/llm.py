@@ -56,6 +56,14 @@ class LLMClient:
         # inspected after the run.
         self.trace_path = trace_path
 
+    def _trace_prompt(self, request: dict) -> None:
+        # Printed BEFORE the POST so the prompt is visible while the call is
+        # still in flight. The jsonl file gets the combined entry from _trace()
+        # once the response is back.
+        if not self.trace_path:
+            return
+        log.debug("LLM request:\n%s", json.dumps(request, indent=2, default=str))
+
     def _trace(self, request: dict, response: dict) -> None:
         if not self.trace_path:
             return
@@ -66,7 +74,7 @@ class LLMClient:
                 f.write(json.dumps(entry, default=str) + "\n")
         except OSError as e:
             log.warning("could not write LLM trace: %s", e)
-        log.debug("LLM trace entry:\n%s", json.dumps(entry, indent=2, default=str))
+        log.debug("LLM response:\n%s", json.dumps(response, indent=2, default=str))
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
@@ -90,6 +98,9 @@ class LLMClient:
         tool_names = [t["name"] for t in tools] if tools else None
         log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
                   self.model, len(messages), tool_names or "-", self.request_timeout)
+        trace_request = {"model": self.model, "temperature": self.temperature,
+                         "tools": tool_names or [], "messages": messages}
+        self._trace_prompt(trace_request)
         t0 = time.monotonic()
         resp = None
         for attempt in (1, 2):
@@ -108,12 +119,9 @@ class LLMClient:
         body = resp.json()
         message = body["choices"][0]["message"]
         finish = body["choices"][0].get("finish_reason")
-        self._trace(
-            {"model": self.model, "temperature": self.temperature,
-             "tools": tool_names or [], "messages": messages},
-            {"finish_reason": finish, "elapsed_s": round(time.monotonic() - t0, 2),
-             "message": message},
-        )
+        self._trace(trace_request,
+                    {"finish_reason": finish, "elapsed_s": round(time.monotonic() - t0, 2),
+                     "message": message})
 
         if tools:
             calls = message.get("tool_calls") or []
