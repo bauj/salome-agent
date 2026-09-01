@@ -14,19 +14,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--on-failure", choices=["abort", "continue"], default=None)
     parser.add_argument("--timeout", type=float, default=None,
                         help="per-request LLM timeout in seconds (overrides llm.timeout in config)")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="show per-tool-call / per-retry detail")
+    parser.add_argument("-v", "--verbose", action="count", default=0,
+                        help="-v: per-tool-call / per-retry detail; "
+                             "-vv: also dump every LLM prompt, response and "
+                             "reasoning to the terminal and <run_dir>/llm_trace.jsonl")
     return parser.parse_args(argv)
 
 
-def build_llm(config: dict, request_timeout: float | None = None):
+def build_llm(config: dict, request_timeout: float | None = None,
+              trace_path: str | None = None):
     from salome_agent.llm import LLMClient
 
     llm_config = config["llm"]
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
                      temperature=llm_config.get("temperature", 0),
-                     request_timeout=request_timeout or llm_config.get("timeout", 120))
+                     request_timeout=request_timeout or llm_config.get("timeout", 120),
+                     trace_path=trace_path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,8 +79,11 @@ def main(argv: list[str] | None = None) -> int:
                           "name_prefix": client.name_prefix}
         log.info("session: connected to the %s agent server", client.mode)
 
+    trace_path = os.path.join(run_dir, "llm_trace.jsonl") if args.verbose >= 2 else None
+    if trace_path:
+        log.info("LLM trace: %s", trace_path)
     cfg = {"configurable": {"thread_id": uuid.uuid4().hex,
-                            "llm_client": build_llm(config, args.timeout),
+                            "llm_client": build_llm(config, args.timeout, trace_path),
                             "executor_client": client}}
     try:
         graph = build_graph(batch=args.batch)

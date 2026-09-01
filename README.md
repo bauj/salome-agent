@@ -126,7 +126,9 @@ The agent will:
    running it exits with a message telling you to start one.
 2. Plan the stages, run each specialist, verify, and assemble — progress is logged to
    stderr as it goes (`planning...`, `stage 1/2 [geom] ...`, `static check: ok`,
-   `exec check: ok`, ...). Add `-v` / `--verbose` for per-LLM-call and per-retry detail.
+   `exec check: ok`, ...). Add `-v` for per-LLM-call and per-retry detail, `-vv`
+   to also dump every LLM prompt, response and reasoning to the terminal and
+   `<run_id>/llm_trace.jsonl`.
 3. Write output to `<work_dir>/<run_id>/`:
    - `result.py` — the standalone reproducible script
    - `report.md` — per-stage status and retry counts (also printed at the end)
@@ -151,7 +153,7 @@ Run the result on its own, with no agent involved:
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--timeout SECONDS` | Override per-stage exec timeout. |
-| `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. |
+| `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`. |
 
 ### GUI plugin setup
 

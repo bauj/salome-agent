@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 
@@ -40,7 +41,8 @@ class LLMClient:
     No retry/streaming — out of scope per the plan's Task 14 note."""
 
     def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
-                 temperature: float = 0, request_timeout: float = 120):
+                 temperature: float = 0, request_timeout: float = 120,
+                 trace_path: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -49,6 +51,22 @@ class LLMClient:
         self.ssl_cert_file = ssl_cert_file or True
         self.temperature = temperature
         self.request_timeout = request_timeout
+        # -vv: append one JSON line per round-trip (request + raw response +
+        # whatever reasoning key the provider returns) so tool-selection can be
+        # inspected after the run.
+        self.trace_path = trace_path
+
+    def _trace(self, request: dict, response: dict) -> None:
+        if not self.trace_path:
+            return
+        entry = {"t": time.strftime("%H:%M:%S"), "request": request, "response": response}
+        try:
+            os.makedirs(os.path.dirname(self.trace_path) or ".", exist_ok=True)
+            with open(self.trace_path, "a") as f:
+                f.write(json.dumps(entry, default=str) + "\n")
+        except OSError as e:
+            log.warning("could not write LLM trace: %s", e)
+        log.debug("LLM trace entry:\n%s", json.dumps(entry, indent=2, default=str))
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
@@ -86,6 +104,12 @@ class LLMClient:
         body = resp.json()
         message = body["choices"][0]["message"]
         finish = body["choices"][0].get("finish_reason")
+        self._trace(
+            {"model": self.model, "temperature": self.temperature,
+             "tools": tool_names or [], "messages": messages},
+            {"finish_reason": finish, "elapsed_s": round(time.monotonic() - t0, 2),
+             "message": message},
+        )
 
         if tools:
             calls = message.get("tool_calls") or []
