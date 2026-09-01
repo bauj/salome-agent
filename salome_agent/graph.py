@@ -74,7 +74,18 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     if module == "geom":
         from salome_agent.specialists.geom import run_geom_specialist
 
-        result = run_geom_specialist(stage_plan, llm, client, cap)
+        upstream_info = None
+        upstream = select_upstream(stage_plan, state["stages"], idx)
+        if upstream and client is not None:
+            try:
+                m = client.call_tool("measure", {"names": upstream})
+                if m.get("ok"):
+                    upstream_info = m.get("measurements")
+                else:
+                    log.warning("  measure(upstream) failed: %s", m.get("error"))
+            except Exception as e:  # noqa: BLE001 — best-effort, must not abort the stage
+                log.warning("  measure(upstream) errored: %s", e)
+        result = run_geom_specialist(stage_plan, llm, client, cap, upstream=upstream_info)
         if "fatal" in result:
             log.error("  %s", result["fatal"])
             return Command(update={"fatal": result["fatal"]}, goto="assemble")

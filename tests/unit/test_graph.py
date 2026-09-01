@@ -75,3 +75,66 @@ def test_abort_at_plan_gate_writes_no_output_files(tmp_path):
     assert not final.get("report")
     assert not final.get("final_script")
     assert list(tmp_path.iterdir()) == []
+
+
+def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
+    from salome_agent import graph
+
+    captured = {}
+
+    def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None):
+        captured["upstream"] = upstream
+        return {"call_log": [], "result_names": ["walls_1"]}
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist",
+                        fake_run_geom_specialist)
+
+    client = MagicMock()
+    client.call_tool.return_value = {
+        "ok": True,
+        "measurements": {"fuse_1": {"bbox": [0, 100, 0, 100, 0, 20],
+                                    "size": [100, 100, 20], "centre": [50, 50, 10]}},
+    }
+    state = {
+        "stage_idx": 1,
+        "plan": [
+            {"module": "geom", "intent": "beams", "params": {}, "inputs": []},
+            {"module": "geom", "intent": "walls", "params": {}, "inputs": []},
+        ],
+        "stages": {
+            0: {"module": "geom", "status": "ok", "result_names": ["fuse_1"]},
+            1: {"module": "geom", "status": "pending"},
+        },
+        "config": {"policy": {"tool_iteration_cap": 5, "on_stage_failure": "abort"}},
+        "last_error": None,
+    }
+    config = {"configurable": {"llm_client": MagicMock(), "executor_client": client}}
+
+    graph._run_stage_node(state, config)
+
+    client.call_tool.assert_called_once_with("measure", {"names": ["fuse_1"]})
+    assert captured["upstream"] == {
+        "fuse_1": {"bbox": [0, 100, 0, 100, 0, 20],
+                   "size": [100, 100, 20], "centre": [50, 50, 10]}
+    }
+
+
+def test_first_geom_stage_does_not_call_measure(monkeypatch):
+    from salome_agent import graph
+
+    def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None):
+        return {"call_log": [], "result_names": ["box_1"]}
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist",
+                        fake_run_geom_specialist)
+    client = MagicMock()
+    state = {
+        "stage_idx": 0,
+        "plan": [{"module": "geom", "intent": "box", "params": {}, "inputs": []}],
+        "stages": {0: {"module": "geom", "status": "pending"}},
+        "config": {"policy": {"tool_iteration_cap": 5, "on_stage_failure": "abort"}},
+        "last_error": None,
+    }
+    config = {"configurable": {"llm_client": MagicMock(), "executor_client": client}}
+    graph._run_stage_node(state, config)
+    client.call_tool.assert_not_called()
