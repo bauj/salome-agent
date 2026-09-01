@@ -1,18 +1,24 @@
 import json
 
 import pytest
+import requests
 
 from salome_agent.llm import LLMClient, _parse_json_content
 
 
 class _FakeResp:
-    def __init__(self, body):
+    def __init__(self, body, status_code=200, text=""):
         self._body = body
+        self.status_code = status_code
+        self.text = text
 
     def raise_for_status(self):
-        pass
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
 
     def json(self):
+        if self._body is None:
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
         return self._body
 
 
@@ -38,6 +44,62 @@ def test_json_with_prose_around_it():
 def test_unparseable_raises_with_raw_content():
     with pytest.raises(ValueError, match="parseable JSON"):
         _parse_json_content("sorry, I cannot do that")
+
+
+def test_chat_retries_transient_gateway_errors(monkeypatch):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"role": "assistant", "content": '{"ok": 1}'}}]}
+    calls = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        calls.append(1)
+        if len(calls) < 3:
+            return _FakeResp({}, status_code=503)
+        return _FakeResp(body)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
+    client = LLMClient("http://x/v1", "", "auto")
+
+    assert client.chat(messages=[{"role": "user", "content": "hi"}]) == {"ok": 1}
+    assert len(calls) == 3
+
+
+def test_chat_does_not_retry_a_slow_gateway_error(monkeypatch):
+    # elapsed >= _GATEWAY_RETRY_MAX_ELAPSED => proxy upstream-timeout, not a blip.
+    monkeypatch.setattr("salome_agent.llm._GATEWAY_RETRY_MAX_ELAPSED", 0.0)
+    calls = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        calls.append(1)
+        return _FakeResp({}, status_code=503)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
+    client = LLMClient("http://x/v1", "", "auto")
+
+    with pytest.raises(requests.HTTPError):
+        client.chat(messages=[{"role": "user", "content": "hi"}])
+    assert len(calls) == 1
+
+
+def test_chat_gives_up_after_persistent_gateway_errors(monkeypatch):
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp({}, status_code=502))
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
+    client = LLMClient("http://x/v1", "", "auto")
+
+    with pytest.raises(requests.HTTPError):
+        client.chat(messages=[{"role": "user", "content": "hi"}])
+
+
+def test_chat_raises_clear_error_on_non_json_body(monkeypatch):
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, status_code=200, text="<html>502</html>"))
+    client = LLMClient("http://x/v1", "", "auto")
+
+    with pytest.raises(RuntimeError, match="non-JSON body"):
+        client.chat(messages=[{"role": "user", "content": "hi"}])
 
 
 def test_trace_writes_request_and_raw_response(tmp_path, monkeypatch):
