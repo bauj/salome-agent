@@ -41,7 +41,8 @@ class _PrettyFormatter(logging.Formatter):
         return f"{stamp} {tag}{msg}"
 
 
-def setup_logging(verbose: bool = False):
+def setup_logging(verbose: int = 0):
+    # 0 = INFO, 1 (-v) = DEBUG, 2 (-vv) = DEBUG + llm.py writes a full trace.
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(_PrettyFormatter(color=sys.stderr.isatty()))
     log.handlers[:] = [handler]

@@ -14,6 +14,12 @@ def test_defaults_are_interactive_with_session():
     assert args.no_session is False
 
 
+def test_verbose_counts():
+    assert parse_args(["x"]).verbose == 0
+    assert parse_args(["x", "-v"]).verbose == 1
+    assert parse_args(["x", "-vv"]).verbose == 2
+
+
 def test_no_live_gui_or_port():
     args = parse_args(["make a box"])
     assert not hasattr(args, "live_gui")
