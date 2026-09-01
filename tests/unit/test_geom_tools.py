@@ -18,6 +18,36 @@ class TestToolDescriptions:
             assert t["name"] and t["parameters"] and t["description"]
 
 
+class TestMeasureTool:
+    def _executor(self, bbox_by_shape):
+        geompy = MagicMock()
+        geompy.BoundingBox.side_effect = lambda s: bbox_by_shape[s]
+        return SimpleNamespace(namespace={"geompy": geompy},
+                               geom_bindings={n: n for n in bbox_by_shape})
+
+    def test_measure_returns_shape_info_per_name(self):
+        ex = self._executor({"box_1": [0.0, 10.0, 0.0, 20.0, 0.0, 30.0]})
+        out = geom_tools.tool_measure(ex, {"names": ["box_1"]})
+        assert out["ok"] is True
+        assert out["records"] == []
+        assert out["measurements"]["box_1"] == {
+            "bbox": [0.0, 10.0, 0.0, 20.0, 0.0, 30.0],
+            "size": [10.0, 20.0, 30.0],
+            "centre": [5.0, 10.0, 15.0],
+        }
+
+    def test_measure_unknown_name_maps_to_none(self):
+        ex = self._executor({"box_1": [0.0, 1.0, 0.0, 1.0, 0.0, 1.0]})
+        out = geom_tools.tool_measure(ex, {"names": ["box_1", "ghost"]})
+        assert out["measurements"]["ghost"] is None
+        assert out["measurements"]["box_1"] is not None
+
+    def test_measure_is_registered_with_schema_and_description(self):
+        assert "measure" in geom_tools.TOOLS
+        assert geom_tools.TOOL_SCHEMAS["measure"]["required"] == ["names"]
+        assert geom_tools.TOOL_DESCRIPTIONS["measure"]
+
+
 class TestResolverHelpers:
     """Unit tests for _resolve_axis, _resolve_plane, _resolve_point helpers."""
 
