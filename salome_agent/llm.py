@@ -48,10 +48,11 @@ class LLMClient:
 
     def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
                  temperature: float = 0, request_timeout: float = 120,
-                 trace_path: str | None = None):
+                 trace_path: str | None = None, extra_headers: dict | None = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.extra_headers = extra_headers or {}
         # requests `verify`: a CA-bundle path, else True (default: verify against
         # the system trust store — never "" / False, which disables TLS checks).
         self.ssl_cert_file = ssl_cert_file or True
@@ -116,6 +117,7 @@ class LLMClient:
             # forced. A turn with no tool call at all is handled by the caller.
             payload["tool_choice"] = "auto"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        headers.update(self.extra_headers)
         tool_names = [t["name"] for t in tools] if tools else None
         log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
                   self.model, len(messages), tool_names or "-", self.request_timeout)

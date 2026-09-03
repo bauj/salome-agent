@@ -26,15 +26,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def build_llm(config: dict, request_timeout: float | None = None,
-              trace_path: str | None = None):
+              trace_path: str | None = None, run_id: str | None = None):
     from salome_agent.llm import LLMClient
 
     llm_config = config["llm"]
+    # extra_headers: verbatim per-request headers; string values may contain
+    # {run_id}, substituted with this run's id (a stable per-conversation token
+    # some gateways require).
+    extra_headers = {
+        k: v.format(run_id=run_id) if isinstance(v, str) else v
+        for k, v in (llm_config.get("extra_headers") or {}).items()
+    }
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
                      temperature=llm_config.get("temperature", 0),
                      request_timeout=request_timeout or llm_config.get("timeout", 120),
-                     trace_path=trace_path)
+                     trace_path=trace_path, extra_headers=extra_headers)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -89,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     if trace_path:
         log.info("LLM trace: %s", trace_path)
     cfg = {"configurable": {"thread_id": uuid.uuid4().hex,
-                            "llm_client": build_llm(config, args.timeout, trace_path),
+                            "llm_client": build_llm(config, args.timeout, trace_path, run_id),
                             "executor_client": client}}
     try:
         graph = build_graph(batch=args.batch)

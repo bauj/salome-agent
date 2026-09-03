@@ -137,6 +137,30 @@ def test_chat_forwards_tool_description(monkeypatch):
     assert fn["description"] == "a solid box"
 
 
+def test_chat_sends_extra_headers(monkeypatch):
+    captured = {}
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        captured["headers"] = headers
+        return _FakeResp({"choices": [{"finish_reason": "stop",
+                                       "message": {"content": '{"ok": 1}'}}]})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    LLMClient("http://x/v1", "", "auto",
+              extra_headers={"x-opencode-session": "run123"}).chat(
+        messages=[{"role": "user", "content": "x"}])
+    assert captured["headers"]["x-opencode-session"] == "run123"
+
+
+def test_build_llm_substitutes_run_id_in_extra_headers():
+    from salome_agent.cli import build_llm
+
+    cfg = {"llm": {"base_url": "http://x/v1", "model": "auto",
+                   "extra_headers": {"x-opencode-session": "{run_id}", "x-static": "keep"}}}
+    client = build_llm(cfg, run_id="abc123")
+    assert client.extra_headers == {"x-opencode-session": "abc123", "x-static": "keep"}
+
+
 def test_chat_uses_tool_choice_auto(monkeypatch):
     captured = {}
 
