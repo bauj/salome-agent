@@ -16,7 +16,8 @@ geom stage -- an optional "tools" list naming the geom tool names you expect
 that stage to use (from the catalogue below; names only, e.g.
 ["make_box", "translate", "set_color"]). The "tools" list is a hint that
 narrows what the geom specialist is offered; omit it if unsure. Respond as
-JSON: {"stages": [...]}.
+JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
+prose before or after it.
 
 A **part** is one primitive plus only the operations that shape that same
 piece of material -- a boolean that cuts or rounds it, its transform, its

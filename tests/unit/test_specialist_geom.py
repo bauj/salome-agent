@@ -104,6 +104,11 @@ def test_system_prompt_mandates_a_placement_self_check():
     assert "fuse" in p and "translate" in p
 
 
+def test_system_prompt_caps_reasoning_output():
+    from salome_agent.specialists.geom import GEOM_SYSTEM_PROMPT
+    assert "at most 2-3 sentences" in GEOM_SYSTEM_PROMPT
+
+
 def test_exhausted_loop_sets_last_error():
     llm = MagicMock()
     llm.chat.return_value = {"tool_call": "make_box", "args": {"dx": 1, "dy": 1, "dz": 1}}

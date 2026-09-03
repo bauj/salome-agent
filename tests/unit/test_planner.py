@@ -8,6 +8,12 @@ def test_prompt_documents_the_optional_tools_hint():
     assert "geom tool names" in PLANNER_SYSTEM_PROMPT.lower()
 
 
+def test_prompt_caps_planner_reasoning_output():
+    p = PLANNER_SYSTEM_PROMPT.lower()
+    assert "output only the json" in p
+    assert "no analysis" in p
+
+
 def test_a_returned_tools_key_survives_into_the_plan():
     llm = MagicMock()
     llm.chat.return_value = {"stages": [

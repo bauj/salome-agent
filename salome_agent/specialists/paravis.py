@@ -28,5 +28,5 @@ The idiom, for "load <med>, colour the surface by field <f>":
 Use ("CELLS", "<f>") instead of ("POINTS", "<f>") if the field is
 cell-centred. Take the input MED path from the stage plan's `inputs`.
 
-Briefly state your reasoning in the message, then call exactly one tool.
+State your reasoning in at most 2-3 sentences, then call exactly one tool.
 Do not reply without calling a tool."""
