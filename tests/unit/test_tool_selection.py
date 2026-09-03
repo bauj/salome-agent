@@ -45,3 +45,7 @@ def test_resolve_load_expands_names_categories_and_both():
 def test_resolve_load_ignores_unknown_names_and_categories():
     assert resolve_load(["ghost"], ["nonsense"], DEFS) == set()
     assert resolve_load(None, None, DEFS) == set()
+
+
+def test_core_tools_includes_get_subshapes():
+    assert "get_subshapes" in CORE_TOOLS

@@ -387,3 +387,68 @@ class TestEndToEndScenarios:
         objects = agent_client.call_tool("list_study_objects", {})
         assert objects["ok"] is True
         assert "box_1" in objects.get("names", [])
+
+
+class TestSubshapeSelection:
+    def test_explode_edges_of_a_box(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        out = agent_client.call_tool("explode", {"shape": "box_1", "sub_type": "edge"})
+        assert out["ok"] is True, out.get("error")
+        assert len(out["names"]) == 12
+        assert out["records"][0]["emit"] == "list_call"
+
+    def test_explode_faces_of_a_box(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        out = agent_client.call_tool("explode", {"shape": "box_1", "sub_type": "face"})
+        assert out["ok"] is True, out.get("error")
+        assert len(out["names"]) == 6
+
+    def test_get_subshapes_all_edges(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 20, "dy": 20, "dz": 20})
+        out = agent_client.call_tool(
+            "get_subshapes", {"shape": "box_1", "sub_type": "edge", "where": "all"})
+        assert out["ok"] is True, out.get("error")
+        assert len(out["ids"]) == 12
+        assert len(out["centres"]) == 12
+        assert out["records"] == []
+
+    def test_get_subshapes_top_four_edges_by_z(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 20, "dy": 20, "dz": 20})
+        out = agent_client.call_tool("get_subshapes", {
+            "shape": "box_1", "sub_type": "edge",
+            "where": {"sorted_by": "z", "take": "max", "count": 4}})
+        assert out["ok"] is True, out.get("error")
+        assert len(out["ids"]) == 4
+        for c in out["centres"]:
+            assert c[2] == 20.0
+
+    def test_get_subshapes_on_plane(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 20, "dy": 20, "dz": 20})
+        out = agent_client.call_tool("get_subshapes", {
+            "shape": "box_1", "sub_type": "face",
+            "where": {"on_plane": {"point": [0, 0, 20], "normal": [0, 0, 1]},
+                      "state": "on"}})
+        assert out["ok"] is True, out.get("error")
+        assert len(out["ids"]) == 1
+
+    def test_get_subshape_from_ids(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        ids = agent_client.call_tool(
+            "get_subshapes", {"shape": "box_1", "sub_type": "face", "where": "all"})["ids"]
+        out = agent_client.call_tool("get_subshape", {"shape": "box_1", "ids": ids[:1]})
+        assert out["ok"] is True, out.get("error")
+        assert out["records"][0]["fn"] == "GetSubShape"
+
+    def test_min_distance_between_two_boxes(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        agent_client.call_tool("translate", {"shape": "box_2", "dx": 30, "dy": 0, "dz": 0})
+        out = agent_client.call_tool("min_distance", {"shape1": "box_1", "shape2": "tr_1"})
+        assert out["ok"] is True, out.get("error")
+        assert out["distance"] == 20.0
+
+    def test_basic_properties_of_a_box(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 2, "dy": 3, "dz": 4})
+        out = agent_client.call_tool("basic_properties", {"shape": "box_1"})
+        assert out["ok"] is True, out.get("error")
+        assert out["properties"]["volume"] == 24.0

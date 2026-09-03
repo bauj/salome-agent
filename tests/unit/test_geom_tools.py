@@ -1466,3 +1466,134 @@ class TestShapeInfoFeedback:
 
         assert result["ok"] is True
         assert "shape_info" not in result
+
+
+class TestExplodeTool:
+    def _executor(self):
+        geompy = MagicMock()
+        geompy.ShapeType = {"EDGE": 6, "FACE": 4, "SOLID": 2, "VERTEX": 7,
+                            "WIRE": 5, "SHELL": 3}
+        geompy.SubShapeAllSortedCentres.return_value = ["e1", "e2", "e3"]
+        geompy.BoundingBox.return_value = [0, 1, 0, 1, 0, 1]
+        return SimpleNamespace(namespace={"geompy": geompy},
+                               geom_bindings={"box_1": "BOX"}, name_prefix="")
+
+    def test_explode_publishes_each_subshape_and_emits_one_list_call(self):
+        ex = self._executor()
+        out = geom_tools.tool_explode(ex, {"shape": "box_1", "sub_type": "edge"})
+        assert out["ok"] is True
+        assert out["names"] == ["box_1_edge_1", "box_1_edge_2", "box_1_edge_3"]
+        assert ex.geom_bindings["box_1_edge_2"] == "e2"
+        (rec,) = out["records"]
+        assert rec["fn"] == "SubShapeAllSortedCentres"
+        assert rec["emit"] == "list_call"
+        assert rec["out_vars"] == rec["publish"] == out["names"]
+        assert rec["args"][0] == {"kind": "ref", "value": "box_1"}
+        assert rec["args"][1] == {"kind": "literal", "value": 6}
+
+
+class TestGetSubshapeTool:
+    def _executor(self):
+        geompy = MagicMock()
+        geompy.GetSubShape.return_value = "SUB"
+        geompy.BoundingBox.return_value = [0, 1, 0, 1, 0, 1]
+        return SimpleNamespace(namespace={"geompy": geompy},
+                               geom_bindings={"box_1": "BOX"}, name_prefix="")
+
+    def test_get_subshape_builds_and_publishes_one_shape(self):
+        ex = self._executor()
+        out = geom_tools.tool_get_subshape(ex, {"shape": "box_1", "ids": [3, 7]})
+        assert out["ok"] is True
+        assert ex.geom_bindings["sub_1"] == "SUB"
+        (rec,) = out["records"]
+        assert rec["fn"] == "GetSubShape"
+        assert rec["args"] == [{"kind": "ref", "value": "box_1"},
+                               {"kind": "literal", "value": [3, 7]}]
+        assert rec["out_vars"] == rec["publish"] == ["sub_1"]
+
+    def test_get_subshape_coerces_string_ids_to_int(self):
+        ex = self._executor()
+        out = geom_tools.tool_get_subshape(ex, {"shape": "box_1", "ids": ["3", "7"]})
+        assert out["records"][0]["args"][1] == {"kind": "literal", "value": [3, 7]}
+
+
+class TestGetSubshapesQuery:
+    def _executor(self, subs, ids, bboxes, props=None):
+        geompy = MagicMock()
+        geompy.ShapeType = {"EDGE": 6, "FACE": 4}
+        geompy.SubShapeAllSortedCentres.return_value = subs
+        geompy.SubShapeAllSortedCentresIDs.return_value = ids
+        geompy.BoundingBox.side_effect = lambda s: bboxes[s]
+        if props is not None:
+            geompy.BasicProperties.side_effect = lambda s: props[s]
+        return SimpleNamespace(namespace={"geompy": geompy},
+                               geom_bindings={"box_1": "BOX"}, name_prefix="")
+
+    def test_where_all_returns_every_id_and_centre(self):
+        ex = self._executor(subs=["a", "b"], ids=[10, 11],
+                            bboxes={"a": [0, 2, 0, 0, 0, 0], "b": [0, 0, 0, 4, 0, 0]})
+        out = geom_tools.tool_get_subshapes(
+            ex, {"shape": "box_1", "sub_type": "edge", "where": "all"})
+        assert out["records"] == []
+        assert out["ids"] == [10, 11]
+        assert out["centres"] == [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]
+
+    def test_where_sorted_by_z_take_max_count_2(self):
+        ex = self._executor(subs=["a", "b", "c", "d"], ids=[1, 2, 3, 4],
+                            bboxes={"a": [0, 0, 0, 0, 0, 0], "b": [0, 0, 0, 0, 10, 10],
+                                    "c": [0, 0, 0, 0, 5, 5], "d": [0, 0, 0, 0, 10, 10]})
+        out = geom_tools.tool_get_subshapes(ex, {
+            "shape": "box_1", "sub_type": "edge",
+            "where": {"sorted_by": "z", "take": "max", "count": 2}})
+        assert sorted(out["ids"]) == [2, 4]
+
+    def test_where_by_size_longest_count_1_uses_edge_length(self):
+        ex = self._executor(subs=["a", "b"], ids=[1, 2],
+                            bboxes={"a": [0] * 6, "b": [0] * 6},
+                            props={"a": [3.0, 0.0, 0.0], "b": [9.0, 0.0, 0.0]})
+        out = geom_tools.tool_get_subshapes(ex, {
+            "shape": "box_1", "sub_type": "edge",
+            "where": {"by_size": "longest", "count": 1}})
+        assert out["ids"] == [2]
+
+    def test_where_by_size_largest_count_1_uses_face_area(self):
+        ex = self._executor(subs=["a", "b"], ids=[1, 2],
+                            bboxes={"a": [0] * 6, "b": [0] * 6},
+                            props={"a": [0.0, 2.0, 0.0], "b": [0.0, 8.0, 0.0]})
+        out = geom_tools.tool_get_subshapes(ex, {
+            "shape": "box_1", "sub_type": "face",
+            "where": {"by_size": "largest", "count": 1}})
+        assert out["ids"] == [2]
+
+    def test_unknown_where_is_an_error(self):
+        ex = self._executor(subs=[], ids=[], bboxes={})
+        out = geom_tools.tool_get_subshapes(
+            ex, {"shape": "box_1", "sub_type": "edge", "where": {"bogus": 1}})
+        assert out["ok"] is False
+
+
+class TestMeasurementQueries:
+    def _executor(self):
+        geompy = MagicMock()
+        return SimpleNamespace(namespace={"geompy": geompy},
+                               geom_bindings={"a": "A", "b": "B"}, name_prefix="")
+
+    def test_min_distance_returns_a_float(self):
+        ex = self._executor()
+        ex.namespace["geompy"].MinDistance.return_value = 4.23456
+        out = geom_tools.tool_min_distance(ex, {"shape1": "a", "shape2": "b"})
+        assert out["records"] == []
+        assert out["distance"] == 4.2346
+
+    def test_min_distance_tolerates_a_tuple_return(self):
+        ex = self._executor()
+        ex.namespace["geompy"].MinDistance.return_value = (5.0, 0, 0, 0, 5, 0, 0)
+        out = geom_tools.tool_min_distance(ex, {"shape1": "a", "shape2": "b"})
+        assert out["distance"] == 5.0
+
+    def test_basic_properties_returns_length_area_volume(self):
+        ex = self._executor()
+        ex.namespace["geompy"].BasicProperties.return_value = [40.0, 100.0, 0.0]
+        out = geom_tools.tool_basic_properties(ex, {"shape": "a"})
+        assert out["records"] == []
+        assert out["properties"] == {"length": 40.0, "area": 100.0, "volume": 0.0}

@@ -1209,6 +1209,134 @@ def tool_measure(executor, args: dict):
     return {"ok": True, "records": [], "sanity": {"ok": True}, "measurements": out}
 
 
+def _centre(geompy, shape) -> list:
+    xmin, xmax, ymin, ymax, zmin, zmax = geompy.BoundingBox(shape)
+    r = lambda v: round(v, 4)
+    return [r((xmin + xmax) / 2), r((ymin + ymax) / 2), r((zmin + zmax) / 2)]
+
+
+def _state_enum(state: str):
+    from salome.geom import geomBuilder
+    g = geomBuilder.GEOM
+    return {"on": g.ST_ON, "in": g.ST_IN, "out": g.ST_OUT,
+            "onin": g.ST_ONIN, "onout": g.ST_ONOUT}[state]
+
+
+def tool_explode(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    shape_name = args["shape"]
+    shape = executor.geom_bindings[shape_name]
+    sub_type = args["sub_type"]
+    type_code = int(geompy.ShapeType[sub_type.upper()])
+    subs = geompy.SubShapeAllSortedCentres(shape, type_code)
+    names = []
+    for i, sub in enumerate(subs, start=1):
+        nm = f"{shape_name}_{sub_type}_{i}"
+        _publish(executor, sub, nm)
+        names.append(nm)
+    return {
+        "ok": True,
+        "records": [{
+            "fn": "SubShapeAllSortedCentres",
+            "args": [{"kind": "ref", "value": shape_name},
+                     {"kind": "literal", "value": type_code}],
+            "out_vars": names,
+            "publish": names,
+            "emit": "list_call",
+        }],
+        "sanity": {"ok": True},
+        "names": names,
+    }
+
+
+def tool_get_subshape(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    shape_name = args["shape"]
+    shape = executor.geom_bindings[shape_name]
+    ids = [int(i) for i in args["ids"]]
+    sub = geompy.GetSubShape(shape, ids)
+    name = _next_name(executor, "sub")
+    _publish(executor, sub, name)
+    return {
+        "ok": True,
+        "records": [{
+            "fn": "GetSubShape",
+            "args": [{"kind": "ref", "value": shape_name},
+                     {"kind": "literal", "value": ids}],
+            "out_vars": [name],
+            "publish": [name],
+        }],
+        "sanity": {"ok": True},
+    }
+
+
+def tool_get_subshapes(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    shape = executor.geom_bindings[args["shape"]]
+    type_code = int(geompy.ShapeType[args["sub_type"].upper()])
+    where = args["where"]
+
+    subs = list(geompy.SubShapeAllSortedCentres(shape, type_code))
+    all_ids = list(geompy.SubShapeAllSortedCentresIDs(shape, type_code))
+    pairs = list(zip(all_ids, subs))
+
+    if where == "all":
+        selected = pairs
+    elif "sorted_by" in where:
+        axis = {"x": 0, "y": 1, "z": 2}[where["sorted_by"]]
+        take = where.get("take", "max")
+        n = int(where["count"])
+        ordered = sorted(pairs, key=lambda p: _centre(geompy, p[1])[axis],
+                         reverse=(take == "max"))
+        selected = ordered[:n]
+    elif "by_size" in where:
+        kind = where["by_size"]
+        n = int(where["count"])
+        metric_idx = 1 if kind in ("largest", "smallest") else 0
+        biggest = kind in ("longest", "largest")
+        ordered = sorted(pairs,
+                         key=lambda p: geompy.BasicProperties(p[1])[metric_idx],
+                         reverse=biggest)
+        selected = ordered[:n]
+    elif "on_plane" in where:
+        op = where["on_plane"]
+        pnt = geompy.MakeVertex(*[float(v) for v in op["point"]])
+        nrm = geompy.MakeVectorDXDYDZ(*[float(v) for v in op["normal"]])
+        st = _state_enum(where.get("state", "on"))
+        sel_ids = set(geompy.GetShapesOnPlaneWithLocationIDs(
+            shape, type_code, nrm, pnt, st))
+        selected = [p for p in pairs if p[0] in sel_ids]
+    else:
+        return {"ok": False, "error": f"get_subshapes: unknown where {where!r}"}
+
+    return {
+        "ok": True,
+        "records": [],
+        "sanity": {"ok": True},
+        "ids": [i for i, _ in selected],
+        "centres": [_centre(geompy, s) for _, s in selected],
+    }
+
+
+def tool_min_distance(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    s1 = executor.geom_bindings[args["shape1"]]
+    s2 = executor.geom_bindings[args["shape2"]]
+    d = geompy.MinDistance(s1, s2)
+    if isinstance(d, (tuple, list)):
+        d = d[0]
+    return {"ok": True, "records": [], "sanity": {"ok": True}, "distance": round(d, 4)}
+
+
+def tool_basic_properties(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    shape = executor.geom_bindings[args["shape"]]
+    length, area, volume = geompy.BasicProperties(shape)
+    return {"ok": True, "records": [], "sanity": {"ok": True},
+            "properties": {"length": round(length, 4), "area": round(area, 4),
+                           "volume": round(volume, 4)}}
+
+
 # Registry: tool name -> handler(executor, args) -> ToolResult.
 # make_cylinder/boolean_*/chamfer_edges/finish_stage follow the same shape
 # as tool_make_box/tool_fillet_edges above and are added the same way —
@@ -1252,6 +1380,11 @@ TOOLS: dict[str, Callable] = {
     "check_shape": tool_check_shape,
     "list_study_objects": tool_list_study_objects,
     "measure": tool_measure,
+    "explode": tool_explode,
+    "get_subshape": tool_get_subshape,
+    "get_subshapes": tool_get_subshapes,
+    "min_distance": tool_min_distance,
+    "basic_properties": tool_basic_properties,
 }
 
 # One category per tool, for the geom-specialist tool-retrieval mechanism
@@ -1296,6 +1429,11 @@ TOOL_CATEGORY: dict[str, str] = {
     "check_shape": "query",
     "list_study_objects": "query",
     "measure": "query",
+    "explode": "feature",
+    "get_subshape": "feature",
+    "get_subshapes": "query",
+    "min_distance": "query",
+    "basic_properties": "query",
 }
 
 # Per-tool arg coercion: LLM tool-call args arrive JSON-typed (numbers can
@@ -1338,6 +1476,11 @@ ARG_TYPES: dict[str, dict[str, Callable]] = {
     "set_color": {"red": int, "green": int, "blue": int},
     "set_transparency": {"transparency": float},
     "set_display_mode": {"mode": int},
+    "explode": {},
+    "get_subshape": {},
+    "get_subshapes": {},
+    "min_distance": {},
+    "basic_properties": {},
 }
 
 # JSON Schema per tool, sent to the LLM as each function's "parameters" so
@@ -1700,6 +1843,47 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
         "required": ["names"],
     },
+    "explode": {
+        "type": "object",
+        "properties": {
+            "shape": {"type": "string", "description": "name of the shape to decompose"},
+            "sub_type": {"type": "string",
+                         "enum": ["vertex", "edge", "wire", "face", "shell", "solid"]},
+        },
+        "required": ["shape", "sub_type"],
+    },
+    "get_subshape": {
+        "type": "object",
+        "properties": {
+            "shape": {"type": "string"},
+            "ids": {"type": "array", "items": {"type": "integer"},
+                    "description": "subshape ids from explode or get_subshapes"},
+        },
+        "required": ["shape", "ids"],
+    },
+    "get_subshapes": {
+        "type": "object",
+        "properties": {
+            "shape": {"type": "string"},
+            "sub_type": {"type": "string",
+                         "enum": ["vertex", "edge", "wire", "face", "shell", "solid"]},
+            "where": {"description": (
+                '"all", or {"sorted_by":"x|y|z","take":"max|min","count":N}, or '
+                '{"by_size":"longest|shortest|largest|smallest","count":N}, or '
+                '{"on_plane":{"point":[x,y,z],"normal":[x,y,z]},"state":"on"}')},
+        },
+        "required": ["shape", "sub_type", "where"],
+    },
+    "min_distance": {
+        "type": "object",
+        "properties": {"shape1": {"type": "string"}, "shape2": {"type": "string"}},
+        "required": ["shape1", "shape2"],
+    },
+    "basic_properties": {
+        "type": "object",
+        "properties": {"shape": {"type": "string"}},
+        "required": ["shape"],
+    },
 }
 
 # One line per tool: what it produces and the implicit placement/orientation
@@ -1745,6 +1929,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "check_shape": "Report whether `shape` is a valid geometry, with a diagnostic message.",
     "list_study_objects": "List the names of every object currently published in the study.",
     "measure": "Report bbox/size/centre (mm) of one or more published shapes by name. Use it to check where a shape landed and to see upstream shapes you did not build.",
+    "explode": "Publish every subshape of the given sub_type (edge, face, ...) of `shape` as its own named object, sorted by centre for a deterministic order. Use get_subshapes instead if you only need ids.",
+    "get_subshape": "Build one new named shape from a list of subshape ids of `shape` (e.g. a group of faces). Get the ids from get_subshapes or explode.",
+    "get_subshapes": "Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = \"all\", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state).",
+    "min_distance": "Report the shortest distance (mm) between two published shapes.",
+    "basic_properties": "Report [length, area, volume] of `shape` (mm): length for an edge/wire, area for a face/shell, volume for a solid; the others are 0.",
 }
 
 
