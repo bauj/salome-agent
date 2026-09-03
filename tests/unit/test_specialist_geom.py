@@ -3,11 +3,18 @@ from unittest.mock import MagicMock
 from salome_agent.specialists.geom import run_geom_specialist
 
 
+def _resp(*calls, content=None):
+    """Build a chat() return value. Each call is (name, args_dict); pass none
+    for a prose-only turn."""
+    return {"tool_calls": [{"name": n, "args": a, "id": None} for n, a in calls],
+            "content": content}
+
+
 def test_finish_stage_returns_call_log_and_result_names():
     llm = MagicMock()
     llm.chat.side_effect = [
-        {"tool_call": "make_box", "args": {"dx": 10, "dy": 10, "dz": 10}},
-        {"tool_call": "finish_stage", "args": {"result_names": ["box_1"]}},
+        _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
+        _resp(("finish_stage", {"result_names": ["box_1"]})),
     ]
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
@@ -22,8 +29,8 @@ def test_finish_stage_returns_call_log_and_result_names():
 def test_no_tool_call_is_nudged_then_loop_continues():
     llm = MagicMock()
     llm.chat.side_effect = [
-        {"tool_call": None, "content": "let me think"},
-        {"tool_call": "finish_stage", "args": {"result_names": ["box_1"]}},
+        _resp(content="let me think"),
+        _resp(("finish_stage", {"result_names": ["box_1"]})),
     ]
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
@@ -38,9 +45,9 @@ def test_no_tool_call_is_nudged_then_loop_continues():
 def test_prior_tool_results_are_compacted_latest_kept_full():
     llm = MagicMock()
     llm.chat.side_effect = [
-        {"tool_call": "make_box", "args": {"dx": 10, "dy": 10, "dz": 10}},
-        {"tool_call": "make_box", "args": {"dx": 5, "dy": 5, "dz": 5}},
-        {"tool_call": "finish_stage", "args": {"result_names": ["box_2"]}},
+        _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
+        _resp(("make_box", {"dx": 5, "dy": 5, "dz": 5})),
+        _resp(("finish_stage", {"result_names": ["box_2"]})),
     ]
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
@@ -72,7 +79,7 @@ def test_prior_tool_results_are_compacted_latest_kept_full():
 
 def test_upstream_shape_info_is_injected_into_the_opening_prompt():
     llm = MagicMock()
-    llm.chat.return_value = {"tool_call": "finish_stage", "args": {"result_names": ["x"]}}
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
     run_geom_specialist(
@@ -88,7 +95,7 @@ def test_upstream_shape_info_is_injected_into_the_opening_prompt():
 
 def test_no_upstream_leaves_the_prompt_unchanged():
     llm = MagicMock()
-    llm.chat.return_value = {"tool_call": "finish_stage", "args": {"result_names": ["x"]}}
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
     run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
@@ -111,13 +118,72 @@ def test_system_prompt_caps_reasoning_output():
 
 def test_exhausted_loop_sets_last_error():
     llm = MagicMock()
-    llm.chat.return_value = {"tool_call": "make_box", "args": {"dx": 1, "dy": 1, "dz": 1}}
+    llm.chat.return_value = _resp(("make_box", {"dx": 1, "dy": 1, "dz": 1}))
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
     client.call_tool.return_value = {"ok": False, "error": "bad box"}
     result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
                                   llm, client, iteration_cap=2)
     assert result["last_error"]["message"] == "bad box"
+
+
+def test_batched_calls_all_run_in_one_turn():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+              ("make_box", {"dx": 2, "dy": 2, "dz": 2}),
+              ("translate", {"shape": "box_2", "dx": 5})),
+        _resp(("finish_stage", {"result_names": ["tr_1"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box", "category": "primitive"},
+        {"name": "translate", "category": "transform"}]}
+    client.call_tool.return_value = {"ok": True, "records": [{"fn": "X", "args": [],
+                                     "out_vars": ["o"], "publish": ["o"]}]}
+    run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                         "tools": ["make_box", "translate"]}, llm, client, iteration_cap=5)
+    assert client.call_tool.call_count == 3
+    # one assistant turn carrying all three call ids, then one tool msg each
+    sent = llm.chat.call_args_list[1].kwargs["messages"]
+    asst = [m for m in sent if m.get("role") == "assistant" and m.get("tool_calls")]
+    assert len(asst) == 1 and len(asst[0]["tool_calls"]) == 3
+    ids = [tc["id"] for tc in asst[0]["tool_calls"]]
+    tool_ids = [m["tool_call_id"] for m in sent if m.get("role") == "tool"]
+    assert tool_ids == ids
+
+
+def test_batch_ending_in_finish_stage_runs_earlier_calls_then_finishes():
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                                  ("finish_stage", {"result_names": ["box_1"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    client.call_tool.return_value = {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                     "out_vars": ["box_1"], "publish": ["box_1"]}]}
+    result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                                  llm, client, iteration_cap=5)
+    assert client.call_tool.call_count == 1
+    assert result["result_names"] == ["box_1"]
+    assert len(result["call_log"]) == 1
+
+
+def test_error_mid_batch_still_runs_the_rest_and_sets_last_error():
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                                  ("make_box", {"dx": 2, "dy": 2, "dz": 2}),
+                                  ("make_box", {"dx": 3, "dy": 3, "dz": 3}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    client.call_tool.side_effect = [
+        {"ok": True, "records": []},
+        {"ok": False, "error": "bad middle box"},
+        {"ok": True, "records": []},
+    ] * 3
+    result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                                  llm, client, iteration_cap=1)
+    assert client.call_tool.call_count == 3
+    assert result["last_error"]["message"] == "bad middle box"
 
 
 def test_geom_specialist_returns_fatal_on_session_poisoned():
@@ -148,7 +214,7 @@ def _tool_names(chat_call):
 
 def test_hinted_stage_offers_core_plus_hints_plus_meta_tools_only():
     llm = MagicMock()
-    llm.chat.return_value = {"tool_call": "finish_stage", "args": {"result_names": ["x"]}}
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))
     client = MagicMock()
     client.list_tools.return_value = {"tools": _defs()}
     run_geom_specialist(
@@ -169,8 +235,8 @@ def test_hinted_stage_offers_core_plus_hints_plus_meta_tools_only():
 def test_load_tools_widens_the_next_call():
     llm = MagicMock()
     llm.chat.side_effect = [
-        {"tool_call": "load_tools", "args": {"categories": ["swept"]}},
-        {"tool_call": "finish_stage", "args": {"result_names": ["x"]}},
+        _resp(("load_tools", {"categories": ["swept"]})),
+        _resp(("finish_stage", {"result_names": ["x"]})),
     ]
     client = MagicMock()
     client.list_tools.return_value = {"tools": _defs()}
@@ -187,7 +253,7 @@ def test_load_tools_widens_the_next_call():
 
 def test_tool_selection_all_offers_the_full_registry():
     llm = MagicMock()
-    llm.chat.return_value = {"tool_call": "finish_stage", "args": {"result_names": ["x"]}}
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))
     client = MagicMock()
     client.list_tools.return_value = {"tools": _defs()}
     run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],

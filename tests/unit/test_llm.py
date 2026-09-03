@@ -199,6 +199,36 @@ def test_chat_keeps_reasoning_content_alongside_the_tool_call(monkeypatch):
     assert out["content"] == "I'll make a box"
 
 
+def test_chat_returns_every_tool_call_in_the_turn(monkeypatch):
+    body = {"choices": [{"finish_reason": "tool_calls", "message": {
+        "content": "building four walls",
+        "tool_calls": [
+            {"id": "c1", "function": {"name": "make_box", "arguments": '{"dx": 1}'}},
+            {"id": "c2", "function": {"name": "make_box", "arguments": '{"dx": 2}'}},
+            {"id": "c3", "function": {"name": "translate", "arguments": '{"dx": 5}'}},
+        ]}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "make_box", "parameters": {"type": "object"}}])
+    assert [c["name"] for c in out["tool_calls"]] == ["make_box", "make_box", "translate"]
+    assert [c["args"] for c in out["tool_calls"]] == [{"dx": 1}, {"dx": 2}, {"dx": 5}]
+    assert [c["id"] for c in out["tool_calls"]] == ["c1", "c2", "c3"]
+    # singular keys mirror the first call
+    assert out["tool_call"] == "make_box" and out["args"] == {"dx": 1}
+
+
+def test_chat_returns_empty_tool_calls_when_model_only_talks(monkeypatch):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"content": "thinking", "tool_calls": []}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["tool_calls"] == []
+    assert out["tool_call"] is None
+
+
 def test_prompt_is_logged_before_the_request_is_sent(tmp_path, monkeypatch, caplog):
     import logging
 
