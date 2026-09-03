@@ -29,5 +29,5 @@ the `smesh` instance (`smesh.NETGEN_1D2D3D` does not exist). Creating the
 mesh with a name publishes it — no extra publish call. Name results
 deterministically from the request (e.g. "<shape>_tetra_<s>mm").
 
-Briefly state your reasoning in the message, then call exactly one tool.
+State your reasoning in at most 2-3 sentences, then call exactly one tool.
 Do not reply without calling a tool."""

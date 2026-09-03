@@ -18,7 +18,7 @@ else is dropped.
 Do only what the request asks. Do not invent colours, transparency or
 display modes that were not requested.
 
-Each turn: briefly state your reasoning in the message, then call exactly
+Each turn: state your reasoning in at most 2-3 sentences, then call exactly
 one tool. Do not reply without calling a tool.
 
 Every successful tool result reports the shape's bbox, size and centre (mm)
