@@ -126,3 +126,43 @@ def test_display_record_kept_when_recv_reachable():
     ]
     source = generate(call_log, result_names=["box_1"])
     assert "box_1.SetColor" in source
+
+
+def test_unresolvable_result_names_fall_back_to_every_published_shape():
+    """A weak model can call finish_stage with invented names that match no
+    built shape (task 186). Rather than emit an empty script and silently drop
+    the whole stage from result.py (issue #7), keep every published shape."""
+    call_log = [
+        {"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 100}] * 3,
+         "out_vars": ["sa_x_box_1"], "publish": ["sa_x_box_1"]},
+        {"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 20}] * 3,
+         "out_vars": ["sa_x_box_2"], "publish": ["sa_x_box_2"]},
+        {"fn": "MakeFuse",
+         "args": [{"kind": "ref", "value": "sa_x_box_1"}, {"kind": "ref", "value": "sa_x_box_2"}],
+         "out_vars": ["sa_x_fuse_1"], "publish": ["sa_x_fuse_1"]},
+    ]
+    source = generate(call_log, result_names=["beam_union"])  # invented name
+    assert "sa_x_box_1 = geompy.MakeBoxDXDYDZ(100, 100, 100)" in source
+    assert "sa_x_fuse_1 = geompy.MakeFuse(sa_x_box_1, sa_x_box_2)" in source
+
+
+def test_empty_result_names_fall_back_to_every_published_shape():
+    call_log = [
+        {"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 10}] * 3,
+         "out_vars": ["box_1"], "publish": ["box_1"]},
+    ]
+    assert "box_1 = geompy.MakeBoxDXDYDZ(10, 10, 10)" in generate(call_log, result_names=[])
+
+
+def test_partly_unresolvable_result_names_still_prune_scratch():
+    """If at least one named result resolves, keep normal pruning — an
+    abandoned exploratory shape the model never named is still dropped."""
+    call_log = [
+        {"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 10}] * 3,
+         "out_vars": ["box_1"], "publish": ["box_1"]},
+        {"fn": "MakeCylinderRH", "args": [{"kind": "literal", "value": 5}, {"kind": "literal", "value": 5}],
+         "out_vars": ["cyl_1"], "publish": ["cyl_1"]},
+    ]
+    source = generate(call_log, result_names=["box_1", "not_a_real_name"])
+    assert "box_1 = geompy.MakeBoxDXDYDZ(10, 10, 10)" in source
+    assert "cyl_1" not in source

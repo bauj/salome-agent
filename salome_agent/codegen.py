@@ -54,6 +54,19 @@ def _reachable_with_display(call_log: list[dict], reachable: set[str]) -> set[tu
 
 
 def generate(call_log: list[dict], result_names: list[str]) -> str:
+    # A weak model can call finish_stage with names that match no shape it
+    # actually built (invented names, or an empty list). Pruning to those would
+    # emit nothing and silently drop the whole stage from result.py (issue #7),
+    # so fall back to keeping every published shape when nothing resolves.
+    built = {v for call in call_log for v in call.get("out_vars", [])}
+    if not (set(result_names) & built):
+        from salome_agent.logs import log
+
+        if call_log:
+            log.warning("codegen: result_names %s match no built shape — keeping "
+                        "every published shape for this stage", result_names)
+        result_names = [n for call in call_log for n in (call.get("publish") or [])]
+
     reachable = _reachable(call_log, result_names)
     reachable_calls = _reachable_with_display(call_log, reachable)
     lines = []
