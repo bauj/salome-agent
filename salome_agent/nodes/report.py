@@ -1,4 +1,21 @@
-def write_report(state: dict) -> str:
+def _usage_lines(usage: dict) -> list[str]:
+    calls = usage.get("calls", 0)
+    metered = usage.get("metered_calls", 0)
+    pt = usage.get("prompt_tokens", 0)
+    ct = usage.get("completion_tokens", 0)
+    lines = ["## LLM usage", "",
+             f"- calls: {calls}",
+             f"- input tokens: {pt:,}",
+             f"- output tokens: {ct:,}",
+             f"- total tokens: {pt + ct:,}"]
+    if metered < calls:
+        lines.append(f"- note: {calls - metered} call(s) returned no usage data; "
+                     f"totals cover the {metered} that did")
+    lines.append("")
+    return lines
+
+
+def write_report(state: dict, usage: dict | None = None) -> str:
     lines = [f"# Report: {state['run_id']}", "",
              f"Request: {state['user_request']}", ""]
     if state.get("fatal"):
@@ -10,6 +27,8 @@ def write_report(state: dict) -> str:
                   f"remain from failed stage attempts — safe to bulk-delete.", ""]
     elif sess.get("mode") == "headless":
         lines += ["Session: isolated study.", ""]
+    if usage and usage.get("calls"):
+        lines += _usage_lines(usage)
     lines.append("## Stages")
     total = len(state["stages"])
     for idx in sorted(state["stages"]):
