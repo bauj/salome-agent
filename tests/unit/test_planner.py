@@ -1,6 +1,21 @@
 from unittest.mock import MagicMock
 
-from salome_agent.nodes.planner import plan
+from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT, plan
+
+
+def test_prompt_documents_the_optional_tools_hint():
+    assert '"tools"' in PLANNER_SYSTEM_PROMPT
+    assert "geom tool names" in PLANNER_SYSTEM_PROMPT.lower()
+
+
+def test_a_returned_tools_key_survives_into_the_plan():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": [
+        {"module": "geom", "intent": "red box", "params": {}, "inputs": [],
+         "tools": ["make_box", "set_color"]},
+    ]}
+    stages = plan("make a red box", llm)
+    assert stages[0]["tools"] == ["make_box", "set_color"]
 
 
 def test_repeated_module_yields_two_stages():
