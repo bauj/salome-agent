@@ -61,6 +61,21 @@ class LLMClient:
         # whatever reasoning key the provider returns) so tool-selection can be
         # inspected after the run.
         self.trace_path = trace_path
+        # Running total of provider-reported token usage across every chat()
+        # call on this client. `calls` counts all round-trips; `metered_calls`
+        # counts the subset that came back with a `usage` block (some
+        # providers/proxies omit it). Surfaced in report.md.
+        self.usage = {"calls": 0, "metered_calls": 0,
+                      "prompt_tokens": 0, "completion_tokens": 0}
+
+    def _record_usage(self, body: dict) -> None:
+        self.usage["calls"] += 1
+        u = body.get("usage") or {}
+        if u.get("prompt_tokens") is None and u.get("completion_tokens") is None:
+            return
+        self.usage["metered_calls"] += 1
+        self.usage["prompt_tokens"] += int(u.get("prompt_tokens") or 0)
+        self.usage["completion_tokens"] += int(u.get("completion_tokens") or 0)
 
     def _trace_prompt(self, request: dict) -> None:
         # Printed BEFORE the POST so the prompt is visible while the call is
@@ -144,11 +159,12 @@ class LLMClient:
             raise RuntimeError(
                 f"LLM endpoint returned HTTP {resp.status_code} with a non-JSON body "
                 f"(is the model/proxy healthy?). Body:\n{snippet or '<empty>'}")
+        self._record_usage(body)
         message = body["choices"][0]["message"]
         finish = body["choices"][0].get("finish_reason")
         self._trace(trace_request,
                     {"finish_reason": finish, "elapsed_s": round(time.monotonic() - t0, 2),
-                     "message": message})
+                     "usage": body.get("usage"), "message": message})
 
         if tools:
             calls = message.get("tool_calls") or []

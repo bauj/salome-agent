@@ -197,3 +197,36 @@ def test_no_trace_path_writes_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
     LLMClient("http://x/v1", "", "auto").chat(messages=[{"role": "user", "content": "hi"}])
     assert list(tmp_path.iterdir()) == []
+
+
+def test_usage_accumulates_across_calls(monkeypatch):
+    bodies = [
+        {"choices": [{"finish_reason": "stop",
+                      "message": {"role": "assistant", "content": '{"a": 1}'}}],
+         "usage": {"prompt_tokens": 100, "completion_tokens": 10}},
+        {"choices": [{"finish_reason": "stop",
+                      "message": {"role": "assistant", "content": '{"a": 2}'}}],
+         "usage": {"prompt_tokens": 250, "completion_tokens": 25}},
+    ]
+    it = iter(bodies)
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        return _FakeResp(next(it))
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    client = LLMClient("http://x/v1", "", "auto")
+    client.chat(messages=[{"role": "user", "content": "hi"}])
+    client.chat(messages=[{"role": "user", "content": "hi"}])
+    assert client.usage == {"calls": 2, "metered_calls": 2,
+                            "prompt_tokens": 350, "completion_tokens": 35}
+
+
+def test_usage_tolerates_a_missing_usage_block(monkeypatch):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"role": "assistant", "content": '{"a": 1}'}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    client = LLMClient("http://x/v1", "", "auto")
+    client.chat(messages=[{"role": "user", "content": "hi"}])
+    assert client.usage["calls"] == 1
+    assert client.usage["metered_calls"] == 0
+    assert client.usage["prompt_tokens"] == 0

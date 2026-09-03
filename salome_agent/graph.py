@@ -217,14 +217,15 @@ def _assemble_node(state: dict):
     return Command(update={"final_script": assemble(state)}, goto="report")
 
 
-def _report_node(state: dict):
+def _report_node(state: dict, config: "RunnableConfig"):
     import os
 
     from langgraph.graph import END
     from langgraph.types import Command
     from salome_agent.nodes.report import write_report
 
-    report_text = write_report(state)
+    llm = config["configurable"].get("llm_client")
+    report_text = write_report(state, usage=getattr(llm, "usage", None))
     work_dir = os.path.expanduser(state["config"].get("work_dir") or ".")
     run_dir = os.path.join(work_dir, state["run_id"] or "run")
     os.makedirs(run_dir, exist_ok=True)
