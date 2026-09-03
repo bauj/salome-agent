@@ -1275,6 +1275,9 @@ def tool_get_subshapes(executor, args: dict):
     shape = executor.geom_bindings[args["shape"]]
     type_code = int(geompy.ShapeType[args["sub_type"].upper()])
     where = args["where"]
+    if isinstance(where, str) and where.strip().startswith("{"):
+        import json
+        where = json.loads(where)
 
     subs = list(geompy.SubShapeAllSortedCentres(shape, type_code))
     all_ids = list(geompy.SubShapeAllSortedCentresIDs(shape, type_code))

@@ -26,7 +26,7 @@ line-delimited JSON); it discovers a running server via `~/.salome_agent/server.
 
 Flow: `request → plan → [per stage: specialist → verify static → verify exec → advance] → assemble result.py → report`
 
-- **geom** stages run as tool calls (`make_box`, `fillet_edges`, ...) against the server; the script is generated from the call log.
+- **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log.
 - **smesh / paravis** stages are raw scripts, statically checked (top-level API existence) then executed under a timeout with per-module sanity checks.
 - Stage retry re-runs the full stage script (no MED checkpoints — GEOM can't export MED). GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
 
@@ -294,11 +294,12 @@ docs/superpowers/   design specs + implementation plans
 - `--no-session` mode only does a coarse "does this name exist" static check
   against a snapshot API map and no exec verification — see *Static-check API map*
   under Development. A real run always verifies against the live session.
-- geom tool registry (~40 tools: primitives, sketch, swept, booleans, transforms,
-  fillet/chamfer, display, query) has no subshape selection yet — a specific-edge
-  fillet or a face-ID op needs an explode/query family (planned). Add tools using
-  the existing handler + `ARG_TYPES` + `TOOL_SCHEMAS` + `CallRecord` pattern in
-  `executor/geom_tools.py`.
+- geom tool registry (~45 tools: primitives, sketch, swept, booleans, transforms,
+  fillet/chamfer, display, query, subshape selection). Subshape ids come from
+  `get_subshapes` (query — returns ids/centres, emits no `CallRecord`) or
+  `explode` (publishes each subshape); `get_subshape` builds one shape from an id
+  list. Add tools using the existing handler + `ARG_TYPES` + `TOOL_SCHEMAS` +
+  `CallRecord` pattern in `executor/geom_tools.py`.
 - `reset_and_replay` (rollback) is wired only for the headless backend and has no
   graph-level caller yet — retries re-run the full stage script.
 - RAG / documentation retrieval was cut from v1.

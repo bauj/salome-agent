@@ -627,6 +627,18 @@ raw integer IDs with no way to discover them.
 - `basic_properties(shape)` → `BasicProperties(theShape)` → `[length, area, volume]`
 - `point_coordinates(point_ref)` → `PointCoordinates(pt)` → `[x,y,z]`
 
+### Status
+
+Implemented on branch `feat/185-subshape-selection`
+(plan: `docs/superpowers/plans/2026-09-03-geom-subshape-selection.md`).
+Shipped: `explode`, `get_subshape`, `get_subshapes` (predicates `all` /
+`on_plane` / `sorted_by` / `by_size`), `min_distance`, `basic_properties`,
+codegen `list_call` emit, the query-then-act prompt paragraph. Deferred:
+`get_subshapes` predicates `on_cylinder` / `on_sphere` / `on_shape`; the
+`bounding_box` / `point_coordinates` helpers (the existing `measure` tool
+already covers them); checklist item 8 (inline `where` sugar on
+`fillet_edges` / `chamfer_edges`).
+
 ### Task 176b checklist (when picked up)
 
 1. Codegen: multi-`out_var` / multi-`publish` list-return support + a
