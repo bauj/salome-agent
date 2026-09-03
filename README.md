@@ -74,7 +74,9 @@ cp config.example.json config.json
     "api_key": "sk-...",
     "model": "auto",
     "ssl_cert_file": "",
-    "temperature": 0
+    "temperature": 0,
+    "timeout": 120,
+    "json_retries": 2
   },
   "salome": {
     "root": "/path/to/your/SALOME"
@@ -98,6 +100,8 @@ Required keys: `llm.base_url`, `llm.model`, `salome.root`. Missing any of them i
 `llm.ssl_cert_file` is optional: a path to a CA bundle for verifying an HTTPS endpoint with a private CA. Empty/omitted verifies against the system trust store.
 
 `llm.extra_headers` is optional: an object of extra HTTP headers sent verbatim on every LLM request. In a string value, `{run_id}` is replaced with the current run's id — useful for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`.
+
+`llm.json_retries` (default 2): when the planner LLM returns something that will not parse as JSON, its answer plus the exact parser error are fed back and it is re-asked this many times before the run fails.
 
 `policy.verify_cadence` controls how hard the geom specialist is pushed to `measure`-check where its shapes landed:
 - `none` — no self-check.

@@ -22,8 +22,8 @@ def _parse_json_content(content: str):
     content = (content or "").strip()
     try:
         return json.loads(content)
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        first_err = e
     m = _FENCE_RE.search(content)
     if m:
         try:
@@ -37,7 +37,8 @@ def _parse_json_content(content: str):
             return json.loads(content[start:end + 1])
         except json.JSONDecodeError:
             pass
-    raise ValueError(f"LLM did not return parseable JSON. Raw content:\n{content}")
+    raise ValueError(
+        f"LLM did not return parseable JSON ({first_err}). Raw content:\n{content}")
 
 
 class LLMClient:
@@ -48,7 +49,8 @@ class LLMClient:
 
     def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
                  temperature: float = 0, request_timeout: float = 120,
-                 trace_path: str | None = None, extra_headers: dict | None = None):
+                 trace_path: str | None = None, extra_headers: dict | None = None,
+                 json_retries: int = 2):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -58,6 +60,10 @@ class LLMClient:
         self.ssl_cert_file = ssl_cert_file or True
         self.temperature = temperature
         self.request_timeout = request_timeout
+        # No-tools (planner) path only: on a response that will not parse as
+        # JSON, feed the specific parser error back to the model and re-ask,
+        # up to this many times, before failing the run (GH #6).
+        self.json_retries = json_retries
         # -vv: append one JSON line per round-trip (request + raw response +
         # whatever reasoning key the provider returns) so tool-selection can be
         # inspected after the run.
@@ -107,34 +113,18 @@ class LLMClient:
             log.warning("could not write LLM trace: %s", e)
         log.debug("LLM response:\n%s", json.dumps(response, indent=2, default=str, ensure_ascii=False))
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
-        # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
-        # real per-tool schema, not just a bare name, so the LLM knows each
-        # arg's name/type/required-ness instead of guessing.
-        payload = {"model": self.model, "messages": messages, "temperature": self.temperature}
-        if tools:
-            payload["tools"] = [
-                {"type": "function", "function": {
-                    "name": t["name"],
-                    **({"description": t["description"]} if t.get("description") else {}),
-                    "parameters": t.get("parameters") or {"type": "object", "properties": {}},
-                }}
-                for t in tools
-            ]
-            # "auto", not "required": the model may narrate its reasoning in
-            # `content` before the call, and some models only do so when not
-            # forced. A turn with no tool call at all is handled by the caller.
-            payload["tool_choice"] = "auto"
+    def _round_trip(self, payload: dict, tool_names: list[str] | None) -> dict:
+        """One POST to /chat/completions (with transient-failure retries) —
+        returns the raw provider `message` object."""
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         headers.update(self.extra_headers)
-        tool_names = [t["name"] for t in tools] if tools else None
         log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
-                  self.model, len(messages), tool_names or "-", self.request_timeout)
+                  self.model, len(payload["messages"]), tool_names or "-", self.request_timeout)
         approx_in = self._approx_tokens(payload)
         self.usage["approx_prompt_tokens"] += approx_in
         trace_request = {"model": self.model, "temperature": self.temperature,
                          "tools": tool_names or [], "approx_input_tokens": approx_in,
-                         "messages": messages}
+                         "messages": payload["messages"]}
         self._trace_prompt(trace_request)
         t0 = time.monotonic()
         resp = None
@@ -179,12 +169,35 @@ class LLMClient:
         self._trace(trace_request,
                     {"finish_reason": finish, "elapsed_s": round(time.monotonic() - t0, 2),
                      "usage": body.get("usage"), "message": message})
+        log.debug("LLM response in %.1fs: finish=%s", time.monotonic() - t0, finish)
+        return message
+
+    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
+        # real per-tool schema, not just a bare name, so the LLM knows each
+        # arg's name/type/required-ness instead of guessing.
+        payload = {"model": self.model, "messages": list(messages),
+                   "temperature": self.temperature}
+        if tools:
+            payload["tools"] = [
+                {"type": "function", "function": {
+                    "name": t["name"],
+                    **({"description": t["description"]} if t.get("description") else {}),
+                    "parameters": t.get("parameters") or {"type": "object", "properties": {}},
+                }}
+                for t in tools
+            ]
+            # "auto", not "required": the model may narrate its reasoning in
+            # `content` before the call, and some models only do so when not
+            # forced. A turn with no tool call at all is handled by the caller.
+            payload["tool_choice"] = "auto"
+        tool_names = [t["name"] for t in tools] if tools else None
 
         if tools:
+            message = self._round_trip(payload, tool_names)
             calls = message.get("tool_calls") or []
             content = message.get("content") or ""
-            log.debug("LLM response in %.1fs: finish=%s, tool_calls=%s%s",
-                      time.monotonic() - t0, finish,
+            log.debug("LLM tool_calls=%s%s",
                       [c["function"]["name"] for c in calls] or "none",
                       f'\n    said: {content[:500]}' if content else "")
             parsed = [{"name": c["function"]["name"],
@@ -201,7 +214,26 @@ class LLMClient:
             return {"tool_call": first["name"], "args": first["args"],
                     "tool_call_id": first["id"], "tool_calls": parsed,
                     "content": content}
-        content = message["content"]
-        log.debug("LLM response in %.1fs: finish=%s, %d chars of content",
-                  time.monotonic() - t0, finish, len(content or ""))
-        return _parse_json_content(content)
+
+        # No-tools (planner) path: the response must be a JSON object. If it
+        # will not parse, hand the model its own answer plus the exact parser
+        # error and re-ask, up to json_retries times (GH #6).
+        for attempt in range(self.json_retries + 1):
+            message = self._round_trip(payload, None)
+            content = message.get("content")
+            try:
+                return _parse_json_content(content)
+            except ValueError as e:
+                if attempt == self.json_retries:
+                    raise
+                reason = str(e).split(". Raw content:")[0]
+                log.warning("LLM returned unparseable JSON (attempt %d/%d): %s",
+                            attempt + 1, self.json_retries + 1, reason)
+                payload["messages"] = payload["messages"] + [
+                    {"role": "assistant", "content": content or ""},
+                    {"role": "user", "content":
+                        f"Your previous response was not valid JSON: {reason}. "
+                        "Common causes: a trailing comma, an unquoted or unescaped "
+                        "value, prose around the object, or a code fence. Reply with "
+                        "ONLY the JSON object -- nothing before or after it."},
+                ]
