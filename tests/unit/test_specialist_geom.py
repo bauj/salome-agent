@@ -108,7 +108,16 @@ def test_system_prompt_mandates_a_placement_self_check():
     from salome_agent.specialists.geom import GEOM_SYSTEM_PROMPT
     p = GEOM_SYSTEM_PROMPT.lower()
     assert "measure" in p
-    assert "fuse" in p and "translate" in p
+    assert "before finish_stage" in p          # default cadence = "final"
+
+
+def test_verify_hint_has_all_three_cadences():
+    from salome_agent.specialists.geom import _VERIFY_HINT, _geom_prompt
+    assert set(_VERIFY_HINT) == {"none", "final", "strict"}
+    assert _VERIFY_HINT["none"] == ""
+    assert "measure" not in _geom_prompt("none")
+    assert "before finish_stage" in _geom_prompt("final")
+    assert "before continuing" in _geom_prompt("strict")
 
 
 def test_system_prompt_caps_reasoning_output():
@@ -142,7 +151,8 @@ def test_batched_calls_all_run_in_one_turn():
     client.call_tool.return_value = {"ok": True, "records": [{"fn": "X", "args": [],
                                      "out_vars": ["o"], "publish": ["o"]}]}
     run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
-                         "tools": ["make_box", "translate"]}, llm, client, iteration_cap=5)
+                         "tools": ["make_box", "translate"]}, llm, client, iteration_cap=5,
+                        verify_cadence="none")
     assert client.call_tool.call_count == 3
     # one assistant turn carrying all three call ids, then one tool msg each
     sent = llm.chat.call_args_list[1].kwargs["messages"]
@@ -184,6 +194,78 @@ def test_error_mid_batch_still_runs_the_rest_and_sets_last_error():
                                   llm, client, iteration_cap=1)
     assert client.call_tool.call_count == 3
     assert result["last_error"]["message"] == "bad middle box"
+
+
+def _walls_client():
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box", "category": "primitive"},
+        {"name": "translate", "category": "transform"},
+        {"name": "measure", "category": "query"}]}
+    client.call_tool.return_value = {"ok": True, "records": [{"fn": "X", "args": [],
+                                     "out_vars": ["o"], "publish": ["o"]}]}
+    return client
+
+
+def test_final_cadence_nudges_a_measure_before_finish_then_accepts():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("translate", {"shape": "box_1", "dx": 5})),
+        _resp(("finish_stage", {"result_names": ["tr_1"]})),
+        _resp(("measure", {"names": ["tr_1"]})),
+        _resp(("finish_stage", {"result_names": ["tr_1"]})),
+    ]
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                                  "tools": ["make_box", "translate"]},
+                                 llm, _walls_client(), iteration_cap=8, verify_cadence="final")
+    assert result["result_names"] == ["tr_1"]
+    # exactly one nudge, delivered as the tool response to the first finish_stage
+    nudges = [m for m in llm.chat.call_args_list[-1].kwargs["messages"]
+              if m.get("role") == "tool" and "since your last measure" in str(m.get("content"))]
+    assert len(nudges) == 1
+
+
+def test_final_cadence_does_not_nudge_when_measure_was_called():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("translate", {"shape": "box_1", "dx": 5})),
+        _resp(("measure", {"names": ["tr_1"]})),
+        _resp(("finish_stage", {"result_names": ["tr_1"]})),
+    ]
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                                  "tools": ["make_box", "translate"]},
+                                 llm, _walls_client(), iteration_cap=8, verify_cadence="final")
+    assert result["result_names"] == ["tr_1"]
+    assert llm.chat.call_count == 3  # no extra nudge round
+
+
+def test_final_cadence_does_not_nudge_a_primitive_only_stage():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 1, "dy": 1, "dz": 1})),
+        _resp(("finish_stage", {"result_names": ["box_1"]})),
+    ]
+    result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                                 llm, _walls_client(), iteration_cap=8, verify_cadence="final")
+    assert result["result_names"] == ["box_1"]
+    assert llm.chat.call_count == 2
+
+
+def test_strict_cadence_nudges_after_three_risky_ops():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("translate", {"shape": "a", "dx": 1}),
+              ("translate", {"shape": "b", "dx": 2}),
+              ("translate", {"shape": "c", "dx": 3})),
+        _resp(("measure", {"names": ["a"]})),
+        _resp(("finish_stage", {"result_names": ["a"]})),
+    ]
+    run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                         "tools": ["translate"]},
+                        llm, _walls_client(), iteration_cap=8, verify_cadence="strict")
+    second = llm.chat.call_args_list[1].kwargs["messages"]
+    assert any(m.get("role") == "user" and "since your last measure" in str(m.get("content"))
+               for m in second)
 
 
 def test_geom_specialist_returns_fatal_on_session_poisoned():

@@ -10,6 +10,7 @@
     "tool_iteration_cap": 12,
     "plan_detail": "balanced",
     "tool_selection": "hints",
+    "verify_cadence": "final",
     "on_stage_failure": "abort",
     "assembler_smoke_run": true
   },

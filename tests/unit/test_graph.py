@@ -83,7 +83,7 @@ def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
     captured = {}
 
     def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
-                                 tool_selection="hints"):
+                                 tool_selection="hints", verify_cadence="final"):
         captured["upstream"] = upstream
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["walls_1"]}
@@ -127,7 +127,7 @@ def test_first_geom_stage_does_not_call_measure(monkeypatch):
     captured = {}
 
     def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
-                                 tool_selection="hints"):
+                                 tool_selection="hints", verify_cadence="final"):
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["box_1"]}
 
