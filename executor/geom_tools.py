@@ -232,16 +232,40 @@ def tool_make_box(executor, args: dict):
     }
 
 
+def _normalise_edge_ids(tool: str, edges, shape, geompy) -> list:
+    """Coerce the `edges` arg of fillet/chamfer into a list of int edge ids.
+
+    Accepts "all", an int, a list, or a string like "1,2,3" / "(1,2,3)" /
+    "[1, 2, 3]" (a real LLM has produced all of these). Anything else raises a
+    clear error rather than letting a bare string reach geompy, which returns
+    an opaque `CORBA.BAD_PARAM ... Expecting sequence, got <class 'str'>`.
+    """
+    if edges == "all":
+        return geompy.SubShapeAllIDs(shape, geompy.ShapeType["EDGE"])
+    if isinstance(edges, int):
+        edges = [edges]
+    if isinstance(edges, str):
+        edges = [p for p in edges.strip(" []()").replace(" ", "").split(",") if p]
+    if not isinstance(edges, (list, tuple)) or not edges:
+        raise ValueError(
+            f'{tool}: `edges` must be "all" or a list of edge ids, got {edges!r}')
+    try:
+        return [int(e) for e in edges]
+    except (TypeError, ValueError):
+        raise ValueError(f'{tool}: every entry in `edges` must be an integer, got {edges!r}')
+
+
 def tool_fillet_edges(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
-    edge_ids = (
-        geompy.SubShapeAllIDs(shape, geompy.ShapeType["EDGE"])
-        if args["edges"] == "all" else args["edges"]
-    )
+    edge_ids = _normalise_edge_ids("fillet_edges", args["edges"], shape, geompy)
     # geompy.ShapeType["EDGE"] evaluates to 6 (hardcoded literal for result.py)
     edge_type = 6  # geompy.ShapeType["EDGE"]
-    filleted = geompy.MakeFillet(shape, args["radius"], edge_type, edge_ids)
+    try:
+        filleted = geompy.MakeFillet(shape, args["radius"], edge_type, edge_ids)
+    except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
+        return {"ok": False, "error": f"fillet_edges: MakeFillet failed ({e}); "
+                f"try a smaller radius or check the edge ids"}
     # theReturnStatus=1 -> (isValid, description); the default (0) returns
     # a bare bool, which broke unpacking here until caught in testing.
     is_valid, msg = geompy.CheckShape(filleted, True, 1)
@@ -273,13 +297,14 @@ def tool_chamfer_edges(executor, args: dict):
     shape = executor.geom_bindings[args["shape"]]
     d1 = args["d1"]
     d2 = args.get("d2", d1)
-    edge_ids = (
-        geompy.SubShapeAllIDs(shape, geompy.ShapeType["EDGE"])
-        if args["edges"] == "all" else args["edges"]
-    )
+    edge_ids = _normalise_edge_ids("chamfer_edges", args["edges"], shape, geompy)
     # MakeChamferEdges(theShape, theD1, theD2, theEdges) -- no shape-type arg,
     # unlike MakeFillet.
-    chamfered = geompy.MakeChamferEdges(shape, d1, d2, edge_ids)
+    try:
+        chamfered = geompy.MakeChamferEdges(shape, d1, d2, edge_ids)
+    except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
+        return {"ok": False, "error": f"chamfer_edges: MakeChamferEdges failed ({e}); "
+                f"try smaller distances or check the edge ids"}
     is_valid, msg = geompy.CheckShape(chamfered, True, 1)
     if not is_valid:
         return {"ok": False, "error": f"chamfer_edges: CheckShape failed on result ({msg})"}
