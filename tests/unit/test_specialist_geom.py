@@ -26,9 +26,39 @@ def test_finish_stage_returns_call_log_and_result_names():
     assert len(result["call_log"]) == 1
 
 
-def test_finish_stage_hands_off_only_leaf_shapes():
-    # model makes box_1, translates it to tr_1, then names BOTH — the next
-    # stage must only see tr_1, not the superseded original (GH #9).
+def test_finish_stage_drops_a_boolean_operand_kept_alongside_its_result():
+    # model makes box_1 + box_2, fuses them to fuse_1, then names all three —
+    # the next stage must only see fuse_1, not the folded-in operands (GH #9).
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
+        _resp(("make_box", {"dx": 5, "dy": 5, "dz": 5})),
+        _resp(("fuse", {"shapes": ["box_1", "box_2"]})),
+        _resp(("finish_stage", {"result_names": ["box_1", "box_2", "fuse_1"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box", "category": "primitive"},
+        {"name": "fuse", "category": "boolean"}]}
+    client.call_tool.side_effect = [
+        {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                  "out_vars": ["box_1"], "publish": ["box_1"]}]},
+        {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                  "out_vars": ["box_2"], "publish": ["box_2"]}]},
+        {"ok": True, "records": [{"fn": "MakeFuseList",
+                                  "args": [{"kind": "list", "value": [
+                                      {"kind": "ref", "value": "box_1"},
+                                      {"kind": "ref", "value": "box_2"}]}],
+                                  "out_vars": ["fuse_1"], "publish": ["fuse_1"]}]},
+    ]
+    result = run_geom_specialist({"module": "geom", "intent": "fused", "params": {}, "inputs": []},
+                                 llm, client, iteration_cap=12, verify_cadence="none")
+    assert result["result_names"] == ["fuse_1"]
+
+
+def test_finish_stage_keeps_a_transform_source_that_is_also_a_deliverable():
+    # box_1 is the left cube AND translate's source for the right cube. Copy
+    # semantics -> box_1 is still a real deliverable, must not be dropped.
     llm = MagicMock()
     llm.chat.side_effect = [
         _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
@@ -47,9 +77,9 @@ def test_finish_stage_hands_off_only_leaf_shapes():
                                            {"kind": "literal", "value": 50}],
                                   "out_vars": ["tr_1"], "publish": ["tr_1"]}]},
     ]
-    result = run_geom_specialist({"module": "geom", "intent": "moved box", "params": {}, "inputs": []},
+    result = run_geom_specialist({"module": "geom", "intent": "two boxes", "params": {}, "inputs": []},
                                  llm, client, iteration_cap=12, verify_cadence="none")
-    assert result["result_names"] == ["tr_1"]
+    assert result["result_names"] == ["box_1", "tr_1"]
 
 
 def test_finish_stage_keeps_independent_parts():
