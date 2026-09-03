@@ -4,7 +4,7 @@ from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.logs import log
 from salome_agent.specialists.tool_selection import initial_offered, resolve_load
 
-GEOM_SYSTEM_PROMPT = """You build geometry by calling tools, not by writing
+_GEOM_BASE = """You build geometry by calling tools, not by writing
 geompy source. Each tool carries its own description — read it, especially
 for the default placement and orientation of primitives. Reference any
 shape, point, vector or plane by the name it was published under. For an
@@ -24,14 +24,7 @@ INDEPENDENT calls in one turn (e.g. the four walls of a frame, or four
 translates of shapes that already exist). Keep DEPENDENT steps in separate
 turns -- if one call needs the name of a shape another call is about to
 create, it must wait for the next turn.
-
-Every successful tool result reports the shape's bbox, size and centre (mm)
-in `shape_info`. After each translate, rotate, fuse or cut, read that
-`shape_info` (or call `measure`) and confirm the shape's centre and extent
-match what you intended before continuing — if a part is in the wrong
-place, correct it now, not at the end. Call `measure` on any upstream
-object whose position you need but did not build yourself.
-
+{verify}
 Every transform (translate, rotate, ...) produces a NEW shape that does not
 inherit the source's colour. So apply display properties (set_color,
 set_transparency, set_display_mode) LAST, once, on the final shape — after
@@ -41,6 +34,43 @@ You are given only a subset of the geom tools, chosen for this stage. If you
 need a tool that is not in your list, call load_tools with specific tool
 `names` or whole `categories` (primitive, sketch, swept, boolean, transform,
 feature, display, query) to add them, then call the tool you wanted."""
+
+# policy.verify_cadence — how hard the specialist is pushed to self-check
+# shape placement. shape_info rides on every ok result for free; the question
+# is how often to spend an explicit `measure` round-trip.
+_VERIFY_HINT = {
+    "none": "",
+    "final": (
+        "\nEvery successful tool result reports the shape's bbox, size and "
+        "centre (mm) in `shape_info` — glance at it each time. Call `measure` "
+        "explicitly only when a position looks wrong, and on your result "
+        "shape(s) once before finish_stage. Call `measure` on any upstream "
+        "object whose position you need but did not build yourself.\n"
+    ),
+    "strict": (
+        "\nEvery successful tool result reports the shape's bbox, size and "
+        "centre (mm) in `shape_info`. After each translate, rotate, fuse or "
+        "cut, read that `shape_info` (or call `measure`) and confirm the "
+        "shape's centre and extent match what you intended before continuing "
+        "— if a part is in the wrong place, correct it now, not at the end. "
+        "Call `measure` on any upstream object whose position you need but "
+        "did not build yourself.\n"
+    ),
+}
+
+# Categories whose output can land in the wrong place — the ones a measure
+# self-check is actually about.
+_PLACEMENT_RISKY = {"boolean", "transform"}
+_MEASURE_TOOLS = {"measure", "check_shape"}
+# strict: nudge once every N risky ops with no intervening measure.
+_STRICT_NUDGE_EVERY = 3
+
+
+def _geom_prompt(verify_cadence: str = "final") -> str:
+    return _GEOM_BASE.format(verify=_VERIFY_HINT.get(verify_cadence, _VERIFY_HINT["final"]))
+
+
+GEOM_SYSTEM_PROMPT = _geom_prompt("final")
 
 FINISH_STAGE_SCHEMA = {
     "type": "object",
@@ -90,15 +120,18 @@ def _compact_result(result: dict) -> dict:
 
 def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         upstream: dict | None = None,
-                        tool_selection: str = "hints") -> dict:
+                        tool_selection: str = "hints",
+                        verify_cadence: str = "final") -> dict:
     try:
-        return _run(stage_plan, llm, client, iteration_cap, upstream, tool_selection)
+        return _run(stage_plan, llm, client, iteration_cap, upstream,
+                    tool_selection, verify_cadence)
     except (SessionDied, SessionPoisoned) as e:
         return {"fatal": f"SALOME agent server unavailable: {e}"}
 
 
 def _run(stage_plan: dict, llm, client, iteration_cap: int,
-         upstream: dict | None = None, tool_selection: str = "hints") -> dict:
+         upstream: dict | None = None, tool_selection: str = "hints",
+         verify_cadence: str = "final") -> dict:
     content = str(stage_plan)
     if upstream:
         lines = []
@@ -110,11 +143,17 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                 lines.append(f"  {name} — (geometry unavailable)")
         content += ("\n\nObjects already in the study — reference them by these "
                     "exact names:\n" + "\n".join(lines))
-    messages = [{"role": "system", "content": GEOM_SYSTEM_PROMPT},
+    messages = [{"role": "system", "content": _geom_prompt(verify_cadence)},
                 {"role": "user", "content": content}]
     call_log: list[dict] = []
     tool_results: dict[int, dict] = {}  # message index -> full result dict
     last_error = None
+    # policy.verify_cadence bookkeeping: count placement-risky ops (boolean /
+    # transform) since the last measure/check_shape. "final" nudges once at
+    # finish_stage if any are outstanding; "strict" also nudges mid-loop every
+    # _STRICT_NUDGE_EVERY of them.
+    risky_since_measure = 0
+    nudged_final = False
     # Per-stage tool retrieval: offer CORE_TOOLS + the planner's hints, not the
     # whole registry (which was ~66% of a run's input tokens). The model widens
     # its set on demand via load_tools. "all" restores the send-everything
@@ -166,8 +205,17 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
             for c in calls
         ]})
         batch_error = None
-        for c in calls:
+        finish_call = None
+        for k, c in enumerate(calls):
             name, args, call_id = c["name"], c["args"], c["id"]
+            if name == "finish_stage":
+                finish_call = (call_id, args)
+                # Anything the model batched after finish_stage still needs a
+                # tool response for its id, or the next request is malformed.
+                for skipped in calls[k + 1:]:
+                    messages.append({"role": "tool", "tool_call_id": skipped["id"],
+                                     "content": "skipped — finish_stage was called"})
+                break
             if name == "load_tools":
                 added = resolve_load(args.get("names"), args.get("categories"), all_defs)
                 new = added - offered
@@ -178,19 +226,14 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                          args.get("names"), args.get("categories"), len(new), len(offered))
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
                 continue
-            if name == "finish_stage":
-                result_names = args["result_names"]
-                # A schema hint doesn't guarantee compliance — seen live, a
-                # model returned this as a JSON-encoded string instead of an
-                # actual array, which codegen's set(result_names) would then
-                # silently iterate as individual characters.
-                if isinstance(result_names, str):
-                    result_names = json.loads(result_names)
-                return {"call_log": call_log, "result_names": result_names}
             result = client.call_tool(name, args)
             if result["ok"]:
                 call_log.extend(result["records"])
                 log.debug("    tool %s ok", name)
+                if name in _MEASURE_TOOLS:
+                    risky_since_measure = 0
+                elif all_defs.get(name, {}).get("category") in _PLACEMENT_RISKY:
+                    risky_since_measure += 1
             else:
                 batch_error = {"phase": "exec", "message": result["error"],
                                "offending_line": None, "traceback": None}
@@ -200,4 +243,34 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         # A later ok call in the same batch must not mask an earlier failure —
         # settle last_error once per turn from the batch outcome.
         last_error = batch_error
+
+        if finish_call is not None:
+            call_id, args = finish_call
+            if (verify_cadence in ("final", "strict")
+                    and risky_since_measure > 0 and not nudged_final):
+                nudged_final = True
+                log.info("  verify_cadence=%s: nudging a measure before finish_stage",
+                         verify_cadence)
+                messages.append({"role": "tool", "tool_call_id": call_id, "content":
+                    "You have moved or combined shapes since your last measure. "
+                    "Call `measure` on your result shape(s) and confirm their "
+                    "placement, then call finish_stage again."})
+                continue
+            result_names = args["result_names"]
+            # A schema hint doesn't guarantee compliance — seen live, a model
+            # returned this as a JSON-encoded string instead of an actual
+            # array, which codegen's set(result_names) would then silently
+            # iterate as individual characters.
+            if isinstance(result_names, str):
+                result_names = json.loads(result_names)
+            return {"call_log": call_log, "result_names": result_names}
+
+        if verify_cadence == "strict" and risky_since_measure >= _STRICT_NUDGE_EVERY:
+            log.info("  verify_cadence=strict: nudging a measure (%d risky ops)",
+                     risky_since_measure)
+            messages.append({"role": "user", "content":
+                f"You have made {risky_since_measure} shapes since your last "
+                "measure. Call `measure` on your recent shapes and confirm "
+                "their placement before continuing."})
+            risky_since_measure = 0
     return {"call_log": call_log, "last_error": last_error}

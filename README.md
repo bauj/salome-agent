@@ -85,6 +85,7 @@ cp config.example.json config.json
     "exec_timeout_s": 120,
     "tool_iteration_cap": 12,
     "tool_selection": "hints",
+    "verify_cadence": "final",
     "on_stage_failure": "abort",
     "assembler_smoke_run": true
   },
@@ -97,6 +98,11 @@ Required keys: `llm.base_url`, `llm.model`, `salome.root`. Missing any of them i
 `llm.ssl_cert_file` is optional: a path to a CA bundle for verifying an HTTPS endpoint with a private CA. Empty/omitted verifies against the system trust store.
 
 `llm.extra_headers` is optional: an object of extra HTTP headers sent verbatim on every LLM request. In a string value, `{run_id}` is replaced with the current run's id — useful for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`.
+
+`policy.verify_cadence` controls how hard the geom specialist is pushed to `measure`-check where its shapes landed:
+- `none` — no self-check.
+- `final` (default) — read the `shape_info` that rides on every result for free; call `measure` explicitly only when something looks off and once on the result shape(s) before `finish_stage`. If a move or boolean is still unmeasured at `finish_stage`, the loop asks for a measure once before accepting.
+- `strict` — measure after every move or boolean. If the model does three in a row without one, the loop forces a measure before it can continue.
 
 `config.json` is gitignored — keep your credentials there, not in `config.example.json`.
 
