@@ -7,7 +7,7 @@ tool definitions to send the LLM on each turn instead of the whole registry.
 
 CORE_TOOLS = frozenset({
     "measure", "check_shape", "list_study_objects", "get_subshapes",
-    "make_box", "fuse", "cut", "translate",
+    "make_box", "fuse", "cut", "translate", "align",
 })
 
 

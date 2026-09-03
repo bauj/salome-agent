@@ -28,8 +28,15 @@ def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
         prior = stages.get(j)
         if prior and prior.get("status") == "ok":
             available += prior.get("result_names") or []
-    declared = [n for n in (stage_plan.get("inputs") or []) if n in available]
-    return declared or available
+    inputs = stage_plan.get("inputs") or []
+    declared = [n for n in inputs if n in available]
+    # Scope down only when EVERY declared name is a real published object.
+    # A partial match means the planner invented names (it cannot know the
+    # auto-generated ones) — hand over everything live rather than a wrong
+    # subset (GH #9).
+    if inputs and len(declared) == len(inputs):
+        return declared
+    return available
 
 
 # llm_client/executor_client are live, non-serializable objects — they live

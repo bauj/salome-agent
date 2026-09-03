@@ -26,6 +26,52 @@ def test_finish_stage_returns_call_log_and_result_names():
     assert len(result["call_log"]) == 1
 
 
+def test_finish_stage_hands_off_only_leaf_shapes():
+    # model makes box_1, translates it to tr_1, then names BOTH — the next
+    # stage must only see tr_1, not the superseded original (GH #9).
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
+        _resp(("translate", {"shape": "box_1", "dx": 50, "dy": 0, "dz": 0})),
+        _resp(("finish_stage", {"result_names": ["box_1", "tr_1"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box", "category": "primitive"},
+        {"name": "translate", "category": "transform"}]}
+    client.call_tool.side_effect = [
+        {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                  "out_vars": ["box_1"], "publish": ["box_1"]}]},
+        {"ok": True, "records": [{"fn": "MakeTranslation",
+                                  "args": [{"kind": "ref", "value": "box_1"},
+                                           {"kind": "literal", "value": 50}],
+                                  "out_vars": ["tr_1"], "publish": ["tr_1"]}]},
+    ]
+    result = run_geom_specialist({"module": "geom", "intent": "moved box", "params": {}, "inputs": []},
+                                 llm, client, iteration_cap=12, verify_cadence="none")
+    assert result["result_names"] == ["tr_1"]
+
+
+def test_finish_stage_keeps_independent_parts():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
+        _resp(("make_box", {"dx": 5, "dy": 5, "dz": 5})),
+        _resp(("finish_stage", {"result_names": ["box_1", "box_2"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    client.call_tool.side_effect = [
+        {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                  "out_vars": ["box_1"], "publish": ["box_1"]}]},
+        {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                  "out_vars": ["box_2"], "publish": ["box_2"]}]},
+    ]
+    result = run_geom_specialist({"module": "geom", "intent": "two boxes", "params": {}, "inputs": []},
+                                 llm, client, iteration_cap=12, verify_cadence="none")
+    assert result["result_names"] == ["box_1", "box_2"]
+
+
 def test_no_tool_call_is_nudged_then_loop_continues():
     llm = MagicMock()
     llm.chat.side_effect = [

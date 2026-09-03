@@ -1,5 +1,6 @@
 import json
 
+from salome_agent.codegen import _reachable
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.logs import log
 from salome_agent.specialists.tool_selection import initial_offered, resolve_load
@@ -25,6 +26,11 @@ translates of shapes that already exist). Keep DEPENDENT steps in separate
 turns -- if one call needs the name of a shape another call is about to
 create, it must wait for the next turn.
 {verify}
+To place one part relative to another -- on top of, butted against a face,
+flush with an edge, centred on it -- use `align` rather than measuring both
+shapes and working out the translation yourself. `align` reads both bounding
+boxes and moves the part for you.
+
 Every transform (translate, rotate, ...) produces a NEW shape that does not
 inherit the source's colour. So apply display properties (set_color,
 set_transparency, set_display_mode) LAST, once, on the final shape — after
@@ -109,6 +115,22 @@ LOAD_TOOLS_DESCRIPTION = (
     "tool `names`, a list of `categories`, or both. Use it whenever the tool "
     "you need is not in your current list."
 )
+
+
+def _leaf_result_names(call_log: list[dict], names: list[str]) -> list[str]:
+    """Keep only names no other kept name depends on. An over-split stage that
+    finish_stage's an intermediate (e.g. the pre-translate box alongside the
+    translated one) would otherwise hand the superseded shape to the next
+    stage, which then builds on the wrong object (GH #9)."""
+    names = list(dict.fromkeys(names))
+    if len(names) < 2:
+        return names
+    leaves = []
+    for n in names:
+        others = [m for m in names if m != n]
+        if n not in (_reachable(call_log, others) - set(others)):
+            leaves.append(n)
+    return leaves or names
 
 
 def _compact_result(result: dict) -> dict:
@@ -274,6 +296,7 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
             # iterate as individual characters.
             if isinstance(result_names, str):
                 result_names = json.loads(result_names)
+            result_names = _leaf_result_names(call_log, result_names)
             return {"call_log": call_log, "result_names": result_names}
 
         if verify_cadence == "strict" and risky_since_measure >= _STRICT_NUDGE_EVERY:

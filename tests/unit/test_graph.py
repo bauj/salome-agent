@@ -21,6 +21,13 @@ def test_select_upstream_falls_back_when_inputs_do_not_resolve():
     assert select_upstream({"inputs": ["cube"]}, stages, 1) == ["box_1"]
 
 
+def test_select_upstream_ignores_a_partial_input_match():
+    # planner named one real object and invented another -> hand over
+    # everything live, not just the one that happened to resolve (GH #9).
+    stages = {0: {"status": "ok", "result_names": ["box_1", "cyl_1"]}}
+    assert select_upstream({"inputs": ["cyl_1", "beam_union"]}, stages, 1) == ["box_1", "cyl_1"]
+
+
 def test_select_upstream_ignores_non_ok_and_later_stages():
     stages = {0: {"status": "skipped", "result_names": ["x"]},
               1: {"status": "ok", "result_names": ["box_1"]},
