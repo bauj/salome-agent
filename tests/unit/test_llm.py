@@ -271,8 +271,11 @@ def test_usage_accumulates_across_calls(monkeypatch):
     client = LLMClient("http://x/v1", "", "auto")
     client.chat(messages=[{"role": "user", "content": "hi"}])
     client.chat(messages=[{"role": "user", "content": "hi"}])
-    assert client.usage == {"calls": 2, "metered_calls": 2,
-                            "prompt_tokens": 350, "completion_tokens": 35}
+    assert client.usage["calls"] == 2
+    assert client.usage["metered_calls"] == 2
+    assert client.usage["prompt_tokens"] == 350
+    assert client.usage["completion_tokens"] == 35
+    assert client.usage["approx_prompt_tokens"] > 0  # chars/4 of both requests
 
 
 def test_usage_tolerates_a_missing_usage_block(monkeypatch):
@@ -284,3 +287,20 @@ def test_usage_tolerates_a_missing_usage_block(monkeypatch):
     assert client.usage["calls"] == 1
     assert client.usage["metered_calls"] == 0
     assert client.usage["prompt_tokens"] == 0
+    assert client.usage["approx_prompt_tokens"] > 0  # still counted with no usage block
+
+
+def test_trace_line_carries_approx_input_tokens_including_tool_schemas(monkeypatch, tmp_path):
+    body = {"choices": [{"finish_reason": "tool_calls", "message": {
+        "tool_calls": [{"id": "c1", "function": {"name": "mk", "arguments": "{}"}}]}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    trace = tmp_path / "llm_trace.jsonl"
+    client = LLMClient("http://x/v1", "", "auto", trace_path=str(trace))
+    big_schema = {"type": "object", "properties": {
+        k: {"type": "string", "description": "x" * 200} for k in range(20)}}
+    client.chat(messages=[{"role": "user", "content": "hi"}],
+                tools=[{"name": "mk", "parameters": big_schema}])
+    entry = json.loads(trace.read_text().splitlines()[0])
+    approx = entry["request"]["approx_input_tokens"]
+    assert approx > 1000  # the fat tool schema dominates, not the 2-word message
+    assert client.usage["approx_prompt_tokens"] == approx

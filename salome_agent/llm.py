@@ -66,8 +66,17 @@ class LLMClient:
         # call on this client. `calls` counts all round-trips; `metered_calls`
         # counts the subset that came back with a `usage` block (some
         # providers/proxies omit it). Surfaced in report.md.
+        # `approx_prompt_tokens` is a chars/4 estimate of the serialized
+        # request (messages + FULL tool schemas) summed over every call —
+        # the real input cost even when a provider strips its `usage` block,
+        # and the only figure that reflects the re-sent tool schemas.
         self.usage = {"calls": 0, "metered_calls": 0,
-                      "prompt_tokens": 0, "completion_tokens": 0}
+                      "prompt_tokens": 0, "completion_tokens": 0,
+                      "approx_prompt_tokens": 0}
+
+    @staticmethod
+    def _approx_tokens(payload: dict) -> int:
+        return len(json.dumps(payload, default=str)) // 4
 
     def _record_usage(self, body: dict) -> None:
         self.usage["calls"] += 1
@@ -84,7 +93,7 @@ class LLMClient:
         # once the response is back.
         if not self.trace_path:
             return
-        log.debug("LLM request:\n%s", json.dumps(request, indent=2, default=str))
+        log.debug("LLM request:\n%s", json.dumps(request, indent=2, default=str, ensure_ascii=False))
 
     def _trace(self, request: dict, response: dict) -> None:
         if not self.trace_path:
@@ -93,10 +102,10 @@ class LLMClient:
         try:
             os.makedirs(os.path.dirname(self.trace_path) or ".", exist_ok=True)
             with open(self.trace_path, "a") as f:
-                f.write(json.dumps(entry, default=str) + "\n")
+                f.write(json.dumps(entry, default=str, ensure_ascii=False) + "\n")
         except OSError as e:
             log.warning("could not write LLM trace: %s", e)
-        log.debug("LLM response:\n%s", json.dumps(response, indent=2, default=str))
+        log.debug("LLM response:\n%s", json.dumps(response, indent=2, default=str, ensure_ascii=False))
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
@@ -121,8 +130,11 @@ class LLMClient:
         tool_names = [t["name"] for t in tools] if tools else None
         log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
                   self.model, len(messages), tool_names or "-", self.request_timeout)
+        approx_in = self._approx_tokens(payload)
+        self.usage["approx_prompt_tokens"] += approx_in
         trace_request = {"model": self.model, "temperature": self.temperature,
-                         "tools": tool_names or [], "messages": messages}
+                         "tools": tool_names or [], "approx_input_tokens": approx_in,
+                         "messages": messages}
         self._trace_prompt(trace_request)
         t0 = time.monotonic()
         resp = None
