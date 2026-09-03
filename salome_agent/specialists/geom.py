@@ -67,6 +67,23 @@ LOAD_TOOLS_DESCRIPTION = (
 )
 
 
+def _compact_result(result: dict) -> dict:
+    """A prior tool result, stripped to what the model reads back on later
+    turns. The verbose `records` blob (geompy dispatch detail — only codegen
+    needs it, and codegen reads it straight from `call_log`) is dropped;
+    linear-growth transcript cost was ~66% of the input on a real run."""
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error")}
+    keep = {"ok": True}
+    for k in ("result_shape", "shape_info", "measurements", "names", "sanity"):
+        if k in result:
+            keep[k] = result[k]
+    published = [n for rec in result.get("records", []) for n in (rec.get("publish") or [])]
+    if published:
+        keep["published"] = published
+    return keep
+
+
 def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         upstream: dict | None = None,
                         tool_selection: str = "hints") -> dict:
@@ -92,6 +109,7 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
     messages = [{"role": "system", "content": GEOM_SYSTEM_PROMPT},
                 {"role": "user", "content": content}]
     call_log: list[dict] = []
+    tool_results: dict[int, dict] = {}  # message index -> full result dict
     last_error = None
     # Per-stage tool retrieval: offer CORE_TOOLS + the planner's hints, not the
     # whole registry (which was ~66% of a run's input tokens). The model widens
@@ -112,7 +130,12 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         log.debug("    geom iter %d/%d: asking LLM...", i + 1, iteration_cap)
         tools = ([all_defs[n] for n in sorted(offered) if n in all_defs]
                  + [finish_def, load_def])
-        response = llm.chat(messages=messages, tools=tools)
+        # Compact every prior tool result; only the newest keeps full detail.
+        latest = max(tool_results) if tool_results else -1
+        send = [{**m, "content": str(_compact_result(tool_results[idx]))}
+                if idx in tool_results and idx != latest else m
+                for idx, m in enumerate(messages)]
+        response = llm.chat(messages=send, tools=tools)
         if response.get("content"):
             log.debug("    LLM reasoning: %s", response["content"])
         log.debug("    LLM -> %s(%s)", response["tool_call"], response.get("args"))
@@ -162,5 +185,6 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
             last_error = {"phase": "exec", "message": result["error"],
                            "offending_line": None, "traceback": None}
             log.debug("    tool %s failed: %s", response["tool_call"], result["error"])
+        tool_results[len(messages)] = result
         messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
     return {"call_log": call_log, "last_error": last_error}
