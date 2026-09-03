@@ -85,7 +85,10 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                     log.warning("  measure(upstream) failed: %s", m.get("error"))
             except Exception as e:  # noqa: BLE001 — best-effort, must not abort the stage
                 log.warning("  measure(upstream) errored: %s", e)
-        result = run_geom_specialist(stage_plan, llm, client, cap, upstream=upstream_info)
+        tool_selection = state["config"]["policy"].get("tool_selection", "hints")
+        result = run_geom_specialist(stage_plan, llm, client, cap,
+                                     upstream=upstream_info,
+                                     tool_selection=tool_selection)
         if "fatal" in result:
             log.error("  %s", result["fatal"])
             return Command(update={"fatal": result["fatal"]}, goto="assemble")

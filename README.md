@@ -84,6 +84,7 @@ cp config.example.json config.json
     "exec_retries": 2,
     "exec_timeout_s": 120,
     "tool_iteration_cap": 12,
+    "tool_selection": "hints",
     "on_stage_failure": "abort",
     "assembler_smoke_run": true
   },
@@ -152,6 +153,7 @@ Run the result on its own, with no agent involved:
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
+| `--tools {hints,all}` | Geom tool retrieval. `hints` (default): the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the full geom registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
 | `--timeout SECONDS` | Override per-stage exec timeout. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`. |
 

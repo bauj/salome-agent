@@ -12,6 +12,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--work-dir", default=None)
     parser.add_argument("--config", default=None)
     parser.add_argument("--on-failure", choices=["abort", "continue"], default=None)
+    parser.add_argument("--tools", choices=["hints", "all"], default=None,
+                        help="geom tool retrieval: 'hints' (default) offers the "
+                             "specialist a per-stage subset it widens on demand; "
+                             "'all' offers the full geom registry every call")
     parser.add_argument("--timeout", type=float, default=None,
                         help="per-request LLM timeout in seconds (overrides llm.timeout in config)")
     parser.add_argument("-v", "--verbose", action="count", default=0,
@@ -48,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config or "config.json")
     if args.on_failure:
         config["policy"]["on_stage_failure"] = args.on_failure
+    if args.tools:
+        config["policy"]["tool_selection"] = args.tools
     if args.work_dir:
         config["work_dir"] = args.work_dir
 

@@ -20,6 +20,12 @@ def test_verbose_counts():
     assert parse_args(["x", "-vv"]).verbose == 2
 
 
+def test_tools_flag():
+    assert parse_args(["x"]).tools is None
+    assert parse_args(["x", "--tools", "all"]).tools == "all"
+    assert parse_args(["x", "--tools", "hints"]).tools == "hints"
+
+
 def test_no_live_gui_or_port():
     args = parse_args(["make a box"])
     assert not hasattr(args, "live_gui")
