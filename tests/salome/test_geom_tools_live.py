@@ -452,3 +452,18 @@ class TestSubshapeSelection:
         out = agent_client.call_tool("basic_properties", {"shape": "box_1"})
         assert out["ok"] is True, out.get("error")
         assert out["properties"]["volume"] == 24.0
+
+    def test_fillet_edges_inline_where(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 20, "dy": 20, "dz": 20})
+        out = agent_client.call_tool("fillet_edges", {
+            "shape": "box_1", "radius": 3,
+            "where": {"sorted_by": "z", "take": "max", "count": 4}})
+        assert out["ok"] is True, out.get("error")
+        assert out["records"][0]["fn"] == "MakeFillet"
+        assert len(out["records"][0]["args"][3]["value"]) == 4
+
+    def test_chamfer_edges_inline_where_all(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        out = agent_client.call_tool("chamfer_edges", {
+            "shape": "box_1", "d1": 1, "where": "all"})
+        assert out["ok"] is True, out.get("error")

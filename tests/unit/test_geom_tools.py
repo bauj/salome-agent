@@ -1199,6 +1199,50 @@ class TestLocalOpsTools:
         assert record["args"][2] == {"kind": "literal", "value": 6}  # geompy.ShapeType["EDGE"]
         assert record["args"][3] == {"kind": "literal", "value": [1, 2, 3, 4, 5]}
 
+    def test_fillet_edges_with_inline_where_predicate(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.ShapeType = {"EDGE": 6}
+        geompy.SubShapeAllSortedCentres.return_value = ["a", "b", "c"]
+        geompy.SubShapeAllSortedCentresIDs.return_value = [10, 11, 12]
+        geompy.BoundingBox.side_effect = lambda s: {
+            "a": [0, 0, 0, 0, 0, 0], "b": [0, 0, 0, 0, 9, 9],
+            "c": [0, 0, 0, 0, 5, 5]}[s]
+        geompy.MakeFillet.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": MagicMock()})
+        result = geom_tools.tool_fillet_edges(ex, {
+            "shape": "shape", "radius": 2.0,
+            "where": {"sorted_by": "z", "take": "max", "count": 1}})
+        assert result["ok"] is True
+        assert result["records"][0]["args"][3] == {"kind": "literal", "value": [11]}
+
+    def test_chamfer_edges_with_inline_where_predicate(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.ShapeType = {"EDGE": 6}
+        geompy.SubShapeAllSortedCentres.return_value = ["a", "b"]
+        geompy.SubShapeAllSortedCentresIDs.return_value = [1, 2]
+        geompy.BoundingBox.return_value = [0, 0, 0, 0, 0, 0]
+        geompy.MakeChamferEdges.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": MagicMock()})
+        result = geom_tools.tool_chamfer_edges(ex, {
+            "shape": "shape", "d1": 1.0, "where": "all"})
+        assert result["ok"] is True
+        assert result["records"][0]["args"][3] == {"kind": "literal", "value": [1, 2]}
+
+    def test_fillet_edges_without_edges_or_where_is_a_clean_error(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": MagicMock()})
+        result = geom_tools.tool_fillet_edges(ex, {"shape": "shape", "radius": 2.0})
+        assert result["ok"] is False
+        assert "where" in result["error"]
+
     def test_fillet_edges_with_edge_ids(self):
         """fillet_edges with explicit edge ids."""
         geom_tools.reset_counters()

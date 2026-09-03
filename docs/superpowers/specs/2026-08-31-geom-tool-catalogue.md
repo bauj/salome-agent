@@ -633,11 +633,12 @@ Implemented on branch `feat/185-subshape-selection`
 (plan: `docs/superpowers/plans/2026-09-03-geom-subshape-selection.md`).
 Shipped: `explode`, `get_subshape`, `get_subshapes` (predicates `all` /
 `on_plane` / `sorted_by` / `by_size`), `min_distance`, `basic_properties`,
-codegen `list_call` emit, the query-then-act prompt paragraph. Deferred:
-`get_subshapes` predicates `on_cylinder` / `on_sphere` / `on_shape`; the
-`bounding_box` / `point_coordinates` helpers (the existing `measure` tool
-already covers them); checklist item 8 (inline `where` sugar on
-`fillet_edges` / `chamfer_edges`).
+codegen `list_call` emit, the query-then-act prompt paragraph, and
+checklist item 8 — `fillet_edges` / `chamfer_edges` take a `where`
+predicate directly (inline `get_subshapes`) as an alternative to `edges`.
+Deferred: `get_subshapes` predicates `on_cylinder` / `on_sphere` /
+`on_shape`; the `bounding_box` / `point_coordinates` helpers (the existing
+`measure` tool already covers them).
 
 ### Task 176b checklist (when picked up)
 
