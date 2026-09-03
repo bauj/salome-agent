@@ -283,17 +283,35 @@ def _normalise_edge_ids(tool: str, edges, shape, geompy) -> list:
         edges = [p for p in edges.strip(" []()").replace(" ", "").split(",") if p]
     if not isinstance(edges, (list, tuple)) or not edges:
         raise ValueError(
-            f'{tool}: `edges` must be "all" or a list of edge ids, got {edges!r}')
+            f'{tool}: pass `edges` ("all" or a list of edge ids) or a `where` '
+            f'predicate, got edges={edges!r}')
     try:
         return [int(e) for e in edges]
     except (TypeError, ValueError):
         raise ValueError(f'{tool}: every entry in `edges` must be an integer, got {edges!r}')
 
 
+def _edge_ids_for(tool: str, executor, args: dict, shape):
+    """Edge ids for fillet/chamfer: a `where` predicate (inline get_subshapes)
+    if given, otherwise the `edges` arg via _normalise_edge_ids."""
+    geompy = executor.namespace["geompy"]
+    if "where" in args and args["where"] is not None:
+        try:
+            selected = _select_subshapes(
+                geompy, shape, int(geompy.ShapeType["EDGE"]), args["where"])
+        except ValueError as e:
+            raise ValueError(f"{tool}: {e}")
+        return [i for i, _ in selected]
+    return _normalise_edge_ids(tool, args.get("edges"), shape, geompy)
+
+
 def tool_fillet_edges(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
-    edge_ids = _normalise_edge_ids("fillet_edges", args["edges"], shape, geompy)
+    try:
+        edge_ids = _edge_ids_for("fillet_edges", executor, args, shape)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     # geompy.ShapeType["EDGE"] evaluates to 6 (hardcoded literal for result.py)
     edge_type = 6  # geompy.ShapeType["EDGE"]
     try:
@@ -332,7 +350,10 @@ def tool_chamfer_edges(executor, args: dict):
     shape = executor.geom_bindings[args["shape"]]
     d1 = args["d1"]
     d2 = args.get("d2", d1)
-    edge_ids = _normalise_edge_ids("chamfer_edges", args["edges"], shape, geompy)
+    try:
+        edge_ids = _edge_ids_for("chamfer_edges", executor, args, shape)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     # MakeChamferEdges(theShape, theD1, theD2, theEdges) -- no shape-type arg,
     # unlike MakeFillet.
     try:
@@ -1270,11 +1291,12 @@ def tool_get_subshape(executor, args: dict):
     }
 
 
-def tool_get_subshapes(executor, args: dict):
-    geompy = executor.namespace["geompy"]
-    shape = executor.geom_bindings[args["shape"]]
-    type_code = int(geompy.ShapeType[args["sub_type"].upper()])
-    where = args["where"]
+def _select_subshapes(geompy, shape, type_code: int, where) -> list:
+    """Resolve a `where` predicate to a list of (id, subshape) pairs.
+
+    `where` is "all" or a dict (a JSON string is decoded first). Raises
+    ValueError on an unknown predicate.
+    """
     if isinstance(where, str) and where.strip().startswith("{"):
         import json
         where = json.loads(where)
@@ -1284,15 +1306,15 @@ def tool_get_subshapes(executor, args: dict):
     pairs = list(zip(all_ids, subs))
 
     if where == "all":
-        selected = pairs
-    elif "sorted_by" in where:
+        return pairs
+    if "sorted_by" in where:
         axis = {"x": 0, "y": 1, "z": 2}[where["sorted_by"]]
         take = where.get("take", "max")
         n = int(where["count"])
         ordered = sorted(pairs, key=lambda p: _centre(geompy, p[1])[axis],
                          reverse=(take == "max"))
-        selected = ordered[:n]
-    elif "by_size" in where:
+        return ordered[:n]
+    if "by_size" in where:
         kind = where["by_size"]
         n = int(where["count"])
         metric_idx = 1 if kind in ("largest", "smallest") else 0
@@ -1300,18 +1322,26 @@ def tool_get_subshapes(executor, args: dict):
         ordered = sorted(pairs,
                          key=lambda p: geompy.BasicProperties(p[1])[metric_idx],
                          reverse=biggest)
-        selected = ordered[:n]
-    elif "on_plane" in where:
+        return ordered[:n]
+    if "on_plane" in where:
         op = where["on_plane"]
         pnt = geompy.MakeVertex(*[float(v) for v in op["point"]])
         nrm = geompy.MakeVectorDXDYDZ(*[float(v) for v in op["normal"]])
         st = _state_enum(where.get("state", "on"))
         sel_ids = set(geompy.GetShapesOnPlaneWithLocationIDs(
             shape, type_code, nrm, pnt, st))
-        selected = [p for p in pairs if p[0] in sel_ids]
-    else:
-        return {"ok": False, "error": f"get_subshapes: unknown where {where!r}"}
+        return [p for p in pairs if p[0] in sel_ids]
+    raise ValueError(f"unknown where {where!r}")
 
+
+def tool_get_subshapes(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    shape = executor.geom_bindings[args["shape"]]
+    type_code = int(geompy.ShapeType[args["sub_type"].upper()])
+    try:
+        selected = _select_subshapes(geompy, shape, type_code, args["where"])
+    except ValueError as e:
+        return {"ok": False, "error": f"get_subshapes: {e}"}
     return {
         "ok": True,
         "records": [],
@@ -1784,13 +1814,18 @@ TOOL_SCHEMAS: dict[str, dict] = {
         "properties": {
             "shape": {"type": "string", "description": "published name of the shape to fillet"},
             "edges": {
-                "description": "\"all\" or a list of edge subshape indices",
+                "description": "\"all\" or a list of edge subshape ids",
                 "oneOf": [{"type": "string", "enum": ["all"]},
                           {"type": "array", "items": {"type": "integer"}}],
             },
+            "where": {"description": (
+                "instead of `edges`, select the edges inline: same predicate as "
+                'get_subshapes -- {"sorted_by":"z","take":"max","count":4}, '
+                '{"by_size":"longest","count":N}, or '
+                '{"on_plane":{"point":[x,y,z],"normal":[x,y,z]},"state":"on"}')},
             "radius": {"type": "number"},
         },
-        "required": ["shape", "edges", "radius"],
+        "required": ["shape", "radius"],
     },
     "chamfer_edges": {
         "type": "object",
@@ -1799,12 +1834,15 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "d1": {"type": "number", "description": "first chamfer distance"},
             "d2": {"type": "number", "description": "second chamfer distance (defaults to d1)"},
             "edges": {
-                "description": "\"all\" or a list of edge subshape indices",
+                "description": "\"all\" or a list of edge subshape ids",
                 "oneOf": [{"type": "string", "enum": ["all"]},
                           {"type": "array", "items": {"type": "integer"}}],
             },
+            "where": {"description": (
+                "instead of `edges`, select the edges inline: same predicate as "
+                "get_subshapes")},
         },
-        "required": ["shape", "d1", "edges"],
+        "required": ["shape", "d1"],
     },
     "set_color": {
         "type": "object",
@@ -1924,8 +1962,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "multi_rotate": "A COPY of `shape` replicated `count` times about `axis` (angle_deg = step, default full circle).",
     "offset_shape": "A COPY of `shape` with every face offset outward (+) or inward (-) by `offset`.",
     "position": "A COPY of `shape` with its local frame placed at target `origin` with axes `x_dir`/`y_dir` -- use to assemble parts.",
-    "fillet_edges": "Round edges of `shape` with the given `radius`. `edges` = \"all\" or a list of edge subshape ids. Fails if the radius is too large for the shape.",
-    "chamfer_edges": "Bevel edges of `shape` by distances d1/d2. `edges` = \"all\" or a list of edge subshape ids.",
+    "fillet_edges": "Round edges of `shape` with the given `radius`. Select edges with `edges` (\"all\" or a list of edge ids from get_subshapes/explode) or inline with a `where` predicate (same as get_subshapes). Fails if the radius is too large for the shape.",
+    "chamfer_edges": "Bevel edges of `shape` by distances d1/d2. Select edges with `edges` (\"all\" or a list of edge ids) or inline with a `where` predicate (same as get_subshapes).",
     "set_color": "Set the display colour of `shape` (r/g/b 0-255). Apply once, last, on the final shape.",
     "set_transparency": "Set display transparency of `shape` (0 opaque .. 1 invisible).",
     "set_display_mode": "Set display mode of `shape` (0=wireframe, 1=shading, 2=shading+edges).",
