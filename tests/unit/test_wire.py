@@ -9,6 +9,12 @@ from agent_server.wire import Server
 
 
 class FakeCore:
+    def __init__(self):
+        self._poisoned = False
+
+    def poisoned(self):
+        return self._poisoned
+
     def handle(self, req):
         if req.get("cmd") == "hello":
             return {"id": req.get("id"), "ready": True, "mode": "headless"}
@@ -47,6 +53,17 @@ def test_bad_token_drops_connection(server):
     f.write(b'{"cmd":"hello","token":"WRONG","id":1}\n'); f.flush()
     assert f.readline() == b""            # closed, no response
     s.close()
+
+
+def test_serve_forever_exits_once_the_backend_is_poisoned():
+    core = FakeCore()
+    srv = Server(core, token="secret")
+    srv.bind()
+    t = threading.Thread(target=srv.serve_forever)
+    t.start()
+    core._poisoned = True
+    t.join(timeout=2)
+    assert not t.is_alive()
 
 
 def test_pre_hello_timeout_frees_the_listener(server):

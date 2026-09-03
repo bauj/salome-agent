@@ -27,6 +27,14 @@ def _salome_subprocess_env() -> dict:
 
 
 def _start_server(repo_root: str) -> subprocess.Popen:
+    # Refuse to clobber a server someone else started (a hand-run
+    # start-headless-server.sh, or the GUI plugin) — this fixture unlinks the
+    # handshake and SIGKILLs a process group at teardown (GH #26).
+    from agent_server.handshake import live_owner
+    if live_owner() is not None:
+        raise RuntimeError(
+            "another agent server owns ~/.salome_agent/server.json — stop it "
+            "before running the live suite (it would be orphaned otherwise)")
     if os.path.exists(_HS):
         os.unlink(_HS)
     proc = subprocess.Popen(
