@@ -1,5 +1,5 @@
 {
-  "llm": { "base_url": "", "api_key": "", "model": "", "ssl_cert_file": "", "temperature": 0, "timeout": 120, "extra_headers": {} },
+  "llm": { "base_url": "", "api_key": "", "model": "", "ssl_cert_file": "", "temperature": 0, "timeout": 120, "json_retries": 2, "extra_headers": {} },
   "salome": {
     "root": "/path/to/your/SALOME"
   },

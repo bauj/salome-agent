@@ -41,7 +41,8 @@ def build_llm(config: dict, request_timeout: float | None = None,
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
                      temperature=llm_config.get("temperature", 0),
                      request_timeout=request_timeout or llm_config.get("timeout", 120),
-                     trace_path=trace_path, extra_headers=extra_headers)
+                     trace_path=trace_path, extra_headers=extra_headers,
+                     json_retries=llm_config.get("json_retries", 2))
 
 
 def main(argv: list[str] | None = None) -> int:

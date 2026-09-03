@@ -46,6 +46,57 @@ def test_unparseable_raises_with_raw_content():
         _parse_json_content("sorry, I cannot do that")
 
 
+def _msg(content):
+    return {"choices": [{"finish_reason": "stop",
+                         "message": {"role": "assistant", "content": content}}]}
+
+
+def test_chat_retries_bad_json_with_parser_error_fed_back(monkeypatch):
+    posts = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        posts.append(json["messages"])
+        if len(posts) == 1:
+            return _FakeResp(_msg('{"stages": [1,]}'))   # trailing comma
+        return _FakeResp(_msg('{"stages": [1]}'))
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    client = LLMClient("http://x/v1", "", "auto")
+
+    assert client.chat(messages=[{"role": "user", "content": "plan"}]) == {"stages": [1]}
+    assert len(posts) == 2
+    # the retry carried the model's bad answer back plus a correction turn
+    retry_msgs = posts[1]
+    assert retry_msgs[-2] == {"role": "assistant", "content": '{"stages": [1,]}'}
+    assert retry_msgs[-1]["role"] == "user"
+    assert "not valid JSON" in retry_msgs[-1]["content"]
+
+
+def test_chat_gives_up_after_json_retries_and_raises_raw_content(monkeypatch):
+    posts = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        posts.append(1)
+        return _FakeResp(_msg("still not json"))
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    client = LLMClient("http://x/v1", "", "auto", json_retries=2)
+
+    with pytest.raises(ValueError, match="still not json"):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert len(posts) == 3   # 1 initial + 2 retries
+
+
+def test_chat_json_retries_default_is_two(monkeypatch):
+    posts = []
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: (posts.append(1), _FakeResp(_msg("nope")))[1])
+    client = LLMClient("http://x/v1", "", "auto")
+    with pytest.raises(ValueError):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert len(posts) == 3
+
+
 def test_chat_retries_transient_gateway_errors(monkeypatch):
     body = {"choices": [{"finish_reason": "stop",
                          "message": {"role": "assistant", "content": '{"ok": 1}'}}]}
