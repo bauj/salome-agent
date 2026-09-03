@@ -166,3 +166,47 @@ def test_partly_unresolvable_result_names_still_prune_scratch():
     source = generate(call_log, result_names=["box_1", "not_a_real_name"])
     assert "box_1 = geompy.MakeBoxDXDYDZ(10, 10, 10)" in source
     assert "cyl_1" not in source
+
+
+def test_list_call_emit_unpacks_and_publishes_reachable_subshapes():
+    call_log = [
+        {"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 10}] * 3,
+         "out_vars": ["box_1"], "publish": ["box_1"]},
+        {"fn": "SubShapeAllSortedCentres",
+         "args": [{"kind": "ref", "value": "box_1"}, {"kind": "literal", "value": 6}],
+         "out_vars": ["box_1_edge_1", "box_1_edge_2", "box_1_edge_3"],
+         "publish": ["box_1_edge_1", "box_1_edge_2", "box_1_edge_3"],
+         "emit": "list_call"},
+        {"fn": "MakeFillet",
+         "args": [{"kind": "ref", "value": "box_1"}, {"kind": "literal", "value": 2},
+                  {"kind": "literal", "value": 6}, {"kind": "literal", "value": [2]}],
+         "out_vars": ["fillet_1"], "publish": ["fillet_1"]},
+    ]
+    source = generate(call_log, result_names=["fillet_1"])
+    ast.parse(source)
+    assert "SubShapeAllSortedCentres" not in source
+
+    source = generate(call_log, result_names=["box_1_edge_2"])
+    ast.parse(source)
+    assert "_sub_1 = geompy.SubShapeAllSortedCentres(box_1, 6)" in source
+    assert "box_1_edge_2 = _sub_1[1]" in source
+    assert "geompy.addToStudy(box_1_edge_2, 'box_1_edge_2')" in source
+    assert "box_1_edge_1 = _sub_1[0]" not in source
+    assert "box_1_edge_3" not in source
+
+
+def test_list_call_emit_unpacks_every_subshape_when_all_reachable():
+    call_log = [
+        {"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 1}] * 3,
+         "out_vars": ["box_1"], "publish": ["box_1"]},
+        {"fn": "SubShapeAllSortedCentres",
+         "args": [{"kind": "ref", "value": "box_1"}, {"kind": "literal", "value": 4}],
+         "out_vars": ["box_1_face_1", "box_1_face_2"],
+         "publish": ["box_1_face_1", "box_1_face_2"],
+         "emit": "list_call"},
+    ]
+    source = generate(call_log, result_names=["box_1_face_1", "box_1_face_2"])
+    ast.parse(source)
+    assert "_sub_1 = geompy.SubShapeAllSortedCentres(box_1, 4)" in source
+    assert "box_1_face_1 = _sub_1[0]" in source
+    assert "box_1_face_2 = _sub_1[1]" in source
