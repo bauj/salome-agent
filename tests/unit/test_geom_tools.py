@@ -147,6 +147,36 @@ class TestResolverHelpers:
         assert len(records) == 0
         assert result == "my_vector"
 
+    def test_resolve_point_accepts_a_coordinate_literal(self):
+        """A real LLM passes a point arg as "(10,10,0)" / [10,10,0] instead of a
+        shape name -> emit MakeVertex rather than KeyError on geom_bindings."""
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeVertex.return_value = MagicMock()
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy}, geom_bindings={})
+        for arg in ("(10, 10, 0)", "10,10,0", "[10,10,0]", [10, 10, 0], (10, 10, 0)):
+            geom_tools.reset_counters()
+            records = []
+            name = geom_tools._resolve_point(ex, arg, records)
+            assert records[0]["fn"] == "MakeVertex"
+            assert [a["value"] for a in records[0]["args"]] == [10.0, 10.0, 0.0]
+            assert name == records[0]["out_vars"][0]
+            assert ex.geom_bindings[name] is geompy.MakeVertex.return_value
+
+    def test_resolve_axis_accepts_a_coordinate_literal(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeVectorDXDYDZ.return_value = MagicMock()
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy}, geom_bindings={})
+        records = []
+        name = geom_tools._resolve_axis(ex, "0,0,1", records)
+        assert records[0]["fn"] == "MakeVectorDXDYDZ"
+        assert [a["value"] for a in records[0]["args"]] == [0.0, 0.0, 1.0]
+        assert name == records[0]["out_vars"][0]
+
+    def test_resolve_point_passes_a_plain_name_through(self):
+        assert geom_tools._resolve_point(SimpleNamespace(), "my_point", []) == "my_point"
+
     def test_resolve_plane_shorthand_xoy(self):
         """_resolve_plane converts 'XOY' to a plane ref."""
         geom_tools.reset_counters()
@@ -277,6 +307,24 @@ class TestPrimitiveTools:
         assert record["fn"] == "MakeBoxTwoPnt"
         assert record["args"][0] == {"kind": "ref", "value": "pt1"}
         assert record["args"][1] == {"kind": "ref", "value": "pt2"}
+
+    def test_make_box_two_pnt_accepts_coordinate_literals(self):
+        """`pnt1`/`pnt2` given as "(0,0,0)" / "(10,10,10)" -> MakeVertex records
+        emitted, box built from them (was an opaque KeyError, cost ~3 calls)."""
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeBoxTwoPnt.return_value = MagicMock()
+        geompy.MakeVertex.side_effect = [MagicMock(), MagicMock()]
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy}, geom_bindings={})
+
+        result = geom_tools.tool_make_box_two_pnt(ex, {"pnt1": "(0,0,0)", "pnt2": "(10,10,10)"})
+
+        assert result["ok"] is True
+        assert [r["fn"] for r in result["records"]] == ["MakeVertex", "MakeVertex", "MakeBoxTwoPnt"]
+        box_rec = result["records"][-1]
+        assert box_rec["args"][0]["kind"] == "ref"
+        assert box_rec["args"][0]["value"] == result["records"][0]["out_vars"][0]
 
     def test_make_cylinder(self):
         """make_cylinder creates a cylinder."""
