@@ -64,12 +64,47 @@ def _gui_call(executor, shape, method: str, value) -> None:
         pass
 
 
+def _parse_coords(arg):
+    """A 3-number coordinate literal -> (x, y, z) floats, else None.
+
+    Accepts [x, y, z], (x, y, z), "x,y,z" and "(x, y, z)" — a real LLM passes a
+    point/vector argument as any of these instead of the name of a shape it
+    built, which otherwise fails with an opaque KeyError on geom_bindings.
+    """
+    if isinstance(arg, (list, tuple)) and len(arg) == 3:
+        parts = arg
+    elif isinstance(arg, str) and "," in arg:
+        parts = arg.strip(" []()").split(",")
+    else:
+        return None
+    try:
+        x, y, z = (float(p) for p in parts)
+    except (TypeError, ValueError):
+        return None
+    return x, y, z
+
+
 def _resolve_axis(executor, arg, records: list) -> str:
     """Resolve an axis arg to a ref name.
 
-    If arg is "OX", "OY", or "OZ", emit a MakeVectorDXDYDZ CallRecord and return its name.
-    Otherwise, arg is a ref name — return it unchanged.
+    "OX"/"OY"/"OZ" or a coordinate literal -> emit a MakeVectorDXDYDZ CallRecord
+    and return its name. Otherwise arg is a ref name — return it unchanged.
     """
+    coords = _parse_coords(arg)
+    if coords is not None:
+        dx, dy, dz = coords
+        geompy = executor.namespace["geompy"]
+        name = _next_name(executor, "vec")
+        executor.geom_bindings[name] = geompy.MakeVectorDXDYDZ(dx, dy, dz)
+        records.append({
+            "fn": "MakeVectorDXDYDZ",
+            "args": [{"kind": "literal", "value": dx},
+                     {"kind": "literal", "value": dy},
+                     {"kind": "literal", "value": dz}],
+            "out_vars": [name],
+            "publish": None,
+        })
+        return name
     if arg == "OX":
         geompy = executor.namespace["geompy"]
         vec = geompy.MakeVectorDXDYDZ(1, 0, 0)
@@ -191,26 +226,26 @@ def _resolve_plane(executor, arg, records: list) -> str:
 def _resolve_point(executor, arg, records: list) -> str:
     """Resolve a point arg to a ref name.
 
-    If arg is "O", emit a MakeVertex CallRecord and return its name.
-    Otherwise, arg is a ref name — return it unchanged.
+    "O" or a coordinate literal ([x,y,z] / "x,y,z" / "(x, y, z)") -> emit a
+    MakeVertex CallRecord and return its name. Otherwise arg is a ref name —
+    return it unchanged.
     """
-    if arg == "O":
+    coords = (0, 0, 0) if arg == "O" else _parse_coords(arg)
+    if coords is not None:
+        x, y, z = coords
         geompy = executor.namespace["geompy"]
-        pt = geompy.MakeVertex(0, 0, 0)
         name = _next_name(executor, "pt")
-        executor.geom_bindings[name] = pt
+        executor.geom_bindings[name] = geompy.MakeVertex(x, y, z)
         records.append({
             "fn": "MakeVertex",
-            "args": [{"kind": "literal", "value": 0},
-                     {"kind": "literal", "value": 0},
-                     {"kind": "literal", "value": 0}],
+            "args": [{"kind": "literal", "value": x},
+                     {"kind": "literal", "value": y},
+                     {"kind": "literal", "value": z}],
             "out_vars": [name],
             "publish": None,
         })
         return name
-    else:
-        # It's a ref name
-        return arg
+    return arg
 
 
 def tool_make_box(executor, args: dict):
@@ -327,25 +362,22 @@ def tool_chamfer_edges(executor, args: dict):
 
 def tool_make_box_two_pnt(executor, args: dict):
     geompy = executor.namespace["geompy"]
-    pnt1 = executor.geom_bindings[args["pnt1"]]
-    pnt2 = executor.geom_bindings[args["pnt2"]]
-    box = geompy.MakeBoxTwoPnt(pnt1, pnt2)
+    records: list = []
+    n1 = _resolve_point(executor, args["pnt1"], records)
+    n2 = _resolve_point(executor, args["pnt2"], records)
+    box = geompy.MakeBoxTwoPnt(executor.geom_bindings[n1], executor.geom_bindings[n2])
     is_valid, msg = geompy.CheckShape(box, True, 1)
     if not is_valid:
         return {"ok": False, "error": f"make_box_two_pnt: CheckShape failed ({msg})"}
     name = _next_name(executor, "box")
     _publish(executor, box, name)
-    return {
-        "ok": True,
-        "records": [{
-            "fn": "MakeBoxTwoPnt",
-            "args": [{"kind": "ref", "value": args["pnt1"]},
-                     {"kind": "ref", "value": args["pnt2"]}],
-            "out_vars": [name],
-            "publish": [name],
-        }],
-        "sanity": {"ok": True},
-    }
+    records.append({
+        "fn": "MakeBoxTwoPnt",
+        "args": [{"kind": "ref", "value": n1}, {"kind": "ref", "value": n2}],
+        "out_vars": [name],
+        "publish": [name],
+    })
+    return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
 def tool_make_cylinder(executor, args: dict):
@@ -371,10 +403,11 @@ def tool_make_cylinder(executor, args: dict):
 
 def tool_make_sphere(executor, args: dict):
     geompy = executor.namespace["geompy"]
+    records: list = []
     if "center" in args:
-        center = executor.geom_bindings[args["center"]]
-        sph = geompy.MakeSpherePntR(center, args["radius"])
-        record_args = [{"kind": "ref", "value": args["center"]},
+        cn = _resolve_point(executor, args["center"], records)
+        sph = geompy.MakeSpherePntR(executor.geom_bindings[cn], args["radius"])
+        record_args = [{"kind": "ref", "value": cn},
                        {"kind": "literal", "value": args["radius"]}]
         fn = "MakeSpherePntR"
     else:
@@ -386,16 +419,13 @@ def tool_make_sphere(executor, args: dict):
         return {"ok": False, "error": f"make_sphere: CheckShape failed ({msg})"}
     name = _next_name(executor, "sph")
     _publish(executor, sph, name)
-    return {
-        "ok": True,
-        "records": [{
-            "fn": fn,
-            "args": record_args,
-            "out_vars": [name],
-            "publish": [name],
-        }],
-        "sanity": {"ok": True},
-    }
+    records.append({
+        "fn": fn,
+        "args": record_args,
+        "out_vars": [name],
+        "publish": [name],
+    })
+    return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
 def tool_make_cone(executor, args: dict):
@@ -528,68 +558,61 @@ def tool_make_vector(executor, args: dict):
 
 def tool_make_line(executor, args: dict):
     geompy = executor.namespace["geompy"]
-    pnt1 = executor.geom_bindings[args["pnt1"]]
-    pnt2 = executor.geom_bindings[args["pnt2"]]
-    line = geompy.MakeLineTwoPnt(pnt1, pnt2)
+    records: list = []
+    n1 = _resolve_point(executor, args["pnt1"], records)
+    n2 = _resolve_point(executor, args["pnt2"], records)
+    line = geompy.MakeLineTwoPnt(executor.geom_bindings[n1], executor.geom_bindings[n2])
     name = _next_name(executor, "line")
     _publish(executor, line, name)
-    return {
-        "ok": True,
-        "records": [{
-            "fn": "MakeLineTwoPnt",
-            "args": [{"kind": "ref", "value": args["pnt1"]},
-                     {"kind": "ref", "value": args["pnt2"]}],
-            "out_vars": [name],
-            "publish": [name],
-        }],
-        "sanity": {"ok": True},
-    }
+    records.append({
+        "fn": "MakeLineTwoPnt",
+        "args": [{"kind": "ref", "value": n1}, {"kind": "ref", "value": n2}],
+        "out_vars": [name],
+        "publish": [name],
+    })
+    return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
 def tool_make_plane(executor, args: dict):
     geompy = executor.namespace["geompy"]
-    point = executor.geom_bindings[args["point"]]
-    normal = executor.geom_bindings[args["normal"]]
+    records: list = []
+    pn = _resolve_point(executor, args["point"], records)
+    vn = _resolve_axis(executor, args["normal"], records)
     trim_size = args.get("trim_size", 2000)
-    plane = geompy.MakePlane(point, normal, trim_size)
+    plane = geompy.MakePlane(executor.geom_bindings[pn], executor.geom_bindings[vn], trim_size)
     is_valid, msg = geompy.CheckShape(plane, True, 1)
     if not is_valid:
         return {"ok": False, "error": f"make_plane: CheckShape failed ({msg})"}
     name = _next_name(executor, "plane")
     _publish(executor, plane, name)
-    return {
-        "ok": True,
-        "records": [{
-            "fn": "MakePlane",
-            "args": [{"kind": "ref", "value": args["point"]},
-                     {"kind": "ref", "value": args["normal"]},
-                     {"kind": "literal", "value": trim_size}],
-            "out_vars": [name],
-            "publish": [name],
-        }],
-        "sanity": {"ok": True},
-    }
+    records.append({
+        "fn": "MakePlane",
+        "args": [{"kind": "ref", "value": pn},
+                 {"kind": "ref", "value": vn},
+                 {"kind": "literal", "value": trim_size}],
+        "out_vars": [name],
+        "publish": [name],
+    })
+    return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
 def tool_make_circle(executor, args: dict):
     geompy = executor.namespace["geompy"]
-    center = executor.geom_bindings[args["center"]]
-    normal = executor.geom_bindings[args["normal"]]
-    circ = geompy.MakeCircle(center, normal, args["radius"])
+    records: list = []
+    cn = _resolve_point(executor, args["center"], records)
+    vn = _resolve_axis(executor, args["normal"], records)
+    circ = geompy.MakeCircle(executor.geom_bindings[cn], executor.geom_bindings[vn], args["radius"])
     name = _next_name(executor, "circ")
     _publish(executor, circ, name)
-    return {
-        "ok": True,
-        "records": [{
-            "fn": "MakeCircle",
-            "args": [{"kind": "ref", "value": args["center"]},
-                     {"kind": "ref", "value": args["normal"]},
-                     {"kind": "literal", "value": args["radius"]}],
-            "out_vars": [name],
-            "publish": [name],
-        }],
-        "sanity": {"ok": True},
-    }
+    records.append({
+        "fn": "MakeCircle",
+        "args": [{"kind": "ref", "value": cn},
+                 {"kind": "ref", "value": vn},
+                 {"kind": "literal", "value": args["radius"]}],
+        "out_vars": [name],
+        "publish": [name],
+    })
+    return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
 def tool_make_prism(executor, args: dict):
@@ -1333,8 +1356,8 @@ TOOL_SCHEMAS: dict[str, dict] = {
     "make_box_two_pnt": {
         "type": "object",
         "properties": {
-            "pnt1": {"type": "string", "description": "first corner point"},
-            "pnt2": {"type": "string", "description": "opposite corner point"},
+            "pnt1": {"type": "string", "description": 'first corner: a point name or "x,y,z"'},
+            "pnt2": {"type": "string", "description": 'opposite corner: a point name or "x,y,z"'},
         },
         "required": ["pnt1", "pnt2"],
     },
@@ -1714,8 +1737,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "multi_rotate": "A COPY of `shape` replicated `count` times about `axis` (angle_deg = step, default full circle).",
     "offset_shape": "A COPY of `shape` with every face offset outward (+) or inward (-) by `offset`.",
     "position": "A COPY of `shape` with its local frame placed at target `origin` with axes `x_dir`/`y_dir` -- use to assemble parts.",
-    "fillet_edges": "Round edges of `shape` with the given `radius`. `edges` = \"all\" or a list of edge subshape indices.",
-    "chamfer_edges": "Bevel edges of `shape` by distances d1/d2. `edges` = \"all\" or a list of edge subshape indices.",
+    "fillet_edges": "Round edges of `shape` with the given `radius`. `edges` = \"all\" or a list of edge subshape ids. Fails if the radius is too large for the shape.",
+    "chamfer_edges": "Bevel edges of `shape` by distances d1/d2. `edges` = \"all\" or a list of edge subshape ids.",
     "set_color": "Set the display colour of `shape` (r/g/b 0-255). Apply once, last, on the final shape.",
     "set_transparency": "Set display transparency of `shape` (0 opaque .. 1 invisible).",
     "set_display_mode": "Set display mode of `shape` (0=wireframe, 1=shading, 2=shading+edges).",
