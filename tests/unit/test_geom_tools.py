@@ -1565,6 +1565,16 @@ class TestGetSubshapesQuery:
             "where": {"by_size": "largest", "count": 1}})
         assert out["ids"] == [2]
 
+    def test_where_accepts_a_json_string_predicate(self):
+        ex = self._executor(subs=["a", "b", "c", "d"], ids=[1, 2, 3, 4],
+                            bboxes={"a": [0, 0, 0, 0, 0, 0], "b": [0, 0, 0, 0, 10, 10],
+                                    "c": [0, 0, 0, 0, 5, 5], "d": [0, 0, 0, 0, 10, 10]})
+        out = geom_tools.tool_get_subshapes(ex, {
+            "shape": "box_1", "sub_type": "edge",
+            "where": '{"sorted_by": "z", "take": "max", "count": 2}'})
+        assert out["ok"] is True
+        assert sorted(out["ids"]) == [2, 4]
+
     def test_unknown_where_is_an_error(self):
         ex = self._executor(subs=[], ids=[], bboxes={})
         out = geom_tools.tool_get_subshapes(
