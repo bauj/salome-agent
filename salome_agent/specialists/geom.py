@@ -34,7 +34,9 @@ To act on specific edges or faces (e.g. "fillet the top four edges"), first
 call get_subshapes to get their integer ids -- by where = "all", a centre
 axis (sorted_by / take / count), size (by_size / count), or a plane
 (on_plane / state) -- then pass that id list straight to fillet_edges,
-chamfer_edges or get_subshape. get_subshapes only reports ids and centres;
+chamfer_edges or get_subshape. fillet_edges / chamfer_edges also accept the
+same where predicate directly instead of an id list. get_subshapes only
+reports ids and centres;
 it changes no geometry. Use explode when you instead want every subshape
 published as its own named object.
 
