@@ -29,13 +29,16 @@ def test_cube_and_mesh_produces_runnable_result(tmp_path, running_server):
     }))
 
     fake_llm = MagicMock()
+    fake_llm.usage = None  # real LLMClient exposes a usage dict; report.py reads it
     fake_llm.chat.side_effect = [
         {"stages": [
             {"module": "geom", "intent": "20mm cube", "params": {"size": 20}, "inputs": []},
             {"module": "smesh", "intent": "mesh 5mm tets", "params": {"max_size": 5}, "inputs": ["box_1"]},
         ]},
-        {"tool_call": "make_box", "args": {"dx": 20, "dy": 20, "dz": 20}},
-        {"tool_call": "finish_stage", "args": {"result_names": ["box_1"]}},
+        # geom specialist reads the tool_calls list (a turn may batch several);
+        # smesh/paravis still take the singular tool_call.
+        {"tool_calls": [{"name": "make_box", "args": {"dx": 20, "dy": 20, "dz": 20}}]},
+        {"tool_calls": [{"name": "finish_stage", "args": {"result_names": ["box_1"]}}]},
         {"tool_call": "emit_script", "args": {"code": (
             # smesh.NETGEN_1D2D3D does not exist — the constant lives on
             # the smeshBuilder *module*, not the smeshBuilder.New() instance
