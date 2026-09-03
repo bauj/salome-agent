@@ -255,7 +255,7 @@ executor/
   geom_tools.py     geom tool implementations + per-tool JSON schemas
 plugin/             salome_agent_plugin.py — standalone manual-registration variant
                     (install-plugin.sh inlines the same call; not imported by it)
-scripts/            install-plugin.sh, start-headless-server.sh
+scripts/            install-plugin.sh, start-headless-server.sh, regen-toplevel-api.py
 docs/superpowers/   design specs + implementation plans
 ```
 
@@ -268,8 +268,9 @@ docs/superpowers/   design specs + implementation plans
   failed stage attempt leaves `sa_<run_id>_`-prefixed debris in the study. A stage
   timeout poisons the server (run aborts, exit 1); recovery may need killing the GUI.
   Demos only; save your work first. Headless mode is the unattended path.
-- `verify/toplevel_api.json` (the `--no-session` static-check fixture) still holds
-  placeholder API member lists — not regenerated from a live `introspect()`.
+- `verify/toplevel_api.json` (the `--no-session` static-check fixture) is generated
+  from a live session by `scripts/regen-toplevel-api.py`; rerun it when the SALOME
+  build changes.
 - geom tool registry covers `make_box`, `fillet_edges`, `check_shape`,
   `list_study_objects` only. Add more (`make_cylinder`, `boolean_*`, `chamfer_edges`)
   using the existing `TOOL_SCHEMAS` pattern in `executor/geom_tools.py`.
