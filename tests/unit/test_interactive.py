@@ -1,6 +1,22 @@
 import io
 
+from salome_agent import interactive
 from salome_agent.interactive import prompt_plan, prompt_retry, resume_interactive
+
+
+def test_edit_preserves_the_tools_hint(monkeypatch):
+    monkeypatch.setenv("EDITOR", "true")  # no-op editor, file left unchanged
+    plan = [{"module": "geom", "intent": "x", "params": {}, "inputs": [],
+             "tools": ["make_box"]}]
+    out = interactive._edit_plan_in_editor(plan)
+    assert out[0]["tools"] == ["make_box"]
+
+
+def test_edit_defaults_missing_tools_to_empty_list(monkeypatch):
+    monkeypatch.setenv("EDITOR", "true")
+    plan = [{"module": "geom", "intent": "x", "params": {}, "inputs": []}]
+    out = interactive._edit_plan_in_editor(plan)
+    assert out[0]["tools"] == []
 
 
 def _reader(answers):

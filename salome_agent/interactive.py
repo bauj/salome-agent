@@ -6,7 +6,7 @@ import tempfile
 
 from salome_agent.logs import log
 
-_PLAN_KEYS = ("module", "intent", "params", "inputs")
+_PLAN_KEYS = ("module", "intent", "params", "inputs", "tools")
 
 
 def _edit_plan_in_editor(plan):
@@ -35,6 +35,7 @@ def _edit_plan_in_editor(plan):
         stage.setdefault("intent", "")
         stage.setdefault("params", {})
         stage.setdefault("inputs", [])
+        stage.setdefault("tools", [])
     return edited
 
 
