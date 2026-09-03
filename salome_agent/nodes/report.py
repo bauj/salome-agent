@@ -3,14 +3,18 @@ def _usage_lines(usage: dict) -> list[str]:
     metered = usage.get("metered_calls", 0)
     pt = usage.get("prompt_tokens", 0)
     ct = usage.get("completion_tokens", 0)
+    approx = usage.get("approx_prompt_tokens", 0)
     lines = ["## LLM usage", "",
              f"- calls: {calls}",
              f"- input tokens: {pt:,}",
              f"- output tokens: {ct:,}",
              f"- total tokens: {pt + ct:,}"]
+    if approx:
+        lines.append(f"- approx input (all calls, request chars/4): {approx:,}")
     if metered < calls:
         lines.append(f"- note: {calls - metered} call(s) returned no usage data; "
-                     f"totals cover the {metered} that did")
+                     f"provider input/output totals cover the {metered} that did "
+                     f"(approx input above covers all {calls})")
     lines.append("")
     return lines
 
