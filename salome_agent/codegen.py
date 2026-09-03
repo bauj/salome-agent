@@ -92,5 +92,15 @@ def generate(call_log: list[dict], result_names: list[str]) -> str:
             lines.append(f"    gg.{call['fn']}(salome.ObjectToID({recv}), {args_src})")
             lines.append("except Exception:")
             lines.append("    pass")
+        elif emit == "list_call":
+            tmp = f"_sub_{i}"
+            lines.append(f"{tmp} = geompy.{call['fn']}({args_src})")
+            pubs = dict(zip(call["out_vars"], call.get("publish") or []))
+            for idx, var in enumerate(call["out_vars"]):
+                if var not in reachable:
+                    continue
+                lines.append(f"{var} = {tmp}[{idx}]")
+                if var in pubs:
+                    lines.append(f"geompy.addToStudy({var}, {pubs[var]!r})")
 
     return "\n".join(lines)
