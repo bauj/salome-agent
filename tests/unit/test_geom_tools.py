@@ -1200,6 +1200,56 @@ class TestLocalOpsTools:
         # MakeChamferEdges(theShape, theD1, theD2, theEdges) -- no shape-type arg
         geompy.MakeChamferEdges.assert_called_once_with(shape, 1.0, 1.0, [1, 2, 3, 4])
 
+    def _fillet_executor(self):
+        geompy = MagicMock()
+        geompy.MakeFillet.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                               geom_bindings={"shape": MagicMock()})
+
+    def test_fillet_edges_accepts_a_string_id_list(self):
+        """A real LLM has passed `edges` as "1,2,3" / "(1, 2, 3)" — normalise it
+        rather than letting a bare string reach geompy (opaque CORBA error)."""
+        geom_tools.reset_counters()
+        ex = self._fillet_executor()
+        for edges in ("2,4,6", "(2, 4, 6)", "[2,4,6]"):
+            result = geom_tools.tool_fillet_edges(ex, {"shape": "shape", "radius": 1.0, "edges": edges})
+            assert result["ok"] is True
+            assert result["records"][0]["args"][3] == {"kind": "literal", "value": [2, 4, 6]}
+
+    def test_fillet_edges_accepts_a_single_int(self):
+        geom_tools.reset_counters()
+        ex = self._fillet_executor()
+        result = geom_tools.tool_fillet_edges(ex, {"shape": "shape", "radius": 1.0, "edges": 3})
+        assert result["records"][0]["args"][3] == {"kind": "literal", "value": [3]}
+
+    def test_fillet_edges_rejects_junk_edges_with_a_clear_error(self):
+        ex = self._fillet_executor()
+        # call_tool turns the ValueError into an {"ok": False} result for the model
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 1.0, "edges": "the top ones"})
+        assert result["ok"] is False
+        assert "edges" in result["error"] and "integer" in result["error"]
+
+    def test_fillet_edges_wraps_a_geompy_failure(self):
+        """Radius too large -> geompy raises; the model gets a hint, not a bare
+        RuntimeError repr."""
+        ex = self._fillet_executor()
+        ex.namespace["geompy"].MakeFillet.side_effect = RuntimeError(
+            "MakeFilletEdges : Fillet can't be computed on the given shape with the given radius")
+        result = geom_tools.tool_fillet_edges(ex, {"shape": "shape", "radius": 999.0, "edges": "all"})
+        assert result["ok"] is False
+        assert "smaller radius" in result["error"]
+
+    def test_chamfer_edges_wraps_a_geompy_failure(self):
+        geompy = MagicMock()
+        geompy.MakeChamferEdges.side_effect = RuntimeError("can't be computed")
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": MagicMock()})
+        result = geom_tools.tool_chamfer_edges(ex, {"shape": "shape", "d1": 99.0, "edges": [1, 2]})
+        assert result["ok"] is False
+        assert "chamfer_edges" in result["error"]
+
     def test_chamfer_edges_with_d2(self):
         """chamfer_edges with separate d2."""
         geom_tools.reset_counters()
