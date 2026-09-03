@@ -1,6 +1,6 @@
 import json
 
-from salome_agent.codegen import _reachable
+from salome_agent.codegen import _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.logs import log
 from salome_agent.specialists.tool_selection import initial_offered, resolve_load
@@ -117,19 +117,29 @@ LOAD_TOOLS_DESCRIPTION = (
 )
 
 
+# Boolean ops consume their operands into the result — an operand kept in
+# result_names alongside the boolean's output is a superseded intermediate.
+# Transforms (translate/rotate/align/...) are copy semantics: the source
+# stays independently valid, so it is NOT dropped.
+_BOOLEAN_FNS = {"MakeFuse", "MakeFuseList", "MakeCut", "MakeCutList",
+                "MakeCommon", "MakeCommonList", "MakeBoolean", "MakePartition"}
+
+
 def _leaf_result_names(call_log: list[dict], names: list[str]) -> list[str]:
-    """Keep only names no other kept name depends on. An over-split stage that
-    finish_stage's an intermediate (e.g. the pre-translate box alongside the
-    translated one) would otherwise hand the superseded shape to the next
-    stage, which then builds on the wrong object (GH #9)."""
+    """Drop any name that a boolean op folded into another kept result. An
+    over-split stage that finish_stage's a pre-boolean operand would otherwise
+    hand the superseded shape to the next stage, which then builds on the
+    wrong object (GH #9)."""
     names = list(dict.fromkeys(names))
     if len(names) < 2:
         return names
-    leaves = []
-    for n in names:
-        others = [m for m in names if m != n]
-        if n not in (_reachable(call_log, others) - set(others)):
-            leaves.append(n)
+    kept = set(names)
+    consumed: set[str] = set()
+    for call in call_log:
+        if call["fn"] in _BOOLEAN_FNS and kept & set(call["out_vars"]):
+            for arg in call["args"]:
+                consumed |= _refs_in(arg)
+    leaves = [n for n in names if n not in consumed]
     return leaves or names
 
 
