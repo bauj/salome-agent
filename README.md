@@ -227,6 +227,29 @@ Tests marked `salome` are skipped unless a real SALOME install is present.
 They locate it via `$SALOME_ROOT`, else `salome.root` in `config.json`; with
 neither set the `salome` tests skip.
 
+### Static-check API map (`--no-session`)
+
+A normal run verifies each stage script against the **live** SALOME session
+(`introspect()` on the running modules — authoritative). `--no-session` has no
+session, so its static check falls back to `salome_agent/verify/toplevel_api.json`
+— a snapshot of the valid `geompy` / `smesh` / `pvsimple` top-level members. It
+only catches calls to names that do not exist on the module; it is a coarse
+check, and `--no-session` skips exec verification entirely.
+
+That fixture has no source but a live session, so regenerate it whenever the
+SALOME build changes:
+
+```bash
+python3 scripts/regen-toplevel-api.py
+```
+
+It reuses a running agent server (`~/.salome_agent/server.json`, GUI plugin or
+headless) if one is up, otherwise spawns a throwaway headless server (needs
+`$SALOME_ROOT` or `salome.root` in `config.json`) and tears it down after. A
+module whose live introspect comes back empty keeps its existing member list.
+`tests/salome/test_toplevel_api_fixture.py` fails if the committed fixture has
+drifted from a live introspect.
+
 ### Layout
 
 ```
@@ -268,12 +291,14 @@ docs/superpowers/   design specs + implementation plans
   failed stage attempt leaves `sa_<run_id>_`-prefixed debris in the study. A stage
   timeout poisons the server (run aborts, exit 1); recovery may need killing the GUI.
   Demos only; save your work first. Headless mode is the unattended path.
-- `verify/toplevel_api.json` (the `--no-session` static-check fixture) is generated
-  from a live session by `scripts/regen-toplevel-api.py`; rerun it when the SALOME
-  build changes.
-- geom tool registry covers `make_box`, `fillet_edges`, `check_shape`,
-  `list_study_objects` only. Add more (`make_cylinder`, `boolean_*`, `chamfer_edges`)
-  using the existing `TOOL_SCHEMAS` pattern in `executor/geom_tools.py`.
+- `--no-session` mode only does a coarse "does this name exist" static check
+  against a snapshot API map and no exec verification — see *Static-check API map*
+  under Development. A real run always verifies against the live session.
+- geom tool registry (~40 tools: primitives, sketch, swept, booleans, transforms,
+  fillet/chamfer, display, query) has no subshape selection yet — a specific-edge
+  fillet or a face-ID op needs an explode/query family (planned). Add tools using
+  the existing handler + `ARG_TYPES` + `TOOL_SCHEMAS` + `CallRecord` pattern in
+  `executor/geom_tools.py`.
 - `reset_and_replay` (rollback) is wired only for the headless backend and has no
   graph-level caller yet — retries re-run the full stage script.
 - RAG / documentation retrieval was cut from v1.
