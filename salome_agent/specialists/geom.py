@@ -30,6 +30,14 @@ inherit the source's colour. So apply display properties (set_color,
 set_transparency, set_display_mode) LAST, once, on the final shape — after
 every primitive, boolean and transform.
 
+To act on specific edges or faces (e.g. "fillet the top four edges"), first
+call get_subshapes to get their integer ids -- by where = "all", a centre
+axis (sorted_by / take / count), size (by_size / count), or a plane
+(on_plane / state) -- then pass that id list straight to fillet_edges,
+chamfer_edges or get_subshape. get_subshapes only reports ids and centres;
+it changes no geometry. Use explode when you instead want every subshape
+published as its own named object.
+
 You are given only a subset of the geom tools, chosen for this stage. If you
 need a tool that is not in your list, call load_tools with specific tool
 `names` or whole `categories` (primitive, sketch, swept, boolean, transform,
@@ -109,7 +117,8 @@ def _compact_result(result: dict) -> dict:
     if not result.get("ok"):
         return {"ok": False, "error": result.get("error")}
     keep = {"ok": True}
-    for k in ("result_shape", "shape_info", "measurements", "names", "sanity"):
+    for k in ("result_shape", "shape_info", "measurements", "names", "sanity",
+              "ids", "centres", "distance", "properties"):
         if k in result:
             keep[k] = result[k]
     published = [n for rec in result.get("records", []) for n in (rec.get("publish") or [])]
