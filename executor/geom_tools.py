@@ -1206,6 +1206,50 @@ TOOLS: dict[str, Callable] = {
     "measure": tool_measure,
 }
 
+# One category per tool, for the geom-specialist tool-retrieval mechanism
+# (salome_agent/specialists/tool_selection.py). Keep in sync with TOOLS —
+# tests/unit/test_geom_tools.py guards that every TOOLS key appears here.
+TOOL_CATEGORY: dict[str, str] = {
+    "make_box": "primitive",
+    "make_box_two_pnt": "primitive",
+    "make_cylinder": "primitive",
+    "make_sphere": "primitive",
+    "make_cone": "primitive",
+    "make_torus": "primitive",
+    "make_face": "sketch",
+    "make_disk": "sketch",
+    "make_point": "sketch",
+    "make_vector": "sketch",
+    "make_line": "sketch",
+    "make_plane": "sketch",
+    "make_circle": "sketch",
+    "make_prism": "swept",
+    "make_revolution": "swept",
+    "make_pipe": "swept",
+    "make_thick_solid": "swept",
+    "make_filling": "swept",
+    "fuse": "boolean",
+    "cut": "boolean",
+    "common": "boolean",
+    "partition": "boolean",
+    "translate": "transform",
+    "rotate": "transform",
+    "mirror": "transform",
+    "scale": "transform",
+    "multi_translate": "transform",
+    "multi_rotate": "transform",
+    "offset_shape": "transform",
+    "position": "transform",
+    "fillet_edges": "feature",
+    "chamfer_edges": "feature",
+    "set_color": "display",
+    "set_transparency": "display",
+    "set_display_mode": "display",
+    "check_shape": "query",
+    "list_study_objects": "query",
+    "measure": "query",
+}
+
 # Per-tool arg coercion: LLM tool-call args arrive JSON-typed (numbers can
 # come back as strings, e.g. {"height": "40"}), but geompy does not coerce —
 # a string arg is interpreted as a notebook variable-name reference and
@@ -1713,5 +1757,6 @@ def call_tool(executor, name: str, args: dict) -> dict:
 def list_tools() -> list[dict]:
     return [{"name": n,
              "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}}),
-             "description": TOOL_DESCRIPTIONS.get(n, "")}
+             "description": TOOL_DESCRIPTIONS.get(n, ""),
+             "category": TOOL_CATEGORY.get(n, "")}
             for n in TOOLS]

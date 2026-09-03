@@ -7,6 +7,25 @@ import pytest
 
 from executor import geom_tools
 
+_VALID_CATEGORIES = {
+    "primitive", "sketch", "swept", "boolean",
+    "transform", "feature", "display", "query",
+}
+
+
+def test_every_tool_has_a_valid_category():
+    missing = [n for n in geom_tools.TOOLS if n not in geom_tools.TOOL_CATEGORY]
+    assert not missing, f"tools with no TOOL_CATEGORY entry: {missing}"
+    bad = {n: c for n, c in geom_tools.TOOL_CATEGORY.items() if c not in _VALID_CATEGORIES}
+    assert not bad, f"tools with an unknown category: {bad}"
+    extra = [n for n in geom_tools.TOOL_CATEGORY if n not in geom_tools.TOOLS]
+    assert not extra, f"TOOL_CATEGORY names not in TOOLS: {extra}"
+
+
+def test_list_tools_entries_carry_a_category():
+    for entry in geom_tools.list_tools():
+        assert entry["category"] in _VALID_CATEGORIES, entry
+
 
 class TestToolDescriptions:
     def test_every_llm_facing_tool_has_a_description(self):
