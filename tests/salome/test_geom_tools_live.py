@@ -25,6 +25,13 @@ class TestPrimitiveTools:
         result = agent_client.call_tool("make_box_two_pnt", {"pnt1": "pt_1", "pnt2": "pt_2"})
         assert result["ok"] is True
 
+    def test_make_box_two_pnt_accepts_coordinate_literals(self, agent_client):
+        """A coord string instead of a point name -> MakeVertex emitted, box built."""
+        result = agent_client.call_tool(
+            "make_box_two_pnt", {"pnt1": "(0,0,0)", "pnt2": "(10,10,10)"})
+        assert result["ok"] is True, result.get("error")
+        assert [r["fn"] for r in result["records"]] == ["MakeVertex", "MakeVertex", "MakeBoxTwoPnt"]
+
     def test_make_cylinder(self, agent_client):
         """make_cylinder creates cylinder."""
         result = agent_client.call_tool("make_cylinder", {"radius": 5.0, "height": 10.0})
@@ -263,6 +270,15 @@ class TestLocalEdgeOps:
         assert rec["args"][1] == {"kind": "literal", "value": 1.0}
         assert rec["args"][2] == {"kind": "literal", "value": 1.0}
         assert isinstance(rec["args"][3]["value"], list)
+
+    def test_fillet_edges_bad_string_ids_get_a_clean_error(self, agent_client):
+        """A bare string `edges` is normalised to ints; if they are not real
+        edge ids geompy still rejects them, but with our wrapped message rather
+        than a raw CORBA.BAD_PARAM."""
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        result = agent_client.call_tool("fillet_edges", {"shape": "box_1", "edges": "97,98", "radius": 1.0})
+        assert result["ok"] is False
+        assert result["error"].startswith("fillet_edges: MakeFillet failed")
 
 
 class TestDisplayTools:
