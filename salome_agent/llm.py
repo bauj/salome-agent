@@ -175,12 +175,20 @@ class LLMClient:
                       time.monotonic() - t0, finish,
                       [c["function"]["name"] for c in calls] or "none",
                       f'\n    said: {content[:500]}' if content else "")
-            if not calls:
+            parsed = [{"name": c["function"]["name"],
+                       "args": json.loads(c["function"]["arguments"]),
+                       "id": c.get("id")}
+                      for c in calls]
+            if not parsed:
                 return {"tool_call": None, "args": None, "tool_call_id": None,
-                        "content": content}
-            call = calls[0]["function"]
-            return {"tool_call": call["name"], "args": json.loads(call["arguments"]),
-                    "tool_call_id": calls[0].get("id"), "content": content}
+                        "tool_calls": [], "content": content}
+            # tool_calls: every call the model emitted this turn (tool_choice=
+            # "auto" allows several). The singular keys mirror the first call —
+            # kept for callers that only ever expect one (specialists/base.py).
+            first = parsed[0]
+            return {"tool_call": first["name"], "args": first["args"],
+                    "tool_call_id": first["id"], "tool_calls": parsed,
+                    "content": content}
         content = message["content"]
         log.debug("LLM response in %.1fs: finish=%s, %d chars of content",
                   time.monotonic() - t0, finish, len(content or ""))

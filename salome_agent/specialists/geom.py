@@ -18,8 +18,12 @@ else is dropped.
 Do only what the request asks. Do not invent colours, transparency or
 display modes that were not requested.
 
-Each turn: state your reasoning in at most 2-3 sentences, then call exactly
-one tool. Do not reply without calling a tool.
+Each turn: state your reasoning in at most 2-3 sentences, then call one or
+more tools. Do not reply without calling a tool. You may batch several
+INDEPENDENT calls in one turn (e.g. the four walls of a frame, or four
+translates of shapes that already exist). Keep DEPENDENT steps in separate
+turns -- if one call needs the name of a shape another call is about to
+create, it must wait for the next turn.
 
 Every successful tool result reports the shape's bbox, size and centre (mm)
 in `shape_info`. After each translate, rotate, fuse or cut, read that
@@ -138,53 +142,62 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         response = llm.chat(messages=send, tools=tools)
         if response.get("content"):
             log.debug("    LLM reasoning: %s", response["content"])
-        log.debug("    LLM -> %s(%s)", response["tool_call"], response.get("args"))
-        if response["tool_call"] is None:
+        calls = response["tool_calls"]
+        log.debug("    LLM -> %s", [(c["name"], c["args"]) for c in calls])
+        if not calls:
             # tool_choice="auto" — the model replied with prose and no call.
             # Keep its message, nudge it, and let the loop try again.
             messages.append({"role": "assistant", "content": response["content"] or "(no reply)"})
             messages.append({"role": "user", "content": "You did not call a tool. "
-                             "Call exactly one tool now — finish_stage once the geometry is done."})
+                             "Call at least one tool now — finish_stage once the geometry is done."})
             continue
-        # The assistant's own tool-call turn must be echoed back before the
+        # The assistant's own tool-call turn must be echoed back before any
         # tool result — without it the model has no memory of what it just
         # did (each turn looks like a fresh start) and, seen live against a
         # real LLM, it just calls make_box forever instead of ever finishing.
-        call_id = response.get("tool_call_id") or "call_0"
+        # The model may batch several independent calls in one turn; every
+        # one gets executed and answered below, in order.
+        for j, c in enumerate(calls):
+            c.setdefault("id", None)
+            c["id"] = c["id"] or f"call_{i}_{j}"
         messages.append({"role": "assistant", "content": None, "tool_calls": [
-            {"id": call_id, "type": "function",
-             "function": {"name": response["tool_call"], "arguments": json.dumps(response["args"])}},
+            {"id": c["id"], "type": "function",
+             "function": {"name": c["name"], "arguments": json.dumps(c["args"])}}
+            for c in calls
         ]})
-        if response["tool_call"] == "load_tools":
-            added = resolve_load(response["args"].get("names"),
-                                 response["args"].get("categories"), all_defs)
-            new = added - offered
-            offered |= added
-            obs = (f"added: {', '.join(sorted(new)) or '(nothing new)'} "
-                   f"— {len(offered)} tools available")
-            log.info("  load_tools(names=%s, categories=%s) -> +%d, %d available",
-                     response["args"].get("names"), response["args"].get("categories"),
-                     len(new), len(offered))
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
-            continue
-        if response["tool_call"] == "finish_stage":
-            result_names = response["args"]["result_names"]
-            # A schema hint doesn't guarantee compliance — seen live, a
-            # model returned this as a JSON-encoded string instead of an
-            # actual array, which codegen's set(result_names) would then
-            # silently iterate as individual characters.
-            if isinstance(result_names, str):
-                result_names = json.loads(result_names)
-            return {"call_log": call_log, "result_names": result_names}
-        result = client.call_tool(response["tool_call"], response["args"])
-        if result["ok"]:
-            call_log.extend(result["records"])
-            last_error = None
-            log.debug("    tool %s ok", response["tool_call"])
-        else:
-            last_error = {"phase": "exec", "message": result["error"],
-                           "offending_line": None, "traceback": None}
-            log.debug("    tool %s failed: %s", response["tool_call"], result["error"])
-        tool_results[len(messages)] = result
-        messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
+        batch_error = None
+        for c in calls:
+            name, args, call_id = c["name"], c["args"], c["id"]
+            if name == "load_tools":
+                added = resolve_load(args.get("names"), args.get("categories"), all_defs)
+                new = added - offered
+                offered |= added
+                obs = (f"added: {', '.join(sorted(new)) or '(nothing new)'} "
+                       f"— {len(offered)} tools available")
+                log.info("  load_tools(names=%s, categories=%s) -> +%d, %d available",
+                         args.get("names"), args.get("categories"), len(new), len(offered))
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
+                continue
+            if name == "finish_stage":
+                result_names = args["result_names"]
+                # A schema hint doesn't guarantee compliance — seen live, a
+                # model returned this as a JSON-encoded string instead of an
+                # actual array, which codegen's set(result_names) would then
+                # silently iterate as individual characters.
+                if isinstance(result_names, str):
+                    result_names = json.loads(result_names)
+                return {"call_log": call_log, "result_names": result_names}
+            result = client.call_tool(name, args)
+            if result["ok"]:
+                call_log.extend(result["records"])
+                log.debug("    tool %s ok", name)
+            else:
+                batch_error = {"phase": "exec", "message": result["error"],
+                               "offending_line": None, "traceback": None}
+                log.debug("    tool %s failed: %s", name, result["error"])
+            tool_results[len(messages)] = result
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
+        # A later ok call in the same batch must not mask an earlier failure —
+        # settle last_error once per turn from the batch outcome.
+        last_error = batch_error
     return {"call_log": call_log, "last_error": last_error}
