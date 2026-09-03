@@ -344,3 +344,26 @@ def test_tool_selection_all_offers_the_full_registry():
     offered = _tool_names(llm.chat.call_args)
     assert "make_thick_solid" in offered
     assert "make_cylinder" in offered
+
+
+def test_compact_result_keeps_query_payload_keys():
+    from salome_agent.specialists.geom import _compact_result
+
+    full = {"ok": True, "records": [{"fn": "x", "args": [], "out_vars": [], "publish": None}],
+            "sanity": {"ok": True},
+            "ids": [3, 7, 11, 15], "centres": [[0, 0, 20], [10, 0, 20]],
+            "distance": 4.2, "properties": {"length": 40.0, "area": 0.0, "volume": 0.0}}
+    compact = _compact_result(full)
+    assert compact["ids"] == [3, 7, 11, 15]
+    assert compact["centres"] == [[0, 0, 20], [10, 0, 20]]
+    assert compact["distance"] == 4.2
+    assert compact["properties"] == {"length": 40.0, "area": 0.0, "volume": 0.0}
+    assert "records" not in compact
+
+
+def test_prompt_documents_the_query_then_act_pattern():
+    from salome_agent.specialists.geom import _geom_prompt
+    for cadence in ("none", "final", "strict"):
+        p = _geom_prompt(cadence)
+        assert "get_subshapes" in p
+        assert "fillet_edges" in p
