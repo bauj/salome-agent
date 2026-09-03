@@ -35,6 +35,41 @@ def test_no_tool_call_is_nudged_then_loop_continues():
                for m in second)
 
 
+def test_prior_tool_results_are_compacted_latest_kept_full():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        {"tool_call": "make_box", "args": {"dx": 10, "dy": 10, "dz": 10}},
+        {"tool_call": "make_box", "args": {"dx": 5, "dy": 5, "dz": 5}},
+        {"tool_call": "finish_stage", "args": {"result_names": ["box_2"]}},
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    client.call_tool.side_effect = [
+        {"ok": True,
+         "records": [{"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 10}],
+                      "out_vars": ["box_1"], "publish": ["box_1"]}],
+         "sanity": {"ok": True},
+         "result_shape": "box_1",
+         "shape_info": {"bbox": [0, 10, 0, 10, 0, 10], "size": [10, 10, 10], "centre": [5, 5, 5]}},
+        {"ok": True,
+         "records": [{"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 5}],
+                      "out_vars": ["box_2"], "publish": ["box_2"]}],
+         "sanity": {"ok": True},
+         "result_shape": "box_2",
+         "shape_info": {"bbox": [0, 5, 0, 5, 0, 5], "size": [5, 5, 5], "centre": [2.5, 2.5, 2.5]}},
+    ]
+    run_geom_specialist({"module": "geom", "intent": "two boxes", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=6)
+    # 3rd chat call: turn-1 tool result compacted, turn-2 (latest) full.
+    sent = llm.chat.call_args_list[2].kwargs["messages"]
+    tool_msgs = [m["content"] for m in sent if m.get("role") == "tool"]
+    assert len(tool_msgs) == 2
+    assert "MakeBoxDXDYDZ" not in tool_msgs[0]      # verbose records dropped
+    assert "box_1" in tool_msgs[0]                  # published name still there
+    assert "'centre': [5, 5, 5]" in tool_msgs[0]    # shape_info kept
+    assert "MakeBoxDXDYDZ" in tool_msgs[1]          # latest turn untouched
+
+
 def test_upstream_shape_info_is_injected_into_the_opening_prompt():
     llm = MagicMock()
     llm.chat.return_value = {"tool_call": "finish_stage", "args": {"result_names": ["x"]}}
