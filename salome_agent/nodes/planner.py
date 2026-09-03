@@ -11,13 +11,17 @@ def _geom_catalogue() -> str:
 _PLANNER_BASE = """You turn a natural-language SALOME request into an
 ordered list of stages. Each stage has: module (geom|smesh|paravis), intent
 (short description of the job for that stage), params (dims in millimetres,
-unconverted), inputs (named upstream objects this stage needs), and -- for a
-geom stage -- an optional "tools" list naming the geom tool names you expect
+unconverted), inputs (a plain-words list of what this stage needs from earlier ones), and
+-- for a geom stage -- an optional "tools" list naming the geom tool names you expect
 that stage to use (from the catalogue below; names only, e.g.
 ["make_box", "translate", "set_color"]). The "tools" list is a hint that
 narrows what the geom specialist is offered; omit it if unsure. Respond as
 JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
 prose before or after it.
+
+Object names are assigned automatically and you cannot know them. Never put
+a guessed object name in `inputs` -- describe what the stage needs. Every
+object built by an earlier stage is passed to each later stage regardless.
 
 A **part** is one primitive plus only the operations that shape that same
 piece of material -- a boolean that cuts or rounds it, its transform, its

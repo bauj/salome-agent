@@ -354,6 +354,22 @@ Every one produces a **new** published shape; the input is untouched.
   — for assembling parts. `MakePosition` accepts a `None` start LCS so only
   the target marker is built.
 
+#### `align`  (relative placement — task 186 / GH #9)
+- geompy: `MakeTranslation(theObject, dx, dy, dz)` — a single record, so
+  `result.py` reads as a plain translation.
+- args: `shape` (ref, R), `to` (ref, R), `match` (list, R) of
+  `{axis: x|y|z, my: min|max|center, target: min|max|center, gap: number=0}`.
+- semantics: for each constraint the handler reads both shapes' bounding
+  boxes (`_shape_info`) and translates `shape` along `axis` until its `my`
+  extreme equals `to`'s `target` extreme plus `gap` mm. Axes not named are
+  unchanged. Two constraints on one axis → `{ok: False}`.
+- why: the specialist measures a bbox then does the placement arithmetic
+  wrong. `align` moves the arithmetic into the tool; the model only states
+  the relationship ("my min-x face against your max-x face, 5mm gap").
+- prefix: `tr` (shares `translate`'s namespace — output is indistinguishable).
+- in `CORE_TOOLS` (always offered): multi-part stages, where the planner is
+  least reliable, are exactly where placement is needed.
+
 ### 4.6 Local edge operations
 
 #### `fillet_edges`  — **FIX the existing tool**

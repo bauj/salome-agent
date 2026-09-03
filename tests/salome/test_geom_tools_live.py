@@ -238,6 +238,29 @@ class TestTransformationTools:
         assert result["ok"] is True, result.get("error")
         assert [r["fn"] for r in result["records"]] == ["MakeMarker", "MakePosition"]
 
+    def test_align_butts_a_part_against_another(self, agent_client):
+        """align moves `shape` so its chosen face meets `to`'s, gap included."""
+        agent_client.call_tool("make_box", {"dx": 100, "dy": 100, "dz": 100})   # box_1
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})      # box_2
+        result = agent_client.call_tool("align", {
+            "shape": "box_2", "to": "box_1",
+            "match": [{"axis": "x", "my": "min", "target": "max", "gap": 5},
+                      {"axis": "y", "my": "center", "target": "center"}]})
+        assert result["ok"] is True, result.get("error")
+        assert [r["fn"] for r in result["records"]] == ["MakeTranslation"]
+        bb = result["shape_info"]["bbox"]
+        assert bb[0] == pytest.approx(105.0, abs=1e-3)     # xmin = box_1 xmax + 5
+        assert result["shape_info"]["centre"][1] == pytest.approx(50.0, abs=1e-3)
+
+    def test_align_rejects_two_constraints_on_one_axis(self, agent_client):
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
+        result = agent_client.call_tool("align", {
+            "shape": "box_2", "to": "box_1",
+            "match": [{"axis": "x", "my": "min", "target": "min"},
+                      {"axis": "x", "my": "max", "target": "max"}]})
+        assert result["ok"] is False
+
     def test_shape_info_reports_placement(self, agent_client):
         """Every successful tool result carries bbox/size/centre; a translate shifts it."""
         box = agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})

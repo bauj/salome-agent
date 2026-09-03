@@ -1145,6 +1145,63 @@ def tool_position(executor, args: dict):
     }
 
 
+_AXIS_IDX = {"x": 0, "y": 1, "z": 2}
+
+
+def _extent(bbox: list, axis: str, anchor: str) -> float:
+    lo, hi = bbox[2 * _AXIS_IDX[axis]], bbox[2 * _AXIS_IDX[axis] + 1]
+    return {"min": lo, "max": hi, "center": (lo + hi) / 2}[anchor]
+
+
+def tool_align(executor, args: dict):
+    """Relative placement: translate `shape` so its chosen extremes meet
+    `to`'s. The model states the spatial relationship; the tool reads both
+    bounding boxes and computes the move. Emits a plain MakeTranslation."""
+    geompy = executor.namespace["geompy"]
+    shape = executor.geom_bindings.get(args["shape"])
+    target = executor.geom_bindings.get(args["to"])
+    if shape is None:
+        return {"ok": False, "error": f"align: unknown shape {args['shape']!r}"}
+    if target is None:
+        return {"ok": False, "error": f"align: unknown shape {args['to']!r}"}
+    s_info = _shape_info(geompy, shape)
+    t_info = _shape_info(geompy, target)
+    if s_info is None or t_info is None:
+        return {"ok": False, "error": "align: could not measure one of the shapes"}
+    delta = {"x": 0.0, "y": 0.0, "z": 0.0}
+    seen = set()
+    for c in args["match"]:
+        axis = c["axis"]
+        if axis not in _AXIS_IDX:
+            return {"ok": False, "error": f"align: bad axis {axis!r}"}
+        if axis in seen:
+            return {"ok": False, "error": f"align: two constraints on axis {axis!r}"}
+        seen.add(axis)
+        gap = float(c.get("gap") or 0)
+        want = _extent(t_info["bbox"], axis, c["target"]) + gap
+        have = _extent(s_info["bbox"], axis, c["my"])
+        delta[axis] = round(want - have, 6)
+    result = geompy.MakeTranslation(shape, delta["x"], delta["y"], delta["z"])
+    is_valid, msg = geompy.CheckShape(result, True, 1)
+    if not is_valid:
+        return {"ok": False, "error": f"align: CheckShape failed ({msg})"}
+    name = _next_name(executor, "tr")
+    _publish(executor, result, name)
+    return {
+        "ok": True,
+        "records": [{
+            "fn": "MakeTranslation",
+            "args": [{"kind": "ref", "value": args["shape"]},
+                     {"kind": "literal", "value": delta["x"]},
+                     {"kind": "literal", "value": delta["y"]},
+                     {"kind": "literal", "value": delta["z"]}],
+            "out_vars": [name],
+            "publish": [name],
+        }],
+        "sanity": {"ok": True},
+    }
+
+
 def tool_set_color(executor, args: dict):
     # Live call for immediate GUI update
     shape = executor.geom_bindings[args["shape"]]
@@ -1405,6 +1462,7 @@ TOOLS: dict[str, Callable] = {
     "multi_rotate": tool_multi_rotate,
     "offset_shape": tool_offset_shape,
     "position": tool_position,
+    "align": tool_align,
     "fillet_edges": tool_fillet_edges,
     "chamfer_edges": tool_chamfer_edges,
     "set_color": tool_set_color,
@@ -1454,6 +1512,7 @@ TOOL_CATEGORY: dict[str, str] = {
     "multi_rotate": "transform",
     "offset_shape": "transform",
     "position": "transform",
+    "align": "transform",
     "fillet_edges": "feature",
     "chamfer_edges": "feature",
     "set_color": "display",
@@ -1809,6 +1868,30 @@ TOOL_SCHEMAS: dict[str, dict] = {
         },
         "required": ["shape"],
     },
+    "align": {
+        "type": "object",
+        "properties": {
+            "shape": {"type": "string", "description": "shape to move (a copy is made)"},
+            "to": {"type": "string", "description": "reference shape to align against"},
+            "match": {
+                "type": "array",
+                "description": "one alignment constraint per axis; axes not listed are unchanged",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "axis": {"type": "string", "enum": ["x", "y", "z"]},
+                        "my": {"type": "string", "enum": ["min", "max", "center"],
+                               "description": "which extreme of `shape` on this axis"},
+                        "target": {"type": "string", "enum": ["min", "max", "center"],
+                                   "description": "which extreme of `to` on this axis"},
+                        "gap": {"type": "number", "description": "signed offset in mm, default 0"},
+                    },
+                    "required": ["axis", "my", "target"],
+                },
+            },
+        },
+        "required": ["shape", "to", "match"],
+    },
     "fillet_edges": {
         "type": "object",
         "properties": {
@@ -1962,6 +2045,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "multi_rotate": "A COPY of `shape` replicated `count` times about `axis` (angle_deg = step, default full circle).",
     "offset_shape": "A COPY of `shape` with every face offset outward (+) or inward (-) by `offset`.",
     "position": "A COPY of `shape` with its local frame placed at target `origin` with axes `x_dir`/`y_dir` -- use to assemble parts.",
+    "align": "Move `shape` so chosen faces/centres line up with `to`. `match` is a list of {axis, my, target, gap}: `shape` is translated along that axis until its `my` (min|max|center) meets `to`'s `target` plus `gap` mm. Axes not listed stay put. Use for assembly -- placing a part against, on top of, flush with, or centred on another; the tool does the bounding-box arithmetic and emits a plain translation.",
     "fillet_edges": "Round edges of `shape` with the given `radius`. Select edges with `edges` (\"all\" or a list of edge ids from get_subshapes/explode) or inline with a `where` predicate (same as get_subshapes). Fails if the radius is too large for the shape.",
     "chamfer_edges": "Bevel edges of `shape` by distances d1/d2. Select edges with `edges` (\"all\" or a list of edge ids) or inline with a `where` predicate (same as get_subshapes).",
     "set_color": "Set the display colour of `shape` (r/g/b 0-255). Apply once, last, on the final shape.",

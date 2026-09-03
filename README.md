@@ -301,7 +301,10 @@ docs/superpowers/   design specs + implementation plans
   against a snapshot API map and no exec verification — see *Static-check API map*
   under Development. A real run always verifies against the live session.
 - geom tool registry (~45 tools: primitives, sketch, swept, booleans, transforms,
-  fillet/chamfer, display, query, subshape selection). Subshape ids come from
+  fillet/chamfer, display, query, subshape selection). `align` does relative
+  placement (move a part so a chosen face/centre meets another's) so the model
+  states the spatial relationship instead of computing the translation itself.
+  Subshape ids come from
   `get_subshapes` (query — returns ids/centres, emits no `CallRecord`) or
   `explode` (publishes each subshape); `get_subshape` builds one shape from an id
   list. Add tools using the existing handler + `ARG_TYPES` + `TOOL_SCHEMAS` +

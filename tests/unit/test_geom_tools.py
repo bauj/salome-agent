@@ -1651,3 +1651,75 @@ class TestMeasurementQueries:
         out = geom_tools.tool_basic_properties(ex, {"shape": "a"})
         assert out["records"] == []
         assert out["properties"] == {"length": 40.0, "area": 100.0, "volume": 0.0}
+
+
+class TestAlignTool:
+    def _executor(self, bbox_by_shape):
+        geompy = MagicMock()
+        objs = {n: f"<{n}>" for n in bbox_by_shape}
+        geompy.BoundingBox.side_effect = lambda s: bbox_by_shape[
+            next(n for n, o in objs.items() if o == s)]
+        geompy.MakeTranslation.return_value = "<moved>"
+        geompy.CheckShape.return_value = (True, "")
+        return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                               geom_bindings=dict(objs))
+
+    def test_single_axis_min_to_max_with_gap(self):
+        geom_tools.reset_counters()
+        ex = self._executor({
+            "beam": [0.0, 10.0, 0.0, 5.0, 0.0, 5.0],
+            "wall": [0.0, 100.0, 0.0, 100.0, 0.0, 100.0],
+        })
+        out = geom_tools.tool_align(ex, {
+            "shape": "beam", "to": "wall",
+            "match": [{"axis": "x", "my": "min", "target": "max", "gap": 10}]})
+        assert out["ok"] is True
+        geompy = ex.namespace["geompy"]
+        geompy.MakeTranslation.assert_called_once_with("<beam>", 110.0, 0.0, 0.0)
+        rec = out["records"][0]
+        assert rec["fn"] == "MakeTranslation"
+        assert rec["args"][0] == {"kind": "ref", "value": "beam"}
+        assert [a["value"] for a in rec["args"][1:]] == [110.0, 0.0, 0.0]
+        assert rec["out_vars"] == rec["publish"] == ["sa_tr_1"]
+
+    def test_multi_axis_center_to_center(self):
+        geom_tools.reset_counters()
+        ex = self._executor({
+            "lid": [0.0, 20.0, 0.0, 20.0, 0.0, 2.0],
+            "pot": [10.0, 50.0, 10.0, 50.0, 0.0, 40.0],
+        })
+        out = geom_tools.tool_align(ex, {
+            "shape": "lid", "to": "pot",
+            "match": [{"axis": "x", "my": "center", "target": "center"},
+                      {"axis": "y", "my": "center", "target": "center"},
+                      {"axis": "z", "my": "min", "target": "max"}]})
+        assert out["ok"] is True
+        # lid centre x=10 -> pot centre x=30 => dx=20 ; same dy=20 ; z min 0 -> 40 => dz=40
+        ex.namespace["geompy"].MakeTranslation.assert_called_once_with("<lid>", 20.0, 20.0, 40.0)
+
+    def test_two_constraints_on_one_axis_is_an_error(self):
+        geom_tools.reset_counters()
+        ex = self._executor({"a": [0, 1, 0, 1, 0, 1], "b": [0, 1, 0, 1, 0, 1]})
+        out = geom_tools.tool_align(ex, {
+            "shape": "a", "to": "b",
+            "match": [{"axis": "x", "my": "min", "target": "min"},
+                      {"axis": "x", "my": "max", "target": "max"}]})
+        assert out["ok"] is False
+        assert "x" in out["error"]
+
+    def test_unknown_shape_is_a_clean_error(self):
+        geom_tools.reset_counters()
+        ex = self._executor({"b": [0, 1, 0, 1, 0, 1]})
+        out = geom_tools.tool_align(ex, {"shape": "ghost", "to": "b",
+                                         "match": [{"axis": "x", "my": "min", "target": "min"}]})
+        assert out["ok"] is False
+
+    def test_registered_everywhere(self):
+        assert geom_tools.TOOLS["align"] is geom_tools.tool_align
+        assert geom_tools.TOOL_CATEGORY["align"] == "transform"
+        assert geom_tools.TOOL_SCHEMAS["align"]["required"] == ["shape", "to", "match"]
+        assert geom_tools.TOOL_DESCRIPTIONS["align"]
+
+    def test_in_core_tools(self):
+        from salome_agent.specialists.tool_selection import CORE_TOOLS
+        assert "align" in CORE_TOOLS
