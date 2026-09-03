@@ -118,7 +118,9 @@ SALOME process. Start it first (once per SALOME session):
 - **GUI:** launch `"$SALOME_ROOT"/salome`, then **Tools ▸ Plugins ▸ Launch SALOME
   agent server** — see [GUI plugin setup](#gui-plugin-setup) for the one-time install.
 - **Headless (CI / batch):** `scripts/start-headless-server.sh` (needs `SALOME_ROOT`)
-  — isolated study, no GUI.
+  — isolated study, no GUI. Runs in the foreground; ready when
+  `~/.salome_agent/server.json` appears (~10-20s), logs to
+  `~/.salome_agent/server.log`, stop with Ctrl-C. One server at a time.
 
 Then:
 
