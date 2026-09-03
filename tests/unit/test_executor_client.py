@@ -65,6 +65,31 @@ def test_fatal_reply_raises_session_poisoned():
     t.join()
 
 
+def test_close_drops_the_connection_without_sending_shutdown():
+    box, seen = [], []
+
+    def server():
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        box.append(srv.getsockname()[1])
+        conn, _ = srv.accept()
+        f = conn.makefile("rwb")
+        f.readline()  # hello
+        f.write((json.dumps({"ready": True, "proto": 1, "mode": "headless"}) + "\n").encode())
+        f.flush()
+        seen.append(f.readline())  # EOF after close(), not a shutdown line
+        conn.close()
+        srv.close()
+
+    t = threading.Thread(target=server)
+    t.start()
+    client = _connect(box)
+    client.close()
+    t.join()
+    assert seen == [b""]
+
+
 def test_hello_fatal_raises_session_poisoned():
     box = []
     t = threading.Thread(target=_fake_server,

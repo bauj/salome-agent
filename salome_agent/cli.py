@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if client is not None:
             try:
-                client.shutdown()
+                client.close()
             except Exception:
                 pass
 

@@ -124,7 +124,9 @@ SALOME process. Start it first (once per SALOME session):
 - **Headless (CI / batch):** `scripts/start-headless-server.sh` (needs `SALOME_ROOT`)
   — isolated study, no GUI. Runs in the foreground; ready when
   `~/.salome_agent/server.json` appears (~10-20s), logs to
-  `~/.salome_agent/server.log`, stop with Ctrl-C. One server at a time.
+  `~/.salome_agent/server.log`, stop with Ctrl-C. One server at a time. It
+  stays up across CLI runs — the CLI drops its connection but never shuts the
+  server down.
 
 Then:
 
@@ -189,7 +191,8 @@ Objects a run publishes appear in the Object Browser and 3D viewer, prefixed
 
 A second menu click **restarts** the server (new token, new port). A stage timeout
 **poisons** the server: the run aborts (exit 1) and you restart it from the same menu
-— or, if the GUI is frozen by a runaway stage, kill it.
+— or, if the GUI is frozen by a runaway stage, kill it. The headless server (which
+otherwise stays up across runs) **exits** on a poisoning timeout — restart it.
 
 > Auto-launching SALOME from the agent was tried and reverted (task 182). Repeated
 > external attach/detach against a long-lived GUI has crashed the session before

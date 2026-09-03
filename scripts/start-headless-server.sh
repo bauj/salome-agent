@@ -31,4 +31,6 @@ echo "starting headless SALOME agent server (SALOME_ROOT=$SALOME_ROOT)"
 echo "  ready when   $handshake  appears (~10-20s)"
 echo "  server log   $log"
 echo "  stop         Ctrl-C"
-exec "$SALOME_ROOT/salome" shell -- python3 -m agent_server "$@"
+# --serve-forever: keep accepting CLI runs until Ctrl-C. Without it the
+# server exits after the first client disconnects.
+exec "$SALOME_ROOT/salome" shell -- python3 -m agent_server --serve-forever "$@"

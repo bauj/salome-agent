@@ -28,6 +28,12 @@ class Server:
 
     def serve_forever(self) -> None:
         while not self._stop.is_set():
+            # A timeout poisons the backend and abandons a running thread; the
+            # process must exit so that thread dies and clients stop getting a
+            # silent _FATAL from a still-listening but broken server. `_accept`
+            # times out every 0.5s so this is noticed with no traffic.
+            if self.core.poisoned():
+                break
             conn = self._accept()
             if conn is None:
                 continue

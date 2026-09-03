@@ -77,3 +77,17 @@ class ExecutorClient:
 
     def shutdown(self):
         return self._call("shutdown")
+
+    def close(self):
+        """Drop the connection without stopping the server. The server is
+        owned by whoever started it (the GUI menu, start-headless-server.sh,
+        or `--once` self-exit) — a transient CLI run must not shut it down
+        (GH #26)."""
+        try:
+            self._f.close()
+        except OSError:
+            pass
+        try:
+            self._sock.close()
+        except OSError:
+            pass

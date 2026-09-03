@@ -9,6 +9,9 @@ class Core:
     def __init__(self, backend):
         self.backend = backend
 
+    def poisoned(self) -> bool:
+        return self.backend.poisoned()
+
     def handle(self, req: dict) -> dict:
         rid = req.get("id")
         if self.backend.poisoned():
