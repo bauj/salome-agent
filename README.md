@@ -142,6 +142,24 @@ source .venv/bin/activate
 salome-agent "make a 10mm cube" --batch
 ```
 
+To point the agent at a picture (or several) of the part you want, add `--images`
+(comma-separated paths, no spaces around the commas needed):
+
+```bash
+salome-agent "make this bracket" --images ./bracket-sketch.png --batch
+
+# several views/plans of the same part
+salome-agent "make this bracket" --images ./front.png,./side.png,./top.bmp --batch
+```
+
+Each image is base64-encoded and sent as a multimodal message to both the planner and
+the geom specialist (PNG/JPEG/WEBP/GIF/BMP; needs a vision-capable LLM behind
+`llm.base_url`). Multiple images are treated as different views/plans of the *same*
+part, read together to infer its 3D shape — not as separate parts. They shape the
+stage breakdown and the proportions/placement of the geometry the specialist builds;
+explicit numeric dimensions in the text request still win over anything inferred from
+the picture(s). smesh/paravis stages don't see them — it only feeds CAD construction.
+
 The agent will:
 
 1. Connect to the running server via `~/.salome_agent/server.json`. If none is
@@ -169,6 +187,7 @@ Run the result on its own, with no agent involved:
 
 | Flag | Meaning |
 |------|---------|
+| `--images PATH,PATH,...` | Comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) the generated CAD should match — e.g. several views/plans of the same part; sent to the planner and geom specialist alongside the request. |
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
 | `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. smesh/paravis only (geom needs a session). |
 | `--work-dir DIR` | Override `config.work_dir`. |
@@ -271,7 +290,7 @@ salome_agent/
   cli.py            entry point
   graph.py          the LangGraph StateGraph (all nodes + routing)
   config.py         config loading + validation
-  llm.py            minimal OpenAI-compatible tool-calling client
+  llm.py            minimal OpenAI-compatible tool-calling client (+ with_images() for multimodal messages)
   state.py          RunState / stage TypedDicts
   nodes/            planner, gates (plan/retry), advance, assembler, report
   specialists/      geom (tool-calling), smesh, paravis (raw script), base

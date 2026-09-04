@@ -9,6 +9,17 @@ from salome_agent.logs import log
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
+
+def with_images(text: str, image_data_uris: list[str] | None):
+    """Build a chat message `content` value: plain text, or an OpenAI-compatible
+    multimodal parts list (text + one image_url part per reference image)."""
+    if not image_data_uris:
+        return text
+    return [
+        {"type": "text", "text": text},
+        *({"type": "image_url", "image_url": {"url": uri}} for uri in image_data_uris),
+    ]
+
 # Retry a 502/503/504 only when it comes back fast (a real transient blip). A
 # slow one is the proxy's upstream-timeout firing — retrying wastes another
 # full timeout for the same slow backend.

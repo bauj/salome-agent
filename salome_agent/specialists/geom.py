@@ -2,6 +2,7 @@ import json
 
 from salome_agent.codegen import _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
+from salome_agent.llm import with_images
 from salome_agent.logs import log
 from salome_agent.specialists.tool_selection import initial_offered, resolve_load
 
@@ -56,7 +57,15 @@ published as its own named object.
 You are given only a subset of the geom tools, chosen for this stage. If you
 need a tool that is not in your list, call load_tools with specific tool
 `names` or whole `categories` (primitive, sketch, swept, boolean, transform,
-feature, display, query) to add them, then call the tool you wanted."""
+feature, display, query) to add them, then call the tool you wanted.
+
+If reference image(s) are attached to your first message, treat them as the
+visual target for the geometry you build: match the proportions, shape and
+relative placement they show. Several images are usually different
+views/plans of the same part (e.g. front, top, side) -- read them together
+to infer the 3D shape, not as separate parts. Use explicit numeric
+dimensions from the request/params when given; only estimate a dimension
+from the image(s) when none is given."""
 
 # policy.verify_cadence — how hard the specialist is pushed to self-check
 # shape placement. shape_info rides on every ok result for free; the question
@@ -175,17 +184,18 @@ def _compact_result(result: dict) -> dict:
 def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         upstream: dict | None = None,
                         tool_selection: str = "hints",
-                        verify_cadence: str = "final") -> dict:
+                        verify_cadence: str = "final",
+                        reference_images: list[str] | None = None) -> dict:
     try:
         return _run(stage_plan, llm, client, iteration_cap, upstream,
-                    tool_selection, verify_cadence)
+                    tool_selection, verify_cadence, reference_images)
     except (SessionDied, SessionPoisoned) as e:
         return {"fatal": f"SALOME agent server unavailable: {e}"}
 
 
 def _run(stage_plan: dict, llm, client, iteration_cap: int,
          upstream: dict | None = None, tool_selection: str = "hints",
-         verify_cadence: str = "final") -> dict:
+         verify_cadence: str = "final", reference_images: list[str] | None = None) -> dict:
     content = str(stage_plan)
     if upstream:
         lines = []
@@ -200,7 +210,7 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                     "names, but do not modify, colour or finish_stage them unless this "
                     "stage's own task says to:\n" + "\n".join(lines))
     messages = [{"role": "system", "content": _geom_prompt(verify_cadence)},
-                {"role": "user", "content": content}]
+                {"role": "user", "content": with_images(content, reference_images)}]
     call_log: list[dict] = []
     tool_results: dict[int, dict] = {}  # message index -> full result dict
     last_error = None

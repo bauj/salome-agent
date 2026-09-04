@@ -35,6 +35,7 @@ class SessionHandle(TypedDict):
 class RunState(TypedDict):
     run_id: str
     user_request: str
+    reference_images: Optional[list[str]]
     config: dict
 
     plan: list[StagePlan]

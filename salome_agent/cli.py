@@ -5,6 +5,11 @@ import sys
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="salome-agent")
     parser.add_argument("request")
+    parser.add_argument("--images", default=None, metavar="PATH,PATH,...",
+                        help="comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) "
+                             "the generated CAD should match -- e.g. several views/plans "
+                             "of the same part; sent to the planner and the geom "
+                             "specialist alongside the request")
     parser.add_argument("--batch", action="store_true")
     parser.add_argument("--no-session", action="store_true",
                         help="planner + specialists + static checks only; "
@@ -23,6 +28,34 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "-vv: also dump every LLM prompt, response and "
                              "reasoning to the terminal and <run_dir>/llm_trace.jsonl")
     return parser.parse_args(argv)
+
+
+_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"}
+
+
+def parse_image_paths(raw: str) -> list[str]:
+    """--images is a comma-separated path list; split and drop empty entries
+    (a trailing comma, accidental double comma)."""
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def load_reference_image(path: str) -> str:
+    """Read an image file and return it as a data: URI for a multimodal LLM
+    message. Raises ValueError on an unsupported type, OSError if unreadable."""
+    import base64
+    import mimetypes
+
+    mime, _ = mimetypes.guess_type(path)
+    if mime not in _IMAGE_MIME_TYPES:
+        raise ValueError(f"--images: unsupported or unrecognized image type for {path!r} "
+                         f"(expected one of {sorted(_IMAGE_MIME_TYPES)})")
+    with open(path, "rb") as f:
+        data = f.read()
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def load_reference_images(paths: list[str]) -> list[str]:
+    return [load_reference_image(p) for p in paths]
 
 
 def build_llm(config: dict, request_timeout: float | None = None,
@@ -75,8 +108,19 @@ def main(argv: list[str] | None = None) -> int:
     # run_dir is created by _report_node when it actually has output to write;
     # a run aborted at an interactive gate leaves nothing behind.
 
+    reference_images = None
+    if args.images:
+        image_paths = parse_image_paths(args.images)
+        try:
+            reference_images = load_reference_images(image_paths)
+        except (OSError, ValueError) as e:
+            log.error("%s", e)
+            return 1
+
     log.info("run %s", run_id)
     log.info("request: %s", args.request)
+    if reference_images:
+        log.info("reference image(s): %s", ", ".join(image_paths))
     log.info("output dir: %s", run_dir)
     if not args.batch:
         log.info("interactive mode: you will be prompted to approve the plan "
@@ -106,7 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         graph = build_graph(batch=args.batch)
         final = graph.invoke({
-            "user_request": args.request, "config": {**config, "batch": args.batch},
+            "user_request": args.request, "reference_images": reference_images,
+            "config": {**config, "batch": args.batch},
             "session": session_handle, "plan": [], "plan_approved": False,
             "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
             "study_ns": "salome_agent_run", "final_script": None, "report": None,

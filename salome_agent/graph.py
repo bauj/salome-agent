@@ -70,7 +70,7 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     detail = state["config"]["policy"].get("plan_detail", "balanced")
     log.info("planning... (plan_detail=%s)", detail)
     try:
-        stage_plans = plan(state["user_request"], llm, detail)
+        stage_plans = plan(state["user_request"], llm, detail, images=state.get("reference_images"))
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -119,10 +119,11 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         tool_selection = state["config"]["policy"].get("tool_selection", "hints")
         verify_cadence = state["config"]["policy"].get("verify_cadence", "final")
         try:
-            result = run_geom_specialist(stage_plan, llm, client, cap,
-                                         upstream=upstream_info,
-                                         tool_selection=tool_selection,
-                                         verify_cadence=verify_cadence)
+        result = run_geom_specialist(stage_plan, llm, client, cap,
+                                     upstream=upstream_info,
+                                     tool_selection=tool_selection,
+                                     verify_cadence=verify_cadence,
+                                     reference_images=state.get("reference_images"))
         except Exception as e:  # noqa: BLE001
             msg = _llm_endpoint_fatal(e)
             if msg is None:

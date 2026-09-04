@@ -1,4 +1,5 @@
 from executor.geom_tools import TOOL_DESCRIPTIONS
+from salome_agent.llm import with_images
 
 
 def _geom_catalogue() -> str:
@@ -45,7 +46,15 @@ Module scope:
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
 - paravis: post-processing an existing simulation result (a MED file) --
   contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
-  Only use paravis when the request involves a results/field/MED file."""
+  Only use paravis when the request involves a results/field/MED file.
+
+If reference image(s) are attached to the request, use them as the visual
+target: identify the distinct parts/shapes shown and their approximate
+relative proportions and placement to shape your stage breakdown. Several
+images are usually different views/plans of the same part (e.g. front, top,
+side) -- read them together, not as separate parts. Prefer explicit numeric
+dimensions given in the text request; only estimate dimensions from the
+image(s) when the text gives none."""
 
 PLANNER_SYSTEM_PROMPT = _PLANNER_BASE + "\n\n" + _geom_catalogue()
 
@@ -68,10 +77,11 @@ def blank_stages(stage_plans: list[dict]) -> dict:
     }
 
 
-def plan(request: str, llm, detail: str = "balanced") -> list[dict]:
+def plan(request: str, llm, detail: str = "balanced",
+        images: list[str] | None = None) -> list[dict]:
     system = PLANNER_SYSTEM_PROMPT + _DETAIL_HINT.get(detail, "")
     response = llm.chat(
         messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": request}],
+                  {"role": "user", "content": with_images(request, images)}],
     )
     return response["stages"]

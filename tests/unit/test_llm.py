@@ -3,7 +3,7 @@ import json
 import pytest
 import requests
 
-from salome_agent.llm import LLMClient, _parse_json_content
+from salome_agent.llm import LLMClient, _parse_json_content, with_images
 
 
 class _FakeResp:
@@ -26,6 +26,29 @@ def _stub_post(body):
     def post(url, json=None, headers=None, verify=None, timeout=None):
         return _FakeResp(body)
     return post
+
+
+def test_with_images_none_or_empty_returns_plain_text():
+    assert with_images("make a box", None) == "make a box"
+    assert with_images("make a box", []) == "make a box"
+
+
+def test_with_images_builds_multimodal_parts():
+    content = with_images("make a box", ["data:image/png;base64,AAAA"])
+    assert content == [
+        {"type": "text", "text": "make a box"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+    ]
+
+
+def test_with_images_supports_several_images():
+    content = with_images("make a box", ["data:image/png;base64,AAAA",
+                                         "data:image/bmp;base64,BBBB"])
+    assert content == [
+        {"type": "text", "text": "make a box"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        {"type": "image_url", "image_url": {"url": "data:image/bmp;base64,BBBB"}},
+    ]
 
 
 def test_plain_json():
