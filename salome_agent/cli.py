@@ -37,11 +37,15 @@ def build_llm(config: dict, request_timeout: float | None = None,
         k: v.format(run_id=run_id) if isinstance(v, str) else v
         for k, v in (llm_config.get("extra_headers") or {}).items()
     }
+    # extra_body: verbatim top-level chat-completions body fields (e.g. a
+    # provider's reasoning_effort knob) — unlike extra_headers, these land in
+    # the JSON payload, not the HTTP headers (GH #28).
+    extra_body = llm_config.get("extra_body") or {}
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
                      temperature=llm_config.get("temperature", 0),
                      request_timeout=request_timeout or llm_config.get("timeout", 120),
-                     trace_path=trace_path, extra_headers=extra_headers,
+                     trace_path=trace_path, extra_headers=extra_headers, extra_body=extra_body,
                      json_retries=llm_config.get("json_retries", 2))
 
 
