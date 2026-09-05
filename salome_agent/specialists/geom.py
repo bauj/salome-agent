@@ -184,8 +184,10 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                              f"centre {info['centre']}")
             else:
                 lines.append(f"  {name} — (geometry unavailable)")
-        content += ("\n\nObjects already in the study — reference them by these "
-                    "exact names:\n" + "\n".join(lines))
+        content += ("\n\nObjects built by an EARLIER stage, given only for reference "
+                    "(e.g. to measure or align against) — reference them by these exact "
+                    "names, but do not modify, colour or finish_stage them unless this "
+                    "stage's own task says to:\n" + "\n".join(lines))
     messages = [{"role": "system", "content": _geom_prompt(verify_cadence)},
                 {"role": "user", "content": content}]
     call_log: list[dict] = []
