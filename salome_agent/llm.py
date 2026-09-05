@@ -50,11 +50,16 @@ class LLMClient:
     def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
                  temperature: float = 0, request_timeout: float = 120,
                  trace_path: str | None = None, extra_headers: dict | None = None,
-                 json_retries: int = 2):
+                 extra_body: dict | None = None, json_retries: int = 2):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.extra_headers = extra_headers or {}
+        # extra_body: verbatim top-level request-body fields, merged in after
+        # model/messages/temperature. Provider-specific params that belong in
+        # the JSON body, not an HTTP header (e.g. a reasoning_effort knob),
+        # go here — extra_headers can't reach the body (GH #28).
+        self.extra_body = extra_body or {}
         # requests `verify`: a CA-bundle path, else True (default: verify against
         # the system trust store — never "" / False, which disables TLS checks).
         self.ssl_cert_file = ssl_cert_file or True
@@ -177,7 +182,7 @@ class LLMClient:
         # real per-tool schema, not just a bare name, so the LLM knows each
         # arg's name/type/required-ness instead of guessing.
         payload = {"model": self.model, "messages": list(messages),
-                   "temperature": self.temperature}
+                   "temperature": self.temperature, **self.extra_body}
         if tools:
             payload["tools"] = [
                 {"type": "function", "function": {

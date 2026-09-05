@@ -101,6 +101,8 @@ Required keys: `llm.base_url`, `llm.model`, `salome.root`. Missing any of them i
 
 `llm.extra_headers` is optional: an object of extra HTTP headers sent verbatim on every LLM request. In a string value, `{run_id}` is replaced with the current run's id — useful for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`.
 
+`llm.extra_body` is optional: an object of extra top-level fields merged into every chat-completions JSON body, sibling to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider-specific body params such as a `reasoning_effort` knob, e.g. `{"reasoning_effort": "high"}` — whether the provider actually honors the field is up to that provider.
+
 `llm.json_retries` (default 2): when the planner LLM returns something that will not parse as JSON, its answer plus the exact parser error are fed back and it is re-asked this many times before the run fails.
 
 `policy.verify_cadence` controls how hard the geom specialist is pushed to `measure`-check where its shapes landed:
