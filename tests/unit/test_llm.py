@@ -212,6 +212,30 @@ def test_build_llm_substitutes_run_id_in_extra_headers():
     assert client.extra_headers == {"x-opencode-session": "abc123", "x-static": "keep"}
 
 
+def test_chat_sends_extra_body(monkeypatch):
+    captured = {}
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        captured["payload"] = json
+        return _FakeResp({"choices": [{"finish_reason": "stop",
+                                       "message": {"content": '{"ok": 1}'}}]})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    LLMClient("http://x/v1", "", "auto",
+              extra_body={"reasoning_effort": "high"}).chat(
+        messages=[{"role": "user", "content": "x"}])
+    assert captured["payload"]["reasoning_effort"] == "high"
+
+
+def test_build_llm_reads_extra_body():
+    from salome_agent.cli import build_llm
+
+    cfg = {"llm": {"base_url": "http://x/v1", "model": "auto",
+                   "extra_body": {"reasoning_effort": "high"}}}
+    client = build_llm(cfg)
+    assert client.extra_body == {"reasoning_effort": "high"}
+
+
 def test_chat_uses_tool_choice_auto(monkeypatch):
     captured = {}
 
