@@ -59,6 +59,10 @@ def generate(call_log: list[dict], result_names: list[str]) -> str:
     # emit nothing and silently drop the whole stage from result.py (issue #7),
     # so fall back to keeping every published shape when nothing resolves.
     built = {v for call in call_log for v in call.get("out_vars", [])}
+    # A display/method_call record (set_color, set_transparency, ...) has no
+    # out_vars — it mutates an existing object named by `recv` — but naming
+    # that object in finish_stage is a legitimate match, not an invented name.
+    built |= {call["recv"] for call in call_log if not call.get("out_vars") and call.get("recv")}
     if not (set(result_names) & built):
         from salome_agent.logs import log
 
