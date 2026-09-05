@@ -154,6 +154,21 @@ def test_empty_result_names_fall_back_to_every_published_shape():
     assert "box_1 = geompy.MakeBoxDXDYDZ(10, 10, 10)" in generate(call_log, result_names=[])
 
 
+def test_display_only_stage_result_name_is_not_treated_as_unresolvable():
+    """A stage whose only call is a display/method_call on a shape built in an
+    earlier stage (no out_vars this stage) still correctly names that shape in
+    finish_stage — it must not be mistaken for an invented name and fall back
+    to the empty-publish path, which would silently drop the whole stage."""
+    call_log = [
+        {"fn": "SetColor",
+         "args": [{"kind": "salomeds_color", "value": [255, 0, 0]}],
+         "out_vars": [], "publish": None,
+         "emit": "method_call", "recv": "sa_x_fuse_2"},
+    ]
+    source = generate(call_log, result_names=["sa_x_fuse_2"])
+    assert "sa_x_fuse_2.SetColor" in source
+
+
 def test_partly_unresolvable_result_names_still_prune_scratch():
     """If at least one named result resolves, keep normal pruning — an
     abandoned exploratory shape the model never named is still dropped."""
