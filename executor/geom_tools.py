@@ -2102,6 +2102,101 @@ def _attach_shape_info(executor, result: dict) -> None:
         result["shape_info"] = info
 
 
+_DELTA_RIGID = {"translate", "rotate", "mirror", "multi_translate",
+                "multi_rotate", "position", "align"}
+
+
+def _bp_volume(geompy, shape):
+    try:
+        return float(geompy.BasicProperties(shape)[2])
+    except Exception:
+        return None
+
+
+def _reldiff(a: float, b: float) -> float:
+    return abs(a - b) / max(abs(b), 1e-9)
+
+
+def _delta_note(executor, name: str, args: dict, result: dict) -> str | None:
+    """One-line anomaly note for a boolean or transform whose numeric outcome
+    looks wrong — a cut that removed nothing, a fuse of parts that never
+    touched, a rigid move that changed volume. Silent (None) when normal, so
+    it costs the specialist nothing on a well-behaved call (task 215)."""
+    if TOOL_CATEGORY.get(name) not in ("boolean", "transform"):
+        return None
+    geompy = executor.namespace["geompy"]
+    gb = executor.geom_bindings
+    out_name = result.get("result_shape")
+    out = gb.get(out_name) if out_name else None
+    if out is None:
+        return None
+    out_v = _bp_volume(geompy, out)
+    if out_v is None:
+        return None
+
+    if name == "fuse":
+        vs = [_bp_volume(geompy, gb[s]) for s in args.get("shapes", []) if s in gb]
+        if len(vs) >= 2 and all(v is not None for v in vs) and sum(vs) > 0:
+            if _reldiff(out_v, sum(vs)) <= 0.005:
+                return ("fuse: the result volume equals the sum of the operands "
+                        "— the parts do not overlap or touch; check their placement")
+        return None
+
+    if name == "cut":
+        mv = _bp_volume(geompy, gb.get(args.get("main")))
+        if mv and mv > 0:
+            frac = out_v / mv
+            if frac >= 0.995:
+                return (f"cut: removed almost nothing (result is {frac * 100:.1f}% "
+                        "of the original volume)")
+            if frac <= 0.005:
+                return (f"cut: removed almost everything (result is {frac * 100:.2f}% "
+                        "of the original volume)")
+        return None
+
+    if name == "common":
+        vs = [v for v in (_bp_volume(geompy, gb[s])
+                          for s in args.get("shapes", []) if s in gb) if v]
+        if vs and out_v <= 0.005 * min(vs):
+            return ("common: the intersection is empty or negligible — the shapes "
+                    "barely overlap")
+        return None
+
+    if name == "partition":
+        return None
+
+    # transforms — the source shape is always args["shape"]
+    src = gb.get(args.get("shape"))
+    if src is None:
+        return None
+    src_v = _bp_volume(geompy, src)
+
+    if name == "scale":
+        if src_v and src_v > 0:
+            if "factor" in args:
+                exp = src_v * float(args["factor"]) ** 3
+            else:
+                exp = (src_v * float(args.get("factor_x", 1))
+                       * float(args.get("factor_y", 1)) * float(args.get("factor_z", 1)))
+            if exp > 0 and _reldiff(out_v, exp) > 0.02:
+                return (f"scale: result volume {out_v:.4g} does not match the "
+                        f"{exp:.4g} expected for that factor")
+        return None
+
+    if name in _DELTA_RIGID:
+        if src_v and src_v > 0 and _reldiff(out_v, src_v) > 0.01:
+            return (f"{name}: volume changed {src_v:.4g} -> {out_v:.4g} under a "
+                    "rigid move, which should not happen")
+        si = _shape_info(geompy, src)
+        oi = result.get("shape_info")
+        if si and oi and all(abs(oi["centre"][k] - si["centre"][k]) < 1e-6
+                             for k in range(3)):
+            return (f"{name}: the new shape sits exactly where the source is — "
+                    "the move had no effect")
+        return None
+    return None
+
+
 def call_tool(executor, name: str, args: dict) -> dict:
     handler = TOOLS.get(name)
     if handler is None:
@@ -2111,6 +2206,12 @@ def call_tool(executor, name: str, args: dict) -> dict:
         result = handler(executor, args)
         if result.get("ok"):
             _attach_shape_info(executor, result)
+            try:
+                note = _delta_note(executor, name, args, result)
+            except Exception:
+                note = None
+            if note:
+                result["delta"] = note
         return result
     except Exception as e:
         return {"ok": False, "error": str(e)}

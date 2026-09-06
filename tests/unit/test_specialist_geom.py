@@ -443,3 +443,56 @@ def test_prompt_documents_the_query_then_act_pattern():
         p = _geom_prompt(cadence)
         assert "get_subshapes" in p
         assert "fillet_edges" in p
+
+
+def test_repeated_failing_call_is_answered_locally_without_a_round_trip():
+    # weak models loop on a byte-identical failing call; the second attempt is
+    # answered from the stage-local failure cache, no server round-trip (task 215).
+    llm = MagicMock()
+    bad = ("make_box_two_pnt", {"point1": "(0,0,0)", "point2": "(1,1,1)"})
+    llm.chat.side_effect = [
+        _resp(bad),
+        _resp(bad),
+        _resp(("finish_stage", {"result_names": []})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box_two_pnt",
+                                                 "category": "primitive"}]}
+    client.call_tool.return_value = {"ok": False, "error": "'(0,0,0)'"}
+
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": []},
+                                 llm, client, iteration_cap=12, verify_cadence="none")
+
+    assert client.call_tool.call_count == 1
+    assert result["result_names"] == []
+    # the model was handed a repeat notice on the second turn
+    sent = [m for call in llm.chat.call_args_list for m in call.kwargs["messages"]]
+    assert any("identical call already failed" in str(m.get("content")) for m in sent)
+
+
+def test_a_different_call_after_a_failure_still_runs():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box_two_pnt", {"point1": "(0,0,0)", "point2": "(1,1,1)"})),
+        _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
+        _resp(("finish_stage", {"result_names": ["box_1"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box_two_pnt", "category": "primitive"},
+        {"name": "make_box", "category": "primitive"}]}
+    client.call_tool.side_effect = [
+        {"ok": False, "error": "bad point"},
+        {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                  "out_vars": ["box_1"], "publish": ["box_1"]}]},
+    ]
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": []},
+                                 llm, client, iteration_cap=12, verify_cadence="none")
+    assert client.call_tool.call_count == 2
+    assert result["result_names"] == ["box_1"]
+
+
+def test_compact_result_keeps_a_delta_note():
+    from salome_agent.specialists.geom import _compact_result
+    compact = _compact_result({"ok": True, "records": [], "delta": "cut: removed nothing"})
+    assert compact["delta"] == "cut: removed nothing"

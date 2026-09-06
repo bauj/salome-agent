@@ -19,6 +19,13 @@ else is dropped.
 Do only what the request asks. Do not invent colours, transparency or
 display modes that were not requested.
 
+If a tool result carries a `delta` note, it flagged something numerically
+wrong with that boolean or transform (a cut that removed nothing, a fuse of
+parts that never touched, a rigid move that changed volume) — fix the cause
+before you continue. If a call comes back saying an identical call already
+failed, do not retry it unchanged: change the arguments or gather
+information first.
+
 Each turn: state your reasoning in at most 2-3 sentences, then call one or
 more tools. Do not reply without calling a tool. You may batch several
 INDEPENDENT calls in one turn (e.g. the four walls of a frame, or four
@@ -143,6 +150,10 @@ def _leaf_result_names(call_log: list[dict], names: list[str]) -> list[str]:
     return leaves or names
 
 
+def _call_key(name: str, args: dict) -> tuple:
+    return (name, json.dumps(args, sort_keys=True, default=str))
+
+
 def _compact_result(result: dict) -> dict:
     """A prior tool result, stripped to what the model reads back on later
     turns. The verbose `records` blob (geompy dispatch detail — only codegen
@@ -151,7 +162,7 @@ def _compact_result(result: dict) -> dict:
     if not result.get("ok"):
         return {"ok": False, "error": result.get("error")}
     keep = {"ok": True}
-    for k in ("result_shape", "shape_info", "measurements", "names", "sanity",
+    for k in ("result_shape", "shape_info", "delta", "measurements", "names", "sanity",
               "ids", "centres", "distance", "properties"):
         if k in result:
             keep[k] = result[k]
@@ -193,6 +204,12 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
     call_log: list[dict] = []
     tool_results: dict[int, dict] = {}  # message index -> full result dict
     last_error = None
+    # Stage-local record of calls that already failed: hash((tool, args)) ->
+    # error. A byte-identical repeat is answered here without a round-trip to
+    # the server, and the model is told it is repeating itself (seen live:
+    # weak models loop 4x on the same failing call, inventing a new wrong
+    # diagnosis each time — task 215). Reset per stage.
+    failed_calls: dict[tuple, str] = {}
     # policy.verify_cadence bookkeeping: count placement-risky ops (boolean /
     # transform) since the last measure/check_shape. "final" nudges once at
     # finish_stage if any are outstanding; "strict" also nudges mid-loop every
@@ -271,6 +288,19 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                          args.get("names"), args.get("categories"), len(new), len(offered))
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
                 continue
+            key = _call_key(name, args)
+            if key in failed_calls:
+                log.info("  repeat of a call that already failed (%s) — answered "
+                         "locally, no round-trip", name)
+                result = {"ok": False, "repeat": True, "error": (
+                    f"identical call already failed with: {failed_calls[key]}. "
+                    "Do not repeat it — change the arguments or the approach, or "
+                    "gather information first (measure / get_subshapes / check_shape).")}
+                batch_error = {"phase": "exec", "message": failed_calls[key],
+                               "offending_line": None, "traceback": None}
+                tool_results[len(messages)] = result
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
+                continue
             result = client.call_tool(name, args)
             if result["ok"]:
                 call_log.extend(result["records"])
@@ -280,6 +310,7 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                 elif all_defs.get(name, {}).get("category") in _PLACEMENT_RISKY:
                     risky_since_measure += 1
             else:
+                failed_calls[key] = result["error"]
                 batch_error = {"phase": "exec", "message": result["error"],
                                "offending_line": None, "traceback": None}
                 log.debug("    tool %s failed: %s", name, result["error"])
