@@ -86,6 +86,7 @@ cp config.example.json config.json
     "exec_retries": 2,
     "exec_timeout_s": 120,
     "tool_iteration_cap": 12,
+    "plan_detail": "balanced",
     "tool_selection": "hints",
     "verify_cadence": "final",
     "on_stage_failure": "abort",
@@ -104,6 +105,8 @@ Required keys: `llm.base_url`, `llm.model`, `salome.root`. Missing any of them i
 `llm.extra_body` is optional: an object of extra top-level fields merged into every chat-completions JSON body, sibling to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider-specific body params such as a `reasoning_effort` knob, e.g. `{"reasoning_effort": "high"}` — whether the provider actually honors the field is up to that provider.
 
 `llm.json_retries` (default 2): when the planner LLM returns something that will not parse as JSON, its answer plus the exact parser error are fed back and it is re-asked this many times before the run fails.
+
+`policy.plan_detail` (`coarse` | `balanced` (default) | `fine`) hints the planner how finely to split a request into stages — `coarse` favours fewer, bigger stages; `fine` favours splitting a part/assembly into more stages.
 
 `policy.verify_cadence` controls how hard the geom specialist is pushed to `measure`-check where its shapes landed:
 - `none` — no self-check.
@@ -172,7 +175,7 @@ Run the result on its own, with no agent involved:
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--tools {hints,all}` | Geom tool retrieval. `hints` (default): the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the full geom registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
-| `--timeout SECONDS` | Override per-stage exec timeout. |
+| `--timeout SECONDS` | Override per-request LLM timeout (`llm.timeout` in config). |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`. |
 
 ### GUI plugin setup
@@ -297,11 +300,11 @@ docs/superpowers/   design specs + implementation plans
 
 ## Known limitations
 
-- **The GUI plugin server is new and lightly tested.** External driving of a live
-  GUI has crashed the session before (task 181). GUI mode does not roll back — a
-  failed stage attempt leaves `sa_<run_id>_`-prefixed debris in the study. A stage
-  timeout poisons the server (run aborts, exit 1); recovery may need killing the GUI.
-  Demos only; save your work first. Headless mode is the unattended path.
+- **The GUI plugin server is newer and less tested than the headless path.** GUI
+  mode does not roll back — a failed stage attempt leaves `sa_<run_id>_`-prefixed
+  debris in the study. A stage timeout poisons the server (run aborts, exit 1);
+  recovery may need killing the GUI. Save your work first. Headless mode is the
+  unattended path.
 - `--no-session` mode only does a coarse "does this name exist" static check
   against a snapshot API map and no exec verification — see *Static-check API map*
   under Development. A real run always verifies against the live session.
