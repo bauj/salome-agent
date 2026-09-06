@@ -1723,3 +1723,127 @@ class TestAlignTool:
     def test_in_core_tools(self):
         from salome_agent.specialists.tool_selection import CORE_TOOLS
         assert "align" in CORE_TOOLS
+
+
+class TestDeltaNote:
+    """Anomaly-triggered numeric feedback on booleans and transforms (task 215)."""
+
+    def _ex(self, geompy, bindings):
+        return SimpleNamespace(namespace={"geompy": geompy}, geom_bindings=bindings)
+
+    def _vols(self, geompy, mapping):
+        geompy.BasicProperties.side_effect = lambda s: [0.0, 0.0, mapping[s]]
+
+    def test_fuse_of_non_touching_parts_is_flagged(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"a": 100.0, "b": 50.0, "fuse_1": 150.0})
+        ex = self._ex(geompy, {"a": "a", "b": "b", "fuse_1": "fuse_1"})
+        note = geom_tools._delta_note(ex, "fuse", {"shapes": ["a", "b"]},
+                                      {"result_shape": "fuse_1"})
+        assert note and "do not overlap or touch" in note
+
+    def test_fuse_of_overlapping_parts_is_silent(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"a": 100.0, "b": 50.0, "fuse_1": 120.0})
+        ex = self._ex(geompy, {"a": "a", "b": "b", "fuse_1": "fuse_1"})
+        assert geom_tools._delta_note(ex, "fuse", {"shapes": ["a", "b"]},
+                                      {"result_shape": "fuse_1"}) is None
+
+    def test_cut_that_removes_nothing_is_flagged(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"m": 100.0, "cut_1": 100.0})
+        ex = self._ex(geompy, {"m": "m", "cut_1": "cut_1"})
+        note = geom_tools._delta_note(ex, "cut", {"main": "m", "tools": ["x"]},
+                                      {"result_shape": "cut_1"})
+        assert note and "removed almost nothing" in note
+
+    def test_cut_that_removes_everything_is_flagged(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"m": 100.0, "cut_1": 0.1})
+        ex = self._ex(geompy, {"m": "m", "cut_1": "cut_1"})
+        note = geom_tools._delta_note(ex, "cut", {"main": "m", "tools": ["x"]},
+                                      {"result_shape": "cut_1"})
+        assert note and "removed almost everything" in note
+
+    def test_normal_cut_is_silent(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"m": 100.0, "cut_1": 60.0})
+        ex = self._ex(geompy, {"m": "m", "cut_1": "cut_1"})
+        assert geom_tools._delta_note(ex, "cut", {"main": "m", "tools": ["x"]},
+                                      {"result_shape": "cut_1"}) is None
+
+    def test_common_empty_intersection_is_flagged(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"a": 100.0, "b": 80.0, "common_1": 0.0})
+        ex = self._ex(geompy, {"a": "a", "b": "b", "common_1": "common_1"})
+        note = geom_tools._delta_note(ex, "common", {"shapes": ["a", "b"]},
+                                      {"result_shape": "common_1"})
+        assert note and "empty or negligible" in note
+
+    def test_rigid_transform_changing_volume_is_flagged(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"src": 100.0, "tr_1": 130.0})
+        ex = self._ex(geompy, {"src": "src", "tr_1": "tr_1"})
+        note = geom_tools._delta_note(
+            ex, "translate", {"shape": "src", "dx": 1, "dy": 0, "dz": 0},
+            {"result_shape": "tr_1", "shape_info": None})
+        assert note and "volume changed" in note
+
+    def test_rigid_transform_that_did_not_move_is_flagged(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"src": 100.0, "tr_1": 100.0})
+        geompy.BoundingBox.return_value = [0.0, 10.0, 0.0, 10.0, 0.0, 10.0]
+        ex = self._ex(geompy, {"src": "src", "tr_1": "tr_1"})
+        note = geom_tools._delta_note(
+            ex, "translate", {"shape": "src", "dx": 5, "dy": 0, "dz": 0},
+            {"result_shape": "tr_1",
+             "shape_info": {"bbox": [], "size": [], "centre": [5.0, 5.0, 5.0]}})
+        assert note and "no effect" in note
+
+    def test_good_rigid_transform_is_silent(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"src": 100.0, "tr_1": 100.0})
+        geompy.BoundingBox.return_value = [0.0, 10.0, 0.0, 10.0, 0.0, 10.0]
+        ex = self._ex(geompy, {"src": "src", "tr_1": "tr_1"})
+        note = geom_tools._delta_note(
+            ex, "translate", {"shape": "src", "dx": 5, "dy": 0, "dz": 0},
+            {"result_shape": "tr_1",
+             "shape_info": {"bbox": [], "size": [], "centre": [10.0, 5.0, 5.0]}})
+        assert note is None
+
+    def test_scale_mismatch_is_flagged(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"src": 100.0, "scale_1": 150.0})
+        ex = self._ex(geompy, {"src": "src", "scale_1": "scale_1"})
+        note = geom_tools._delta_note(ex, "scale", {"shape": "src", "factor": 2},
+                                      {"result_shape": "scale_1"})
+        assert note and "does not match" in note
+
+    def test_scale_that_matches_is_silent(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"src": 100.0, "scale_1": 800.0})
+        ex = self._ex(geompy, {"src": "src", "scale_1": "scale_1"})
+        assert geom_tools._delta_note(ex, "scale", {"shape": "src", "factor": 2},
+                                      {"result_shape": "scale_1"}) is None
+
+    def test_non_boolean_non_transform_is_silent(self):
+        geompy = MagicMock()
+        ex = self._ex(geompy, {"box_1": "box_1"})
+        assert geom_tools._delta_note(ex, "make_box", {"dx": 1},
+                                      {"result_shape": "box_1"}) is None
+
+    def test_call_tool_attaches_delta_to_the_result(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        src = MagicMock()
+        geompy.MakeTranslation.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        geompy.BoundingBox.return_value = [0.0, 10.0, 0.0, 10.0, 0.0, 10.0]
+        geompy.BasicProperties.side_effect = (
+            lambda s: [0.0, 0.0, 1.0] if s is src else [0.0, 0.0, 9.0])
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"box_1": src})
+        result = geom_tools.call_tool(ex, "translate",
+                                      {"shape": "box_1", "dx": 10, "dy": 0, "dz": 0})
+        assert result["ok"] is True
+        assert "volume changed" in result["delta"]
