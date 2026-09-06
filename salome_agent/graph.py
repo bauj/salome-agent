@@ -1,6 +1,23 @@
+import requests
 from langchain_core.runnables import RunnableConfig
 
 from salome_agent.logs import log
+
+
+def _llm_endpoint_fatal(e: Exception) -> str | None:
+    """A terminal LLM-endpoint failure (gateway 5xx after retries, connection
+    loss, non-JSON body) — return a one-line abort message so the run ends
+    cleanly with a report instead of a raw traceback escaping cli.main()
+    (GH #31). Returns None for any other exception, which keeps propagating."""
+    if isinstance(e, requests.HTTPError):
+        code = getattr(e.response, "status_code", "?")
+        return (f"LLM endpoint unavailable (HTTP {code}) — the model backend is "
+                f"down or slow; retry later")
+    if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+        return f"LLM endpoint unreachable ({type(e).__name__}) — retry later"
+    if isinstance(e, RuntimeError):
+        return f"LLM endpoint error — {e}"
+    return None
 
 
 def route_after_run_stage(state: dict) -> str:
@@ -52,7 +69,14 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     llm = config["configurable"]["llm_client"]
     detail = state["config"]["policy"].get("plan_detail", "balanced")
     log.info("planning... (plan_detail=%s)", detail)
-    stage_plans = plan(state["user_request"], llm, detail)
+    try:
+        stage_plans = plan(state["user_request"], llm, detail)
+    except Exception as e:  # noqa: BLE001
+        msg = _llm_endpoint_fatal(e)
+        if msg is None:
+            raise
+        log.error("%s", msg)
+        return Command(update={"fatal": msg}, goto="assemble")
     log.info("plan: %d stage(s)", len(stage_plans))
     for i, p in enumerate(stage_plans):
         log.info("  stage %d/%d [%s] %s", i + 1, len(stage_plans), p["module"],
@@ -94,10 +118,17 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                 log.warning("  measure(upstream) errored: %s", e)
         tool_selection = state["config"]["policy"].get("tool_selection", "hints")
         verify_cadence = state["config"]["policy"].get("verify_cadence", "final")
-        result = run_geom_specialist(stage_plan, llm, client, cap,
-                                     upstream=upstream_info,
-                                     tool_selection=tool_selection,
-                                     verify_cadence=verify_cadence)
+        try:
+            result = run_geom_specialist(stage_plan, llm, client, cap,
+                                         upstream=upstream_info,
+                                         tool_selection=tool_selection,
+                                         verify_cadence=verify_cadence)
+        except Exception as e:  # noqa: BLE001
+            msg = _llm_endpoint_fatal(e)
+            if msg is None:
+                raise
+            log.error("  %s", msg)
+            return Command(update={"fatal": msg}, goto="assemble")
         if "fatal" in result:
             log.error("  %s", result["fatal"])
             return Command(update={"fatal": result["fatal"]}, goto="assemble")
@@ -125,8 +156,15 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                 "list_study": lambda: str(client.list_study()),
             }
         upstream = select_upstream(stage_plan, state["stages"], idx)
-        result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt,
-                                upstream_names=upstream, last_error=state.get("last_error"))
+        try:
+            result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt,
+                                    upstream_names=upstream, last_error=state.get("last_error"))
+        except Exception as e:  # noqa: BLE001
+            msg = _llm_endpoint_fatal(e)
+            if msg is None:
+                raise
+            log.error("  %s", msg)
+            return Command(update={"fatal": msg}, goto="assemble")
         stage["script"] = result["script"]
         if result.get("warning"):
             log.warning("  %s specialist: %s", module, result["warning"])

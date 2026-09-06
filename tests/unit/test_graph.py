@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import pytest
+import requests
 from langgraph.types import Command
 
 from salome_agent.graph import (build_graph, route_after_run_stage,
@@ -126,6 +128,68 @@ def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
         "fuse_1": {"bbox": [0, 100, 0, 100, 0, 20],
                    "size": [100, 100, 20], "centre": [50, 50, 10]}
     }
+
+
+def _http_error(code):
+    resp = requests.Response()
+    resp.status_code = code
+    return requests.HTTPError(f"{code} Server Error", response=resp)
+
+
+def test_plan_node_turns_endpoint_5xx_into_a_clean_fatal(monkeypatch):
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.side_effect = _http_error(503)
+    state = {"user_request": "x", "config": {"policy": {}}}
+    cmd = graph._plan_node(state, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "assemble"
+    assert "503" in cmd.update["fatal"]
+    assert cmd.update["fatal"].startswith("LLM endpoint")
+
+
+def test_plan_node_still_raises_a_non_endpoint_error(monkeypatch):
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.side_effect = KeyError("stages")
+    state = {"user_request": "x", "config": {"policy": {}}}
+    with pytest.raises(KeyError):
+        graph._plan_node(state, {"configurable": {"llm_client": llm}})
+
+
+def test_run_stage_node_turns_endpoint_error_into_a_clean_fatal(monkeypatch):
+    from salome_agent import graph
+
+    def boom(*a, **k):
+        raise requests.ConnectionError("no route to host")
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", boom)
+    state = {
+        "stage_idx": 0,
+        "plan": [{"module": "geom", "intent": "box", "params": {}, "inputs": []}],
+        "stages": {0: {"module": "geom", "status": "pending"}},
+        "config": {"policy": {"tool_iteration_cap": 5}},
+        "last_error": None,
+    }
+    config = {"configurable": {"llm_client": MagicMock(), "executor_client": None}}
+    cmd = graph._run_stage_node(state, config)
+    assert cmd.goto == "assemble"
+    assert "fatal" in cmd.update
+
+
+def test_endpoint_fatal_run_produces_report_and_exit_code(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.chat.side_effect = _http_error(502)
+    llm.usage = None
+    graph = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": "t1", "llm_client": llm, "executor_client": None}}
+
+    final = graph.invoke(_initial_state(tmp_path), config=cfg)
+    assert final.get("fatal")
+    assert "502" in final["fatal"]
+    assert "Run aborted" in final["report"]
+    assert (tmp_path / "testrun" / "report.md").exists()
 
 
 def test_first_geom_stage_does_not_call_measure(monkeypatch):
