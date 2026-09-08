@@ -19,6 +19,10 @@ narrows what the geom specialist is offered; omit it if unsure. Respond as
 JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
 prose before or after it.
 
+Keep your reasoning brief -- a few sentences at most. Do not enumerate every
+possible interpretation or walk through each stage in detail; decide and emit
+the plan.
+
 Object names are assigned automatically and you cannot know them. Never put
 a guessed object name in `inputs` -- describe what the stage needs. Every
 object built by an earlier stage is passed to each later stage regardless.
