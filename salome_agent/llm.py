@@ -105,7 +105,8 @@ class LLMClient:
     def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
                  temperature: float = 0, request_timeout: float = 120,
                  trace_path: str | None = None, extra_headers: dict | None = None,
-                 extra_body: dict | None = None, json_retries: int = 2):
+                 extra_body: dict | None = None, json_retries: int = 2,
+                 module_extra_body: dict | None = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -115,6 +116,12 @@ class LLMClient:
         # the JSON body, not an HTTP header (e.g. a reasoning_effort knob),
         # go here — extra_headers can't reach the body (GH #28).
         self.extra_body = extra_body or {}
+        # module_extra_body: {"<module>": {...}} — a call tagged with that
+        # module (chat(module=...)) sends this body *instead of* extra_body
+        # (full replacement, not a merge). Lets an expensive knob like
+        # reasoning_effort sit on the planner only while the specialist loops
+        # (geom/smesh/paravis) — many calls per stage — run without it.
+        self.module_extra_body = module_extra_body or {}
         # requests `verify`: a CA-bundle path, else True (default: verify against
         # the system trust store — never "" / False, which disables TLS checks).
         self.ssl_cert_file = ssl_cert_file or True
@@ -261,7 +268,8 @@ class LLMClient:
         message.update(msg_extra)
         return message, usage, finish, ttft
 
-    def _round_trip(self, payload: dict, tool_names: list[str] | None) -> dict:
+    def _round_trip(self, payload: dict, tool_names: list[str] | None,
+                    extra_body: dict | None = None) -> dict:
         """One streamed POST to /chat/completions (with transient-failure
         retries) — returns the reassembled provider `message` object."""
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -275,8 +283,10 @@ class LLMClient:
         trace_request = {"model": self.model, "temperature": self.temperature,
                          "tools": tool_names or [], "approx_input_tokens": approx_in,
                          "messages": payload["messages"]}
-        if self.extra_body:
-            trace_request["extra_body"] = self.extra_body
+        if extra_body is None:
+            extra_body = self.extra_body
+        if extra_body:
+            trace_request["extra_body"] = extra_body
         self._trace_prompt(trace_request)
         t0 = time.monotonic()
         attempts = 3
@@ -321,12 +331,16 @@ class LLMClient:
                   time.monotonic() - t0, ttft, finish)
         return message
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+    def chat(self, messages: list[dict], tools: list[dict] | None = None,
+             module: str | None = None) -> dict:
         # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
         # real per-tool schema, not just a bare name, so the LLM knows each
         # arg's name/type/required-ness instead of guessing.
+        # module: routes to module_extra_body[module] when present, else the
+        # shared extra_body.
+        extra_body = self.module_extra_body.get(module, self.extra_body)
         payload = {"model": self.model, "messages": list(messages),
-                   "temperature": self.temperature, **self.extra_body}
+                   "temperature": self.temperature, **extra_body}
         if tools:
             payload["tools"] = [
                 {"type": "function", "function": {
@@ -343,7 +357,7 @@ class LLMClient:
         tool_names = [t["name"] for t in tools] if tools else None
 
         if tools:
-            message = self._round_trip(payload, tool_names)
+            message = self._round_trip(payload, tool_names, extra_body)
             calls = message.get("tool_calls") or []
             content = message.get("content") or ""
             log.debug("LLM tool_calls=%s%s",
@@ -368,7 +382,7 @@ class LLMClient:
         # will not parse, hand the model its own answer plus the exact parser
         # error and re-ask, up to json_retries times (GH #6).
         for attempt in range(self.json_retries + 1):
-            message = self._round_trip(payload, None)
+            message = self._round_trip(payload, None, extra_body)
             content = message.get("content")
             try:
                 return _parse_json_content(content)

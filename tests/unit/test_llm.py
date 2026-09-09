@@ -280,6 +280,69 @@ def test_build_llm_reads_extra_body():
     assert client.extra_body == {"reasoning_effort": "high"}
 
 
+def _capture_payload(monkeypatch):
+    seen = {}
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        seen["payload"] = json
+        return _FakeResp({"choices": [{"finish_reason": "tool_calls", "message": {
+            "tool_calls": [{"id": "c1", "function": {"name": "mk", "arguments": "{}"}}]}}]})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    return seen
+
+
+def test_module_extra_body_replaces_extra_body_for_that_module(monkeypatch):
+    seen = _capture_payload(monkeypatch)
+    LLMClient("http://x/v1", "", "auto",
+              extra_body={"reasoning_effort": "high"},
+              module_extra_body={"geom": {}}).chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}], module="geom")
+    assert "reasoning_effort" not in seen["payload"]
+
+
+def test_module_without_an_entry_falls_back_to_extra_body(monkeypatch):
+    seen = _capture_payload(monkeypatch)
+    LLMClient("http://x/v1", "", "auto",
+              extra_body={"reasoning_effort": "high"},
+              module_extra_body={"geom": {}}).chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}], module="smesh")
+    assert seen["payload"]["reasoning_effort"] == "high"
+
+
+def test_no_module_uses_extra_body(monkeypatch):
+    seen = _capture_payload(monkeypatch)
+    LLMClient("http://x/v1", "", "auto",
+              extra_body={"reasoning_effort": "high"},
+              module_extra_body={"planner": {"reasoning_effort": "low"}}).chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert seen["payload"]["reasoning_effort"] == "high"
+
+
+def test_trace_records_the_resolved_per_module_body(monkeypatch, tmp_path):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"role": "assistant", "content": '{"a": 1}'}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    trace = tmp_path / "t.jsonl"
+    LLMClient("http://x/v1", "", "auto", trace_path=str(trace),
+              extra_body={"reasoning_effort": "high"},
+              module_extra_body={"geom": {"reasoning_effort": "none"}}).chat(
+        messages=[{"role": "user", "content": "x"}], module="geom")
+    entry = json.loads(trace.read_text().splitlines()[0])
+    assert entry["request"]["extra_body"] == {"reasoning_effort": "none"}
+
+
+def test_build_llm_reads_module_extra_body():
+    from salome_agent.cli import build_llm
+
+    cfg = {"llm": {"base_url": "http://x/v1", "model": "auto",
+                   "module_extra_body": {"geom": {}}}}
+    assert build_llm(cfg).module_extra_body == {"geom": {}}
+
+
 def test_chat_uses_tool_choice_auto(monkeypatch):
     captured = {}
 

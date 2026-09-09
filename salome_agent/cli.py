@@ -41,12 +41,17 @@ def build_llm(config: dict, request_timeout: float | None = None,
     # provider's reasoning_effort knob) — unlike extra_headers, these land in
     # the JSON payload, not the HTTP headers (GH #28).
     extra_body = llm_config.get("extra_body") or {}
+    # module_extra_body: {"planner"|"geom"|"smesh"|"paravis": {...}} — a body
+    # that replaces extra_body for that module's calls, so an expensive knob
+    # (reasoning_effort) can sit on the planner alone.
+    module_extra_body = llm_config.get("module_extra_body") or {}
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
                      temperature=llm_config.get("temperature", 0),
                      request_timeout=request_timeout or llm_config.get("timeout", 120),
                      trace_path=trace_path, extra_headers=extra_headers, extra_body=extra_body,
-                     json_retries=llm_config.get("json_retries", 2))
+                     json_retries=llm_config.get("json_retries", 2),
+                     module_extra_body=module_extra_body)
 
 
 def main(argv: list[str] | None = None) -> int:
