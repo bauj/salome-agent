@@ -274,7 +274,8 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         # A shallow copy per call: the message dicts are never mutated after
         # append, so the copy is byte-identical content, and each request is a
         # verbatim extension of the last.
-        response = llm.chat(messages=list(messages), tools=tools)
+        response = llm.chat(messages=list(messages), tools=tools,
+                            module=stage_plan.get("module"))
         if response.get("content"):
             log.debug("    LLM reasoning: %s", response["content"])
         calls = response["tool_calls"]

@@ -48,7 +48,8 @@ def run_specialist(stage_plan: dict, llm, tools: dict, iteration_cap: int,
     last_code = ""
     for i in range(iteration_cap):
         log.debug("    specialist iter %d/%d: asking LLM...", i + 1, iteration_cap)
-        response = llm.chat(messages=messages, tools=tool_defs)
+        response = llm.chat(messages=messages, tools=tool_defs,
+                            module=stage_plan.get("module"))
         if response.get("content"):
             log.debug("    LLM reasoning: %s", response["content"])
         log.debug("    LLM -> %s", response["tool_call"])

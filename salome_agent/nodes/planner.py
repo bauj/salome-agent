@@ -77,5 +77,6 @@ def plan(request: str, llm, detail: str = "balanced") -> list[dict]:
     response = llm.chat(
         messages=[{"role": "system", "content": system},
                   {"role": "user", "content": request}],
+        module="planner",
     )
     return response["stages"]
