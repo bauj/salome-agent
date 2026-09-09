@@ -826,6 +826,47 @@ def test_stream_with_output_but_no_terminator_is_kept(monkeypatch):
     assert len(calls) == 1
 
 
+def test_stream_past_total_budget_raises_and_is_not_retried(monkeypatch):
+    # a stream that keeps emitting frames forever (runaway reasoning) — the
+    # per-read gap never trips, so only the total-budget deadline can stop it.
+    never_ends = ['data: {"choices": [{"delta": {"reasoning_content": "hmm "}}]}'] * 50
+    calls = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        calls.append(1)
+        return _FakeResp(None, lines=never_ends)
+
+    # deterministic clock: every monotonic() call jumps 10s
+    ticks = iter(range(0, 100_000, 10))
+    monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+
+    from salome_agent.llm import StreamBudgetExceeded
+    client = LLMClient("http://x/v1", "", "auto", request_timeout=30)
+    with pytest.raises(StreamBudgetExceeded):
+        client.chat(messages=[{"role": "user", "content": "x"}],
+                    tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert len(calls) == 1  # fatal — not retried
+
+
+def test_stream_read_gap_capped_below_total_budget(monkeypatch):
+    from salome_agent.llm import _STREAM_READ_GAP_CAP
+    seen = {}
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        seen["timeout"] = timeout
+        return _FakeResp(None, lines=[
+            'data: {"choices": [{"delta": {"content": "{\\"a\\": 1}"}, '
+            '"finish_reason": "stop"}]}',
+            "data: [DONE]"])
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    LLMClient("http://x/v1", "", "auto", request_timeout=600).chat(
+        messages=[{"role": "user", "content": "x"}])
+    assert seen["timeout"][1] == _STREAM_READ_GAP_CAP  # not 600
+
+
 def test_trace_records_ttft(monkeypatch, tmp_path):
     body = {"choices": [{"finish_reason": "stop",
                          "message": {"role": "assistant", "content": '{"a": 1}'}}]}

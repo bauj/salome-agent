@@ -3,6 +3,7 @@ import time
 import requests
 from langchain_core.runnables import RunnableConfig
 
+from salome_agent.llm import StreamBudgetExceeded
 from salome_agent.logs import log
 
 
@@ -49,6 +50,10 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
                     f"model name, API key and request parameters")
         return (f"LLM endpoint unavailable (HTTP {code}) — the model backend is "
                 f"down or slow; retry later")
+    if isinstance(e, StreamBudgetExceeded):
+        return ("LLM call exceeded llm.timeout total budget — the model kept "
+                "generating (likely a runaway reasoning loop); raise llm.timeout "
+                "or lower the reasoning effort")
     if isinstance(e, (requests.ConnectionError, requests.Timeout)):
         return f"LLM endpoint unreachable ({type(e).__name__}) — retry later"
     if isinstance(e, RuntimeError):
