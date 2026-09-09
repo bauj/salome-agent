@@ -14,6 +14,10 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 # full timeout for the same slow backend.
 _GATEWAY_RETRY_MAX_ELAPSED = 30.0
 
+# A dropped/half-read stream raises one of these; all are retried with backoff.
+_STREAM_DROP = (requests.Timeout, requests.ConnectionError,
+                requests.exceptions.ChunkedEncodingError)
+
 # Opaque provider-specific fields on an assistant message that MUST be echoed
 # back verbatim in later requests for multi-turn continuity — e.g. Gemini 3
 # carries a `thought_signature` inside `extra_content` and rejects the next
@@ -88,7 +92,15 @@ class LLMClient:
     """Minimal wrapper over any OpenAI-compatible tool-calling chat endpoint
     (spec §9/decision 10 — provider-agnostic, configured by endpoint+key+model).
     Retries transient failures (timeout, connection drop, HTTP 502/503/504)
-    with backoff; no streaming."""
+    with backoff.
+
+    Responses are consumed as an SSE stream (`stream: true`). A long
+    generation — a big reasoning budget especially — then keeps bytes moving
+    over the socket the whole time, so an idle-timeout in a proxy/load
+    balancer never fires. `request_timeout` becomes a per-read gap cap: a
+    stream that keeps emitting runs as long as it needs, a stalled one still
+    dies. The reassembled `message` has the same shape the non-streaming
+    endpoint returned, so nothing downstream changes."""
 
     def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
                  temperature: float = 0, request_timeout: float = 120,
@@ -164,11 +176,94 @@ class LLMClient:
             log.warning("could not write LLM trace: %s", e)
         log.debug("LLM response:\n%s", json.dumps(response, indent=2, default=str, ensure_ascii=False))
 
+    def _consume_stream(self, resp, t0: float) -> tuple[dict, dict | None, str | None, float | None]:
+        """Reassemble an SSE `data:` stream into one provider `message` dict
+        (plus usage / finish_reason / time-to-first-token). `content` and
+        `reasoning_content` fragments are concatenated; `tool_calls` fragments
+        are gathered by `index` (the first fragment for an index carries its
+        id and function name, later ones append to the JSON argument string).
+
+        A stream that ends without ever yielding a parseable frame is a broken
+        endpoint (an HTML error page, say) -> RuntimeError. One that yields
+        frames but no finish_reason / [DONE] was cut mid-flight -> raised as a
+        connection drop so the caller retries."""
+        content, reasoning = [], []
+        tool_frags: dict[int, dict] = {}
+        msg_extra: dict = {}
+        finish = usage = ttft = None
+        frames = 0
+        done = False
+        for raw in resp.iter_lines(decode_unicode=True):
+            if not raw:
+                continue
+            if ttft is None:
+                ttft = round(time.monotonic() - t0, 2)
+            if raw.startswith("data:"):
+                raw = raw[5:].strip()
+            if raw == "[DONE]":
+                done = True
+                break
+            try:
+                frame = json.loads(raw)
+            except ValueError:
+                continue  # SSE comment / keep-alive line
+            frames += 1
+            if frame.get("error"):
+                raise RuntimeError(f"LLM stream returned an error frame: {frame['error']}")
+            if frame.get("usage"):
+                usage = frame["usage"]
+            for choice in frame.get("choices") or []:
+                delta = choice.get("delta") or {}
+                if delta.get("content"):
+                    content.append(delta["content"])
+                if delta.get("reasoning_content"):
+                    reasoning.append(delta["reasoning_content"])
+                for key in _CONTINUITY_KEYS:
+                    if delta.get(key):
+                        msg_extra[key] = delta[key]
+                for tc in delta.get("tool_calls") or []:
+                    slot = tool_frags.setdefault(
+                        tc.get("index", 0), {"id": None, "name": None, "args": []})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        slot["args"].append(fn["arguments"])
+                    for key in _CONTINUITY_KEYS:
+                        if tc.get(key):
+                            slot.setdefault("extra", {})[key] = tc[key]
+                if choice.get("finish_reason"):
+                    finish = choice["finish_reason"]
+        if frames == 0:
+            raise RuntimeError(
+                "LLM endpoint returned a non-SSE / non-JSON body over a streaming "
+                "request (is the model/proxy healthy?).")
+        if not done and finish is None:
+            raise requests.ConnectionError(
+                "LLM stream ended without a finish_reason (truncated mid-response)")
+        message: dict = {"role": "assistant", "content": "".join(content) or None}
+        if reasoning:
+            message["reasoning_content"] = "".join(reasoning)
+        if tool_frags:
+            message["tool_calls"] = [
+                {"id": slot["id"], "type": "function",
+                 "function": {"name": slot["name"],
+                              "arguments": "".join(slot["args"]) or "{}"},
+                 **slot.get("extra", {})}
+                for _, slot in sorted(tool_frags.items())
+            ]
+        message.update(msg_extra)
+        return message, usage, finish, ttft
+
     def _round_trip(self, payload: dict, tool_names: list[str] | None) -> dict:
-        """One POST to /chat/completions (with transient-failure retries) —
-        returns the raw provider `message` object."""
+        """One streamed POST to /chat/completions (with transient-failure
+        retries) — returns the reassembled provider `message` object."""
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         headers.update(self.extra_headers)
+        payload = {**payload, "stream": True,
+                   "stream_options": {"include_usage": True}}
         log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
                   self.model, len(payload["messages"]), tool_names or "-", self.request_timeout)
         approx_in = self._approx_tokens(payload)
@@ -180,13 +275,13 @@ class LLMClient:
             trace_request["extra_body"] = self.extra_body
         self._trace_prompt(trace_request)
         t0 = time.monotonic()
-        resp = None
         attempts = 3
         for attempt in range(1, attempts + 1):
+            resp = None
             try:
                 resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
                                      headers=headers, verify=self.ssl_cert_file,
-                                     timeout=self.request_timeout)
+                                     timeout=self.request_timeout, stream=True)
                 # A fast gateway error (proxy up, model backend down/overloaded)
                 # crashes the planner/specialist node otherwise — retry with backoff.
                 # A *slow* 502/503/504 means the proxy's own upstream timeout fired
@@ -197,33 +292,29 @@ class LLMClient:
                         and attempt < attempts and elapsed < _GATEWAY_RETRY_MAX_ELAPSED):
                     log.debug("LLM request attempt %d got HTTP %d after %.1fs, retrying",
                               attempt, resp.status_code, elapsed)
+                    resp.close()
                     time.sleep(2 * attempt)
                     t0 = time.monotonic()
                     continue
+                resp.raise_for_status()
+                message, usage, finish, ttft = self._consume_stream(resp, t0)
                 break
-            except (requests.Timeout, requests.ConnectionError) as e:
+            except _STREAM_DROP as e:
                 log.debug("LLM request attempt %d failed after %.1fs: %s",
                           attempt, time.monotonic() - t0, e)
+                if resp is not None:
+                    resp.close()
                 if attempt == attempts:
                     raise
                 time.sleep(2 * attempt)
                 t0 = time.monotonic()
-        resp.raise_for_status()
-        try:
-            body = resp.json()
-        except ValueError:
-            snippet = (resp.text or "").strip()[:500]
-            raise RuntimeError(
-                f"LLM endpoint returned HTTP {resp.status_code} with a non-JSON body "
-                f"(is the model/proxy healthy?). Body:\n{snippet or '<empty>'}")
         self.usage["llm_seconds"] += time.monotonic() - t0
-        self._record_usage(body)
-        message = body["choices"][0]["message"]
-        finish = body["choices"][0].get("finish_reason")
+        self._record_usage({"usage": usage})
         self._trace(trace_request,
                     {"finish_reason": finish, "elapsed_s": round(time.monotonic() - t0, 2),
-                     "usage": body.get("usage"), "message": message})
-        log.debug("LLM response in %.1fs: finish=%s", time.monotonic() - t0, finish)
+                     "ttft_s": ttft, "usage": usage, "message": message})
+        log.debug("LLM response in %.1fs (ttft %ss): finish=%s",
+                  time.monotonic() - t0, ttft, finish)
         return message
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:

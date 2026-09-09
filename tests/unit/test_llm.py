@@ -7,11 +7,42 @@ from salome_agent.llm import (LLMClient, _parse_json_content, assistant_tool_tur
                               continuity_fields)
 
 
+def _sse_frames(body):
+    """Turn a canned non-streaming response body into the SSE `data:` lines a
+    real endpoint would emit for it: one delta per choice carrying the whole
+    message, an optional usage-only frame, then [DONE]."""
+    lines = []
+    for choice in body.get("choices", []):
+        msg = choice.get("message", {})
+        delta = {"role": "assistant"}
+        if msg.get("content") is not None:
+            delta["content"] = msg["content"]
+        if msg.get("reasoning_content"):
+            delta["reasoning_content"] = msg["reasoning_content"]
+        if msg.get("extra_content"):
+            delta["extra_content"] = msg["extra_content"]
+        if msg.get("tool_calls"):
+            delta["tool_calls"] = [
+                {"index": i, "id": tc.get("id"), "type": "function",
+                 "function": tc.get("function", {}),
+                 **({"extra_content": tc["extra_content"]} if tc.get("extra_content") else {})}
+                for i, tc in enumerate(msg["tool_calls"])
+            ]
+        lines.append("data: " + json.dumps(
+            {"choices": [{"delta": delta, "finish_reason": choice.get("finish_reason")}]}))
+    if body.get("usage"):
+        lines.append("data: " + json.dumps({"choices": [], "usage": body["usage"]}))
+    lines.append("data: [DONE]")
+    return lines
+
+
 class _FakeResp:
-    def __init__(self, body, status_code=200, text=""):
+    def __init__(self, body, status_code=200, text="", lines=None):
         self._body = body
         self.status_code = status_code
         self.text = text
+        # explicit SSE lines override the synthesized ones (partial / broken streams)
+        self._lines = lines
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -22,9 +53,21 @@ class _FakeResp:
             raise ValueError("Expecting value: line 1 column 1 (char 0)")
         return self._body
 
+    def iter_lines(self, decode_unicode=False):
+        if self._lines is not None:
+            yield from self._lines
+            return
+        if self._body is None:
+            yield self.text or ""
+            return
+        yield from _sse_frames(self._body)
+
+    def close(self):
+        pass
+
 
 def _stub_post(body):
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         return _FakeResp(body)
     return post
 
@@ -55,7 +98,7 @@ def _msg(content):
 def test_chat_retries_bad_json_with_parser_error_fed_back(monkeypatch):
     posts = []
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         posts.append(json["messages"])
         if len(posts) == 1:
             return _FakeResp(_msg('{"stages": [1,]}'))   # trailing comma
@@ -76,7 +119,7 @@ def test_chat_retries_bad_json_with_parser_error_fed_back(monkeypatch):
 def test_chat_gives_up_after_json_retries_and_raises_raw_content(monkeypatch):
     posts = []
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         posts.append(1)
         return _FakeResp(_msg("still not json"))
 
@@ -103,7 +146,7 @@ def test_chat_retries_transient_gateway_errors(monkeypatch):
                          "message": {"role": "assistant", "content": '{"ok": 1}'}}]}
     calls = []
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         calls.append(1)
         if len(calls) < 3:
             return _FakeResp({}, status_code=503)
@@ -122,7 +165,7 @@ def test_chat_does_not_retry_a_slow_gateway_error(monkeypatch):
     monkeypatch.setattr("salome_agent.llm._GATEWAY_RETRY_MAX_ELAPSED", 0.0)
     calls = []
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         calls.append(1)
         return _FakeResp({}, status_code=503)
 
@@ -175,7 +218,7 @@ def test_trace_writes_request_and_raw_response(tmp_path, monkeypatch):
 def test_chat_forwards_tool_description(monkeypatch):
     captured = {}
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         captured["payload"] = json
         return _FakeResp({"choices": [{"finish_reason": "tool_calls", "message": {
             "tool_calls": [{"id": "c1", "function": {"name": "make_box", "arguments": "{}"}}]}}]})
@@ -192,7 +235,7 @@ def test_chat_forwards_tool_description(monkeypatch):
 def test_chat_sends_extra_headers(monkeypatch):
     captured = {}
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         captured["headers"] = headers
         return _FakeResp({"choices": [{"finish_reason": "stop",
                                        "message": {"content": '{"ok": 1}'}}]})
@@ -216,7 +259,7 @@ def test_build_llm_substitutes_run_id_in_extra_headers():
 def test_chat_sends_extra_body(monkeypatch):
     captured = {}
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         captured["payload"] = json
         return _FakeResp({"choices": [{"finish_reason": "stop",
                                        "message": {"content": '{"ok": 1}'}}]})
@@ -240,7 +283,7 @@ def test_build_llm_reads_extra_body():
 def test_chat_uses_tool_choice_auto(monkeypatch):
     captured = {}
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         captured["payload"] = json
         return _FakeResp({"choices": [{"finish_reason": "tool_calls", "message": {
             "tool_calls": [{"id": "c1", "function": {"name": "mk", "arguments": "{}"}}]}}]})
@@ -344,7 +387,7 @@ def test_chat_returns_raw_message_for_echoing_back(monkeypatch):
 def test_planner_retry_echoes_continuity_fields_but_not_reasoning(monkeypatch):
     sent = []
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         sent.append(json["messages"])
         if len(sent) == 1:
             return _FakeResp({"choices": [{"finish_reason": "stop", "message": {
@@ -395,7 +438,7 @@ def test_prompt_is_logged_before_the_request_is_sent(tmp_path, monkeypatch, capl
 
     import requests as _requests
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         raise _requests.ConnectionError("boom")
 
     monkeypatch.setattr("salome_agent.llm.requests.post", post)
@@ -425,7 +468,7 @@ def test_usage_accumulates_across_calls(monkeypatch):
     ]
     it = iter(bodies)
 
-    def post(url, json=None, headers=None, verify=None, timeout=None):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         return _FakeResp(next(it))
 
     monkeypatch.setattr("salome_agent.llm.requests.post", post)
@@ -488,3 +531,125 @@ def test_trace_line_omits_extra_body_when_unset(monkeypatch, tmp_path):
         messages=[{"role": "user", "content": "hi"}])
     entry = json.loads(trace.read_text().splitlines()[0])
     assert "extra_body" not in entry["request"]
+
+
+# --- streaming (SSE) ---------------------------------------------------------
+
+def _sse_post(lines):
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        assert json["stream"] is True
+        assert json["stream_options"] == {"include_usage": True}
+        return _FakeResp(None, lines=lines)
+    return post
+
+
+def test_stream_reassembles_content_fragments(monkeypatch):
+    lines = [
+        'data: {"choices": [{"delta": {"role": "assistant", "content": "Hel"}}]}',
+        'data: {"choices": [{"delta": {"content": "lo "}}]}',
+        'data: {"choices": [{"delta": {"content": "world"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["content"] == "Hello world"
+    assert out["tool_call"] is None
+
+
+def test_stream_reassembles_tool_call_argument_fragments(monkeypatch):
+    lines = [
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", '
+        '"function": {"name": "make_box", "arguments": "{\\"dx\\": "}}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, '
+        '"function": {"arguments": "200}"}}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 1, "id": "c2", '
+        '"function": {"name": "translate", "arguments": "{\\"dz\\": 5}"}}]}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "make_box", "parameters": {"type": "object"}}])
+    assert [c["name"] for c in out["tool_calls"]] == ["make_box", "translate"]
+    assert [c["args"] for c in out["tool_calls"]] == [{"dx": 200}, {"dz": 5}]
+    assert [c["id"] for c in out["tool_calls"]] == ["c1", "c2"]
+
+
+def test_stream_reassembles_reasoning_and_continuity_fragments(monkeypatch):
+    lines = [
+        'data: {"choices": [{"delta": {"reasoning_content": "first "}}]}',
+        'data: {"choices": [{"delta": {"reasoning_content": "second"}}]}',
+        'data: {"choices": [{"delta": {"content": "answer", '
+        '"extra_content": {"google": {"thought_signature": "SIG"}}}, '
+        '"finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["raw_message"]["reasoning_content"] == "first second"
+    assert out["raw_message"]["extra_content"] == {"google": {"thought_signature": "SIG"}}
+
+
+def test_stream_reads_usage_from_trailing_frame(monkeypatch):
+    lines = [
+        'data: {"choices": [{"delta": {"content": "hi"}, "finish_reason": "stop"}]}',
+        'data: {"choices": [], "usage": {"prompt_tokens": 40, "completion_tokens": 7}}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    c = LLMClient("http://x/v1", "", "auto")
+    c.chat(messages=[{"role": "user", "content": "x"}],
+           tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert c.usage["prompt_tokens"] == 40
+    assert c.usage["completion_tokens"] == 7
+    assert c.usage["metered_calls"] == 1
+
+
+def test_stream_error_frame_raises(monkeypatch):
+    lines = [
+        'data: {"choices": [{"delta": {"content": "par"}}]}',
+        'data: {"error": {"message": "context length exceeded", "code": 400}}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    with pytest.raises(RuntimeError, match="error frame"):
+        LLMClient("http://x/v1", "", "auto").chat(
+            messages=[{"role": "user", "content": "x"}],
+            tools=[{"name": "mk", "parameters": {"type": "object"}}])
+
+
+def test_stream_truncated_without_finish_reason_is_retried(monkeypatch):
+    good = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    truncated = ['data: {"choices": [{"delta": {"content": "half"}}]}']  # no finish, no [DONE]
+    calls = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        calls.append(1)
+        return _FakeResp(None, lines=truncated if len(calls) == 1 else good)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["content"] == "ok"
+    assert len(calls) == 2
+
+
+def test_trace_records_ttft(monkeypatch, tmp_path):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"role": "assistant", "content": '{"a": 1}'}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    trace = tmp_path / "t.jsonl"
+    LLMClient("http://x/v1", "", "auto", trace_path=str(trace)).chat(
+        messages=[{"role": "user", "content": "hi"}])
+    entry = json.loads(trace.read_text().splitlines()[0])
+    assert "ttft_s" in entry["response"]
