@@ -641,6 +641,30 @@ def test_stream_reassembles_tool_call_argument_fragments(monkeypatch):
     assert [c["id"] for c in out["tool_calls"]] == ["c1", "c2"]
 
 
+def test_stream_gemini_whole_and_repeated_tool_args_do_not_concatenate(monkeypatch):
+    # Gemini's OpenAI-compat shim sends the whole `arguments` object in one
+    # delta and sometimes repeats it — appending would make "{...}{...}".
+    lines = [
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", '
+        '"function": {"name": "make_box", "arguments": "{\\"dx\\": 10, \\"dy\\": 20}"}}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, '
+        '"function": {"arguments": "{\\"dx\\": 10, \\"dy\\": 20}"}}]}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "make_box", "parameters": {"type": "object"}}], module="geom")
+    assert out["tool_calls"][0]["args"] == {"dx": 10, "dy": 20}
+
+
+def test_loads_first_object_tolerates_a_trailing_repeat():
+    from salome_agent.llm import _loads_first_object
+    assert _loads_first_object('{"a": 1}{"a": 1}') == {"a": 1}
+    assert _loads_first_object('{"a": 1}') == {"a": 1}
+
+
 def test_stream_reassembles_reasoning_and_continuity_fragments(monkeypatch):
     lines = [
         'data: {"choices": [{"delta": {"reasoning_content": "first "}}]}',
@@ -686,17 +710,18 @@ def test_stream_error_frame_raises(monkeypatch):
             tools=[{"name": "mk", "parameters": {"type": "object"}}])
 
 
-def test_stream_truncated_without_finish_reason_is_retried(monkeypatch):
+def test_stream_empty_without_finish_reason_is_retried(monkeypatch):
     good = [
         'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
         "data: [DONE]",
     ]
-    truncated = ['data: {"choices": [{"delta": {"content": "half"}}]}']  # no finish, no [DONE]
+    # a role-only frame, no content / tool call / finish / [DONE] — a real cut
+    empty = ['data: {"choices": [{"delta": {"role": "assistant"}}]}']
     calls = []
 
     def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         calls.append(1)
-        return _FakeResp(None, lines=truncated if len(calls) == 1 else good)
+        return _FakeResp(None, lines=empty if len(calls) == 1 else good)
 
     monkeypatch.setattr("salome_agent.llm.requests.post", post)
     monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
@@ -705,6 +730,24 @@ def test_stream_truncated_without_finish_reason_is_retried(monkeypatch):
         tools=[{"name": "mk", "parameters": {"type": "object"}}])
     assert out["content"] == "ok"
     assert len(calls) == 2
+
+
+def test_stream_with_output_but_no_terminator_is_kept(monkeypatch):
+    # some OpenAI-compat shims omit [DONE] and the trailing finish_reason
+    lines = ['data: {"choices": [{"delta": {"content": "the whole answer"}}]}']
+    calls = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        calls.append(1)
+        return _FakeResp(None, lines=lines)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["content"] == "the whole answer"
+    assert len(calls) == 1
 
 
 def test_trace_records_ttft(monkeypatch, tmp_path):
