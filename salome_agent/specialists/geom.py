@@ -176,17 +176,43 @@ def _compact_result(result: dict) -> dict:
 def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         upstream: dict | None = None,
                         tool_selection: str = "hints",
-                        verify_cadence: str = "final") -> dict:
+                        verify_cadence: str = "final",
+                        retry: dict | None = None,
+                        seed_call_log: list[dict] | None = None) -> dict:
     try:
         return _run(stage_plan, llm, client, iteration_cap, upstream,
-                    tool_selection, verify_cadence)
+                    tool_selection, verify_cadence, retry, seed_call_log)
     except (SessionDied, SessionPoisoned) as e:
         return {"fatal": f"SALOME agent server unavailable: {e}"}
 
 
+def _retry_block(retry: dict) -> str:
+    lines = []
+    err = retry.get("last_error")
+    if err:
+        lines.append(f"Your previous attempt at this stage failed: {err.get('message')}")
+    if retry.get("hint"):
+        lines.append(f"User hint for this retry: {retry['hint']}")
+    built = retry.get("built") or []
+    if built:
+        lines.append("Shapes your previous attempt already built and published — reuse "
+                     "them if they are still correct, or rebuild only the ones the error "
+                     "was actually in:")
+        built_info = retry.get("built_info") or {}
+        for name in built:
+            info = built_info.get(name)
+            if info:
+                lines.append(f"  {name} — bbox {info['bbox']}, size {info['size']}, "
+                             f"centre {info['centre']}")
+            else:
+                lines.append(f"  {name}")
+    return "\n".join(lines)
+
+
 def _run(stage_plan: dict, llm, client, iteration_cap: int,
          upstream: dict | None = None, tool_selection: str = "hints",
-         verify_cadence: str = "final") -> dict:
+         verify_cadence: str = "final", retry: dict | None = None,
+         seed_call_log: list[dict] | None = None) -> dict:
     content = str(stage_plan)
     if upstream:
         lines = []
@@ -200,9 +226,15 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                     "(e.g. to measure or align against) — reference them by these exact "
                     "names, but do not modify, colour or finish_stage them unless this "
                     "stage's own task says to:\n" + "\n".join(lines))
+    if retry:
+        content += "\n\n" + _retry_block(retry)
     messages = [{"role": "system", "content": _geom_prompt(verify_cadence)},
                 {"role": "user", "content": content}]
-    call_log: list[dict] = []
+    # A retry seeds call_log with the failed attempt's records so a shape the
+    # model reuses by name (rather than rebuilding) stays traceable by
+    # codegen's reachability pass instead of silently dropping out of
+    # result.py (GH #38).
+    call_log: list[dict] = list(seed_call_log) if seed_call_log else []
     tool_results: dict[int, dict] = {}  # message index -> full result dict
     last_error = None
     # Stage-local record of calls that already failed: hash((tool, args)) ->

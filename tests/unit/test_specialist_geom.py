@@ -180,6 +180,56 @@ def test_no_upstream_leaves_the_prompt_unchanged():
     assert "already in the study" not in sent
 
 
+def test_retry_context_is_injected_into_the_opening_prompt():
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["box_1"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    run_geom_specialist(
+        {"module": "geom", "intent": "box", "params": {}, "inputs": []},
+        llm, client, iteration_cap=3,
+        retry={"last_error": {"message": "MakeBoxDXDYDZ failed"},
+               "hint": "make it smaller", "built": ["box_1"],
+               "built_info": {"box_1": {"bbox": [0, 10, 0, 10, 0, 10],
+                                        "size": [10, 10, 10], "centre": [5, 5, 5]}},
+               "call_log": []},
+    )
+    sent = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "MakeBoxDXDYDZ failed" in sent
+    assert "make it smaller" in sent
+    assert "box_1" in sent
+    assert "centre [5, 5, 5]" in sent
+
+
+def test_no_retry_leaves_the_prompt_unchanged():
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=3)
+    sent = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "previous attempt" not in sent
+
+
+def test_seed_call_log_keeps_reused_shapes_reachable():
+    # retry's opening prompt tells the model box_1 already exists; the model
+    # names it in finish_stage without rebuilding — the seeded call_log record
+    # must still be there so codegen can trace it (not silently dropped).
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["box_1"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    seed = [{"fn": "MakeBoxDXDYDZ", "args": [], "out_vars": ["box_1"], "publish": ["box_1"]}]
+    result = run_geom_specialist(
+        {"module": "geom", "intent": "box", "params": {}, "inputs": []},
+        llm, client, iteration_cap=3, seed_call_log=seed,
+    )
+    assert client.call_tool.call_count == 0
+    assert result["result_names"] == ["box_1"]
+    assert result["call_log"] == seed
+
+
 def test_system_prompt_mandates_a_placement_self_check():
     from salome_agent.specialists.geom import GEOM_SYSTEM_PROMPT
     p = GEOM_SYSTEM_PROMPT.lower()

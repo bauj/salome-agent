@@ -4,13 +4,62 @@ import pytest
 import requests
 from langgraph.types import Command
 
-from salome_agent.graph import (build_graph, route_after_run_stage,
+from salome_agent.graph import (build_graph, retry_context, route_after_run_stage,
                                 route_after_verify_exec, select_upstream)
 
 
 def test_select_upstream_passes_all_published_names_by_default():
     stages = {0: {"status": "ok", "result_names": ["box_1", "box_2"]}}
     assert select_upstream({"inputs": []}, stages, 1) == ["box_1", "box_2"]
+
+
+def test_retry_context_is_none_on_a_first_attempt():
+    state = {"stages": {0: {"status": "pending"}}, "history": [], "last_error": None}
+    assert retry_context(state, 0, client=None) is None
+
+
+def test_retry_context_gathers_error_hint_and_built_shapes():
+    state = {
+        "stages": {0: {"status": "failed",
+                       "call_log": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                    "out_vars": ["box_1"], "publish": ["box_1"]}]}},
+        "history": [{"event": "retry_hint", "hint": "move it further right"}],
+        "last_error": {"phase": "exec", "message": "bad box", "offending_line": None,
+                       "traceback": None},
+    }
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": True, "measurements": {
+        "box_1": {"bbox": [0, 10, 0, 10, 0, 10], "size": [10, 10, 10], "centre": [5, 5, 5]}}}
+    ctx = retry_context(state, 0, client=client)
+    assert ctx["last_error"]["message"] == "bad box"
+    assert ctx["hint"] == "move it further right"
+    assert ctx["built"] == ["box_1"]
+    assert ctx["built_info"]["box_1"]["centre"] == [5, 5, 5]
+    assert ctx["call_log"] == state["stages"][0]["call_log"]
+    client.call_tool.assert_called_once_with("measure", {"names": ["box_1"]})
+
+
+def test_retry_context_without_a_hint_leaves_hint_none():
+    state = {
+        "stages": {0: {"status": "failed", "call_log": []}},
+        "history": [],
+        "last_error": {"phase": "exec", "message": "bad box", "offending_line": None,
+                       "traceback": None},
+    }
+    assert retry_context(state, 0, client=None)["hint"] is None
+
+
+def test_retry_context_measure_failure_is_best_effort():
+    state = {
+        "stages": {0: {"status": "failed",
+                       "call_log": [{"fn": "X", "args": [], "out_vars": ["a"], "publish": ["a"]}]}},
+        "history": [], "last_error": None,
+    }
+    client = MagicMock()
+    client.call_tool.side_effect = RuntimeError("session busy")
+    ctx = retry_context(state, 0, client=client)
+    assert ctx["built"] == ["a"]
+    assert ctx["built_info"] is None
 
 
 def test_select_upstream_scopes_to_declared_inputs_when_they_resolve():
@@ -92,7 +141,8 @@ def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
     captured = {}
 
     def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
-                                 tool_selection="hints", verify_cadence="final"):
+                                 tool_selection="hints", verify_cadence="final",
+                                 retry=None, seed_call_log=None):
         captured["upstream"] = upstream
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["walls_1"]}
@@ -198,7 +248,8 @@ def test_first_geom_stage_does_not_call_measure(monkeypatch):
     captured = {}
 
     def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
-                                 tool_selection="hints", verify_cadence="final"):
+                                 tool_selection="hints", verify_cadence="final",
+                                 retry=None, seed_call_log=None):
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["box_1"]}
 
