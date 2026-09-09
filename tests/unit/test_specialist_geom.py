@@ -118,7 +118,7 @@ def test_no_tool_call_is_nudged_then_loop_continues():
                for m in second)
 
 
-def test_prior_tool_results_are_compacted_latest_kept_full():
+def test_all_tool_results_are_compacted_including_the_newest():
     llm = MagicMock()
     llm.chat.side_effect = [
         _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
@@ -143,14 +143,49 @@ def test_prior_tool_results_are_compacted_latest_kept_full():
     ]
     run_geom_specialist({"module": "geom", "intent": "two boxes", "params": {}, "inputs": []},
                         llm, client, iteration_cap=6)
-    # 3rd chat call: turn-1 tool result compacted, turn-2 (latest) full.
+    # 3rd chat call: every prior tool result is compacted, newest included.
     sent = llm.chat.call_args_list[2].kwargs["messages"]
     tool_msgs = [m["content"] for m in sent if m.get("role") == "tool"]
     assert len(tool_msgs) == 2
-    assert "MakeBoxDXDYDZ" not in tool_msgs[0]      # verbose records dropped
+    for tm in tool_msgs:
+        assert "MakeBoxDXDYDZ" not in tm            # verbose records dropped
     assert "box_1" in tool_msgs[0]                  # published name still there
     assert "'centre': [5, 5, 5]" in tool_msgs[0]    # shape_info kept
-    assert "MakeBoxDXDYDZ" in tool_msgs[1]          # latest turn untouched
+    assert "box_2" in tool_msgs[1]
+    assert "'centre': [2.5, 2.5, 2.5]" in tool_msgs[1]
+
+
+def test_message_prefix_is_byte_stable_across_turns():
+    # The transcript sent each turn must extend the previous one verbatim (no
+    # per-turn mutation of earlier messages) so a gateway's prefix/KV cache
+    # survives. Only the appended tail and a widening tool list may differ.
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
+        _resp(("make_box", {"dx": 5, "dy": 5, "dz": 5})),
+        _resp(("finish_stage", {"result_names": ["box_2"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    client.call_tool.side_effect = [
+        {"ok": True,
+         "records": [{"fn": "MakeBoxDXDYDZ", "args": [], "out_vars": ["box_1"],
+                      "publish": ["box_1"]}],
+         "sanity": {"ok": True}, "result_shape": "box_1",
+         "shape_info": {"bbox": [0, 10, 0, 10, 0, 10], "size": [10, 10, 10],
+                        "centre": [5, 5, 5]}},
+        {"ok": True,
+         "records": [{"fn": "MakeBoxDXDYDZ", "args": [], "out_vars": ["box_2"],
+                      "publish": ["box_2"]}],
+         "sanity": {"ok": True}, "result_shape": "box_2",
+         "shape_info": {"bbox": [0, 5, 0, 5, 0, 5], "size": [5, 5, 5],
+                        "centre": [2.5, 2.5, 2.5]}},
+    ]
+    run_geom_specialist({"module": "geom", "intent": "two boxes", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=6, verify_cadence="none")
+    sent = [c.kwargs["messages"] for c in llm.chat.call_args_list]
+    for prev, cur in zip(sent, sent[1:]):
+        assert cur[:len(prev)] == prev
 
 
 def test_upstream_shape_info_is_injected_into_the_opening_prompt():

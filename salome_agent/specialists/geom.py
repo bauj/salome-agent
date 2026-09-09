@@ -235,7 +235,6 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
     # codegen's reachability pass instead of silently dropping out of
     # result.py (GH #38).
     call_log: list[dict] = list(seed_call_log) if seed_call_log else []
-    tool_results: dict[int, dict] = {}  # message index -> full result dict
     last_error = None
     # Stage-local record of calls that already failed: hash((tool, args)) ->
     # error. A byte-identical repeat is answered here without a round-trip to
@@ -268,12 +267,14 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         log.debug("    geom iter %d/%d: asking LLM...", i + 1, iteration_cap)
         tools = ([all_defs[n] for n in sorted(offered) if n in all_defs]
                  + [finish_def, load_def])
-        # Compact every prior tool result; only the newest keeps full detail.
-        latest = max(tool_results) if tool_results else -1
-        send = [{**m, "content": str(_compact_result(tool_results[idx]))}
-                if idx in tool_results and idx != latest else m
-                for idx, m in enumerate(messages)]
-        response = llm.chat(messages=send, tools=tools)
+        # Tool results are stored already compacted (see below), so `messages`
+        # is sent verbatim: each turn's request extends the previous one byte
+        # for byte, which keeps a gateway's prefix/KV cache alive. `load_tools`
+        # widening `tools` mid-stage is the one remaining prefix break.
+        # A shallow copy per call: the message dicts are never mutated after
+        # append, so the copy is byte-identical content, and each request is a
+        # verbatim extension of the last.
+        response = llm.chat(messages=list(messages), tools=tools)
         if response.get("content"):
             log.debug("    LLM reasoning: %s", response["content"])
         calls = response["tool_calls"]
@@ -328,8 +329,8 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                     "gather information first (measure / get_subshapes / check_shape).")}
                 batch_error = {"phase": "exec", "message": failed_calls[key],
                                "offending_line": None, "traceback": None}
-                tool_results[len(messages)] = result
-                messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
+                messages.append({"role": "tool", "tool_call_id": call_id,
+                                 "content": str(_compact_result(result))})
                 continue
             result = client.call_tool(name, args)
             if result["ok"]:
@@ -344,8 +345,8 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                 batch_error = {"phase": "exec", "message": result["error"],
                                "offending_line": None, "traceback": None}
                 log.debug("    tool %s failed: %s", name, result["error"])
-            tool_results[len(messages)] = result
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
+            messages.append({"role": "tool", "tool_call_id": call_id,
+                             "content": str(_compact_result(result))})
         # A later ok call in the same batch must not mask an earlier failure —
         # settle last_error once per turn from the batch outcome.
         last_error = batch_error
