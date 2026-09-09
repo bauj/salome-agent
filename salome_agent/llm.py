@@ -38,7 +38,27 @@ def _retry_after_seconds(resp, default: float) -> float:
     except ValueError:
         return default
 
+# Connect phase gets its own short cap — a backend that won't even accept the
+# socket is down, not slow.
+_CONNECT_TIMEOUT = 10.0
+
+# Socket read-gap cap: the longest silence tolerated *between* stream frames
+# before the stream is declared stalled. `llm.timeout` is the total budget; the
+# read gap is min(that, this) so a reasoning-ON backend that only emits `: ping`
+# keep-alives every few seconds stays alive while a genuinely frozen socket
+# still dies within a minute rather than waiting out the whole budget.
+_STREAM_READ_GAP_CAP = 60.0
+
+
+class StreamBudgetExceeded(requests.Timeout):
+    """The streamed round-trip ran past `llm.timeout` total wall-clock. Fatal:
+    the backend is stuck (a runaway reasoning loop, typically) and retrying just
+    burns another full budget on the same stuck backend."""
+
+
 # A dropped/half-read stream raises one of these; all are retried with backoff.
+# StreamBudgetExceeded subclasses requests.Timeout but is caught first and NOT
+# retried.
 _STREAM_DROP = (requests.Timeout, requests.ConnectionError,
                 requests.exceptions.ChunkedEncodingError)
 
@@ -141,9 +161,12 @@ class LLMClient:
     Responses are consumed as an SSE stream (`stream: true`). A long
     generation — a big reasoning budget especially — then keeps bytes moving
     over the socket the whole time, so an idle-timeout in a proxy/load
-    balancer never fires. `request_timeout` becomes a per-read gap cap: a
-    stream that keeps emitting runs as long as it needs, a stalled one still
-    dies. The reassembled `message` has the same shape the non-streaming
+    balancer never fires. `request_timeout` (`llm.timeout`) is enforced two
+    ways: as the total wall-clock budget for one streamed round-trip (a
+    deadline checked while reassembling the stream — a runaway reasoning loop
+    that never stops emitting is still cut), and, capped at
+    _STREAM_READ_GAP_CAP, as the socket read-gap so a frozen stream dies
+    fast. The reassembled `message` has the same shape the non-streaming
     endpoint returned, so nothing downstream changes."""
 
     def __init__(self, base_url: str, api_key: str, model: str, ssl_cert_file: str = "",
@@ -170,7 +193,11 @@ class LLMClient:
         # the system trust store — never "" / False, which disables TLS checks).
         self.ssl_cert_file = ssl_cert_file or True
         self.temperature = temperature
+        # Total wall-clock budget for one streamed round-trip.
         self.request_timeout = request_timeout
+        # Socket read-gap: silence between frames that means "stalled". Never
+        # larger than the total budget.
+        self.stream_read_timeout = min(request_timeout, _STREAM_READ_GAP_CAP)
         # No-tools (planner) path only: on a response that will not parse as
         # JSON, feed the specific parser error back to the model and re-ask,
         # up to this many times, before failing the run (GH #6).
@@ -252,11 +279,17 @@ class LLMClient:
         finish = usage = ttft = None
         frames = 0
         done = False
+        deadline = t0 + self.request_timeout
         # chunk_size=None: iter_lines() with a fixed size uses read(amt)
         # "read exactly amt bytes" semantics and blocks until the buffer fills
         # or the stream ends — a slow token trickle then stalls. None yields
         # whatever is on the socket as it arrives.
         for raw in resp.iter_lines(chunk_size=None, decode_unicode=True):
+            if time.monotonic() > deadline:
+                raise StreamBudgetExceeded(
+                    f"LLM stream ran past the {self.request_timeout:g}s total "
+                    f"budget (llm.timeout) — backend still emitting after "
+                    f"{frames} frame(s); treating as a runaway generation")
             if not raw:
                 continue
             if ttft is None:
@@ -359,7 +392,8 @@ class LLMClient:
             try:
                 resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
                                      headers=headers, verify=self.ssl_cert_file,
-                                     timeout=self.request_timeout, stream=True)
+                                     timeout=(_CONNECT_TIMEOUT, self.stream_read_timeout),
+                                     stream=True)
                 # A fast gateway error (proxy up, model backend down/overloaded)
                 # crashes the planner/specialist node otherwise — retry with backoff.
                 # A *slow* 502/503/504 means the proxy's own upstream timeout fired
@@ -385,6 +419,11 @@ class LLMClient:
                 resp.raise_for_status()
                 message, usage, finish, ttft = self._consume_stream(resp, t0)
                 break
+            except StreamBudgetExceeded as e:
+                log.warning("LLM request attempt %d: %s", attempt, e)
+                if resp is not None:
+                    resp.close()
+                raise  # runaway generation — a retry burns another full budget
             except _STREAM_DROP as e:
                 log.debug("LLM request attempt %d failed after %.1fs: %s",
                           attempt, time.monotonic() - t0, e)

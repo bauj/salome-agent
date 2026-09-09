@@ -17,7 +17,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "specialist a per-stage subset it widens on demand; "
                              "'all' offers the full geom registry every call")
     parser.add_argument("--timeout", type=float, default=None,
-                        help="per-request LLM timeout in seconds (overrides llm.timeout in config)")
+                        help="total wall-clock budget per LLM round-trip in seconds; a "
+                             "generation still running at the limit is cut, not retried "
+                             "(overrides llm.timeout in config)")
     parser.add_argument("-v", "--verbose", action="count", default=0,
                         help="-v: per-tool-call / per-retry detail; "
                              "-vv: also dump every LLM prompt, response and "
