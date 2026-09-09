@@ -53,7 +53,7 @@ class _FakeResp:
             raise ValueError("Expecting value: line 1 column 1 (char 0)")
         return self._body
 
-    def iter_lines(self, decode_unicode=False):
+    def iter_lines(self, chunk_size=512, decode_unicode=False):
         if self._lines is not None:
             yield from self._lines
             return
