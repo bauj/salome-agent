@@ -176,6 +176,8 @@ class LLMClient:
         trace_request = {"model": self.model, "temperature": self.temperature,
                          "tools": tool_names or [], "approx_input_tokens": approx_in,
                          "messages": payload["messages"]}
+        if self.extra_body:
+            trace_request["extra_body"] = self.extra_body
         self._trace_prompt(trace_request)
         t0 = time.monotonic()
         resp = None

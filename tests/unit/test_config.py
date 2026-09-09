@@ -24,3 +24,27 @@ def test_missing_required_key_raises(tmp_path):
     cfg_path.write_text(json.dumps({"llm": {"base_url": "http://x"}}))
     with pytest.raises(ConfigError):
         load_config(str(cfg_path))
+
+
+def test_unknown_llm_key_warns(tmp_path, caplog):
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({
+        "llm": {"base_url": "http://x", "model": "m",
+                "extra-body": {"reasoning_effort": "high"}},
+        "salome": {"root": "/opt/salome"},
+    }))
+    with caplog.at_level("WARNING", logger="salome_agent"):
+        load_config(str(cfg_path))
+    assert "llm.extra-body" in caplog.text
+
+
+def test_known_llm_keys_do_not_warn(tmp_path, caplog):
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({
+        "llm": {"base_url": "http://x", "model": "m", "extra_body": {},
+                "extra_headers": {}, "json_retries": 2, "timeout": 60},
+        "salome": {"root": "/opt/salome"},
+    }))
+    with caplog.at_level("WARNING", logger="salome_agent"):
+        load_config(str(cfg_path))
+    assert "unknown key" not in caplog.text
