@@ -198,6 +198,15 @@ def test_plan_node_turns_endpoint_5xx_into_a_clean_fatal(monkeypatch):
     assert cmd.update["fatal"].startswith("LLM endpoint")
 
 
+def test_endpoint_fatal_message_distinguishes_429_and_4xx():
+    from salome_agent.graph import _llm_endpoint_fatal
+
+    assert "rate-limited" in _llm_endpoint_fatal(_http_error(429))
+    assert "429" in _llm_endpoint_fatal(_http_error(429))
+    assert "rejected the request" in _llm_endpoint_fatal(_http_error(404))
+    assert "backend is" in _llm_endpoint_fatal(_http_error(502))
+
+
 def test_plan_node_still_raises_a_non_endpoint_error(monkeypatch):
     from salome_agent import graph
 

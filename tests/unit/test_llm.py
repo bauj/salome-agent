@@ -37,16 +37,19 @@ def _sse_frames(body):
 
 
 class _FakeResp:
-    def __init__(self, body, status_code=200, text="", lines=None):
+    def __init__(self, body, status_code=200, text="", lines=None, headers=None):
         self._body = body
         self.status_code = status_code
         self.text = text
+        self.headers = headers or {}
         # explicit SSE lines override the synthesized ones (partial / broken streams)
         self._lines = lines
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise requests.HTTPError(f"HTTP {self.status_code}")
+            err = requests.HTTPError(f"HTTP {self.status_code}")
+            err.response = self
+            raise err
 
     def json(self):
         if self._body is None:
@@ -176,6 +179,53 @@ def test_chat_does_not_retry_a_slow_gateway_error(monkeypatch):
     with pytest.raises(requests.HTTPError):
         client.chat(messages=[{"role": "user", "content": "hi"}])
     assert len(calls) == 1
+
+
+def test_chat_retries_429_and_honours_retry_after(monkeypatch):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"role": "assistant", "content": '{"ok": 1}'}}]}
+    calls = []
+    slept = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        calls.append(1)
+        if len(calls) == 1:
+            return _FakeResp({}, status_code=429, headers={"Retry-After": "5"})
+        return _FakeResp(body)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: slept.append(s))
+    assert LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "hi"}]) == {"ok": 1}
+    assert len(calls) == 2
+    assert slept == [5.0]
+
+
+def test_chat_429_retry_after_is_capped(monkeypatch):
+    body = {"choices": [{"finish_reason": "stop", "message": {"content": '{"ok": 1}'}}]}
+    calls = []
+    slept = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        calls.append(1)
+        if len(calls) == 1:
+            return _FakeResp({}, status_code=429, headers={"Retry-After": "9999"})
+        return _FakeResp(body)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: slept.append(s))
+    LLMClient("http://x/v1", "", "auto").chat(messages=[{"role": "user", "content": "hi"}])
+    assert slept == [60.0]
+
+
+def test_chat_gives_up_after_persistent_429(monkeypatch):
+    calls = []
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: calls.append(1) or _FakeResp({}, status_code=429))
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
+    with pytest.raises(requests.HTTPError):
+        LLMClient("http://x/v1", "", "auto").chat(messages=[{"role": "user", "content": "hi"}])
+    assert len(calls) == 3
 
 
 def test_chat_gives_up_after_persistent_gateway_errors(monkeypatch):
