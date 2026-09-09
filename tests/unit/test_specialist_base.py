@@ -37,6 +37,22 @@ def test_no_tool_call_is_nudged_then_loop_continues():
                for m in second)
 
 
+def test_provider_continuity_field_is_echoed_into_history():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        {"tool_call": "api_introspect", "args": {"name": "smesh"}, "tool_call_id": "c1",
+         "raw_message": {"role": "assistant", "content": None,
+                         "extra_content": {"sig": "S"}, "reasoning_content": "thoughts"}},
+        {"tool_call": "emit_script", "args": {"code": "x"}},
+    ]
+    run_specialist({"module": "smesh", "intent": "mesh it", "params": {}, "inputs": []},
+                   llm, tools={"api_introspect": lambda **kw: "members: [...]"}, iteration_cap=5)
+    sent = llm.chat.call_args_list[1].kwargs["messages"]
+    asst = next(m for m in sent if m.get("role") == "assistant" and m.get("tool_calls"))
+    assert asst["extra_content"] == {"sig": "S"}
+    assert "reasoning_content" not in asst
+
+
 def test_iteration_cap_emits_best_so_far_with_warning():
     llm = MagicMock()
     llm.chat.return_value = {"tool_call": "api_introspect", "args": {"name": "smesh"}}

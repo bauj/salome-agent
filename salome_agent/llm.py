@@ -14,6 +14,49 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 # full timeout for the same slow backend.
 _GATEWAY_RETRY_MAX_ELAPSED = 30.0
 
+# Opaque provider-specific fields on an assistant message that MUST be echoed
+# back verbatim in later requests for multi-turn continuity — e.g. Gemini 3
+# carries a `thought_signature` inside `extra_content` and rejects the next
+# request (HTTP 400) if it is missing. Deliberately excludes `reasoning_content`:
+# it is bulky, not required for continuity, and gets re-billed as input if fed
+# back.
+_CONTINUITY_KEYS = ("extra_content",)
+
+
+def continuity_fields(obj: dict | None) -> dict:
+    """The subset of an assistant `message` (or of a single tool_call) that a
+    caller must include when it appends that turn to its own history — see
+    _CONTINUITY_KEYS. A provider may hang the field on the message, on each
+    tool_call, or both (Gemini 3 puts `thought_signature` inside a tool_call's
+    `extra_content`)."""
+    return {k: obj[k] for k in _CONTINUITY_KEYS if obj and k in obj}
+
+
+def assistant_tool_turn(parsed_calls: list[dict], raw_message: dict | None) -> dict:
+    """Rebuild the assistant tool-call turn for history, carrying every
+    provider continuity field (per-call and message-level) but not the bulky
+    reasoning text. `parsed_calls` items are {name, args, id}; `raw_message` is
+    the verbatim provider message, used only to recover continuity fields."""
+    raw_calls = (raw_message or {}).get("tool_calls") or []
+    raw_by_id = {c.get("id"): c for c in raw_calls if c.get("id") is not None}
+    # Match a parsed call to its raw counterpart by id, falling back to position
+    # (a provider that omits tool_call ids also gives us backfilled synthetic
+    # ones that will not be in raw_by_id).
+    def _raw_for(i: int, cid):
+        if cid in raw_by_id:
+            return raw_by_id[cid]
+        return raw_calls[i] if i < len(raw_calls) else None
+    return {
+        "role": "assistant", "content": None,
+        "tool_calls": [
+            {"id": c["id"], "type": "function",
+             "function": {"name": c["name"], "arguments": json.dumps(c["args"])},
+             **continuity_fields(_raw_for(i, c["id"]))}
+            for i, c in enumerate(parsed_calls)
+        ],
+        **continuity_fields(raw_message),
+    }
+
 
 def _parse_json_content(content: str):
     """Real LLMs often wrap the JSON in ```json fences or add a sentence of
@@ -211,14 +254,14 @@ class LLMClient:
                       for c in calls]
             if not parsed:
                 return {"tool_call": None, "args": None, "tool_call_id": None,
-                        "tool_calls": [], "content": content}
+                        "tool_calls": [], "content": content, "raw_message": message}
             # tool_calls: every call the model emitted this turn (tool_choice=
             # "auto" allows several). The singular keys mirror the first call —
             # kept for callers that only ever expect one (specialists/base.py).
             first = parsed[0]
             return {"tool_call": first["name"], "args": first["args"],
                     "tool_call_id": first["id"], "tool_calls": parsed,
-                    "content": content}
+                    "content": content, "raw_message": message}
 
         # No-tools (planner) path: the response must be a JSON object. If it
         # will not parse, hand the model its own answer plus the exact parser
@@ -235,7 +278,8 @@ class LLMClient:
                 log.warning("LLM returned unparseable JSON (attempt %d/%d): %s",
                             attempt + 1, self.json_retries + 1, reason)
                 payload["messages"] = payload["messages"] + [
-                    {"role": "assistant", "content": content or ""},
+                    {"role": "assistant", "content": content or "",
+                     **continuity_fields(message)},
                     {"role": "user", "content":
                         f"Your previous response was not valid JSON: {reason}. "
                         "Common causes: a trailing comma, an unquoted or unescaped "

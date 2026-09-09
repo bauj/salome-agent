@@ -3,11 +3,11 @@ from unittest.mock import MagicMock
 from salome_agent.specialists.geom import run_geom_specialist
 
 
-def _resp(*calls, content=None):
+def _resp(*calls, content=None, raw_message=None):
     """Build a chat() return value. Each call is (name, args_dict); pass none
     for a prose-only turn."""
     return {"tool_calls": [{"name": n, "args": a, "id": None} for n, a in calls],
-            "content": content}
+            "content": content, "raw_message": raw_message}
 
 
 def test_finish_stage_returns_call_log_and_result_names():
@@ -237,6 +237,30 @@ def test_batched_calls_all_run_in_one_turn():
     ids = [tc["id"] for tc in asst[0]["tool_calls"]]
     tool_ids = [m["tool_call_id"] for m in sent if m.get("role") == "tool"]
     assert tool_ids == ids
+
+
+def test_provider_continuity_field_is_echoed_into_history_reasoning_dropped():
+    # Gemini 3 hangs thought_signature on the individual tool_call, not the message.
+    raw = {"role": "assistant", "content": None,
+           "reasoning_content": "long private thoughts",
+           "tool_calls": [{"id": None,
+                           "extra_content": {"google": {"thought_signature": "SIG"}},
+                           "function": {"name": "make_box", "arguments": "{}"}}]}
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 1, "dy": 1, "dz": 1}), raw_message=raw),
+        _resp(("finish_stage", {"result_names": ["box_1"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    client.call_tool.return_value = {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                     "out_vars": ["box_1"], "publish": ["box_1"]}]}
+    run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=5, verify_cadence="none")
+    sent = llm.chat.call_args_list[1].kwargs["messages"]
+    asst = next(m for m in sent if m.get("role") == "assistant" and m.get("tool_calls"))
+    assert asst["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "SIG"}}
+    assert "reasoning_content" not in asst
 
 
 def test_batch_ending_in_finish_stage_runs_earlier_calls_then_finishes():
