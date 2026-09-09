@@ -193,7 +193,11 @@ class LLMClient:
         finish = usage = ttft = None
         frames = 0
         done = False
-        for raw in resp.iter_lines(decode_unicode=True):
+        # chunk_size=None: iter_lines() with a fixed size uses read(amt)
+        # "read exactly amt bytes" semantics and blocks until the buffer fills
+        # or the stream ends — a slow token trickle then stalls. None yields
+        # whatever is on the socket as it arrives.
+        for raw in resp.iter_lines(chunk_size=None, decode_unicode=True):
             if not raw:
                 continue
             if ttft is None:
