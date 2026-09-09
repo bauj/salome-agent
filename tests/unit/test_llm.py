@@ -465,3 +465,26 @@ def test_trace_line_carries_approx_input_tokens_including_tool_schemas(monkeypat
     approx = entry["request"]["approx_input_tokens"]
     assert approx > 1000  # the fat tool schema dominates, not the 2-word message
     assert client.usage["approx_prompt_tokens"] == approx
+
+
+def test_trace_line_records_extra_body(monkeypatch, tmp_path):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"role": "assistant", "content": '{"a": 1}'}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    trace = tmp_path / "llm_trace.jsonl"
+    LLMClient("http://x/v1", "", "auto", trace_path=str(trace),
+              extra_body={"reasoning_effort": "high"}).chat(
+        messages=[{"role": "user", "content": "hi"}])
+    entry = json.loads(trace.read_text().splitlines()[0])
+    assert entry["request"]["extra_body"] == {"reasoning_effort": "high"}
+
+
+def test_trace_line_omits_extra_body_when_unset(monkeypatch, tmp_path):
+    body = {"choices": [{"finish_reason": "stop",
+                         "message": {"role": "assistant", "content": '{"a": 1}'}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    trace = tmp_path / "llm_trace.jsonl"
+    LLMClient("http://x/v1", "", "auto", trace_path=str(trace)).chat(
+        messages=[{"role": "user", "content": "hi"}])
+    entry = json.loads(trace.read_text().splitlines()[0])
+    assert "extra_body" not in entry["request"]
