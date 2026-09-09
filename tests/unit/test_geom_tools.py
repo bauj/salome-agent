@@ -1734,17 +1734,41 @@ class TestDeltaNote:
     def _vols(self, geompy, mapping):
         geompy.BasicProperties.side_effect = lambda s: [0.0, 0.0, mapping[s]]
 
-    def test_fuse_of_non_touching_parts_is_flagged(self):
+    def _bboxes(self, geompy, mapping):
+        # mapping: shape -> [xmin, xmax, ymin, ymax, zmin, zmax]
+        geompy.BoundingBox.side_effect = lambda s: mapping[s]
+
+    def test_fuse_of_bbox_disjoint_parts_is_flagged(self):
         geompy = MagicMock()
         self._vols(geompy, {"a": 100.0, "b": 50.0, "fuse_1": 150.0})
+        self._bboxes(geompy, {"a": [0, 10, 0, 10, 0, 10], "b": [50, 60, 0, 10, 0, 10]})
         ex = self._ex(geompy, {"a": "a", "b": "b", "fuse_1": "fuse_1"})
         note = geom_tools._delta_note(ex, "fuse", {"shapes": ["a", "b"]},
                                       {"result_shape": "fuse_1"})
-        assert note and "do not overlap or touch" in note
+        assert note and "bounding boxes are disjoint" in note
+
+    def test_fuse_of_face_touching_parts_is_silent(self):
+        # box_1 y[0,50] + tr_1 y[50,250] share a full face: volume adds up but
+        # the bboxes abut, so the "parts are separated" note must not fire (task 222).
+        geompy = MagicMock()
+        self._vols(geompy, {"a": 100.0, "b": 50.0, "fuse_1": 150.0})
+        self._bboxes(geompy, {"a": [0, 10, 0, 50, 0, 10], "b": [0, 10, 50, 250, 0, 10]})
+        ex = self._ex(geompy, {"a": "a", "b": "b", "fuse_1": "fuse_1"})
+        assert geom_tools._delta_note(ex, "fuse", {"shapes": ["a", "b"]},
+                                      {"result_shape": "fuse_1"}) is None
 
     def test_fuse_of_overlapping_parts_is_silent(self):
         geompy = MagicMock()
         self._vols(geompy, {"a": 100.0, "b": 50.0, "fuse_1": 120.0})
+        self._bboxes(geompy, {"a": [0, 10, 0, 10, 0, 10], "b": [5, 15, 0, 10, 0, 10]})
+        ex = self._ex(geompy, {"a": "a", "b": "b", "fuse_1": "fuse_1"})
+        assert geom_tools._delta_note(ex, "fuse", {"shapes": ["a", "b"]},
+                                      {"result_shape": "fuse_1"}) is None
+
+    def test_fuse_bbox_lookup_failure_suppresses_the_note(self):
+        geompy = MagicMock()
+        self._vols(geompy, {"a": 100.0, "b": 50.0, "fuse_1": 150.0})
+        geompy.BoundingBox.side_effect = RuntimeError("no bbox")
         ex = self._ex(geompy, {"a": "a", "b": "b", "fuse_1": "fuse_1"})
         assert geom_tools._delta_note(ex, "fuse", {"shapes": ["a", "b"]},
                                       {"result_shape": "fuse_1"}) is None
