@@ -62,6 +62,26 @@ def assistant_tool_turn(parsed_calls: list[dict], raw_message: dict | None) -> d
     }
 
 
+def _is_json_object(s: str) -> bool:
+    """True if `s` on its own is a complete JSON object. Used to tell a
+    provider that streams whole tool-call argument objects (Gemini's shim)
+    from one that streams partial fragments (OpenAI)."""
+    try:
+        return isinstance(json.loads(s), dict)
+    except ValueError:
+        return False
+
+
+def _loads_first_object(s: str):
+    """`json.loads` but tolerant of a trailing repeat — Gemini's shim
+    sometimes emits a tool call's arguments twice, yielding "{...}{...}"."""
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        obj, _ = json.JSONDecoder().raw_decode(s.lstrip())
+        return obj
+
+
 def _parse_json_content(content: str):
     """Real LLMs often wrap the JSON in ```json fences or add a sentence of
     prose around it — try the raw string first, then a fenced block, then the
@@ -188,12 +208,16 @@ class LLMClient:
         (plus usage / finish_reason / time-to-first-token). `content` and
         `reasoning_content` fragments are concatenated; `tool_calls` fragments
         are gathered by `index` (the first fragment for an index carries its
-        id and function name, later ones append to the JSON argument string).
+        id and function name). OpenAI streams the JSON argument string in
+        partial pieces (invalid alone) which we append; Gemini's OpenAI-compat
+        shim sends the whole argument object in one delta and may repeat it,
+        so a fragment that parses standalone replaces rather than extends.
 
         A stream that ends without ever yielding a parseable frame is a broken
         endpoint (an HTML error page, say) -> RuntimeError. One that yields
-        frames but no finish_reason / [DONE] was cut mid-flight -> raised as a
-        connection drop so the caller retries."""
+        no content/tool-call AND no finish_reason / [DONE] was cut mid-flight
+        or blocked -> raised as a connection drop so the caller retries. Real
+        output with a missing terminator is kept (some shims omit [DONE])."""
         content, reasoning = [], []
         tool_frags: dict[int, dict] = {}
         msg_extra: dict = {}
@@ -241,7 +265,11 @@ class LLMClient:
                     if fn.get("name"):
                         slot["name"] = fn["name"]
                     if fn.get("arguments"):
-                        slot["args"].append(fn["arguments"])
+                        frag = fn["arguments"]
+                        if _is_json_object(frag):
+                            slot["args"] = [frag]      # whole object (Gemini shim)
+                        else:
+                            slot["args"].append(frag)  # OpenAI partial fragment
                     for key in _CONTINUITY_KEYS:
                         if tc.get(key):
                             slot.setdefault("extra", {})[key] = tc[key]
@@ -251,9 +279,17 @@ class LLMClient:
             raise RuntimeError(
                 "LLM endpoint returned a non-SSE / non-JSON body over a streaming "
                 "request (is the model/proxy healthy?).")
-        if not done and finish is None:
+        if not done and finish is None and not (content or tool_frags):
+            # nothing came through and no terminator — a real cut, or a
+            # provider that blocked the response with no body
             raise requests.ConnectionError(
-                "LLM stream ended without a finish_reason (truncated mid-response)")
+                "LLM stream ended with no content, tool call or finish_reason "
+                "(truncated mid-response, or blocked)")
+        if not done and finish is None:
+            # a clean EOF with real output but no [DONE] / finish_reason — some
+            # OpenAI-compat shims just omit the terminator; keep what we got
+            log.warning("LLM stream ended without an explicit finish_reason / "
+                        "[DONE]; using the %d frame(s) received", frames)
         message: dict = {"role": "assistant", "content": "".join(content) or None}
         if reasoning:
             message["reasoning_content"] = "".join(reasoning)
@@ -364,7 +400,7 @@ class LLMClient:
                       [c["function"]["name"] for c in calls] or "none",
                       f'\n    said: {content[:500]}' if content else "")
             parsed = [{"name": c["function"]["name"],
-                       "args": json.loads(c["function"]["arguments"]),
+                       "args": _loads_first_object(c["function"]["arguments"]),
                        "id": c.get("id")}
                       for c in calls]
             if not parsed:
