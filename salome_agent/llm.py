@@ -14,6 +14,20 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 # full timeout for the same slow backend.
 _GATEWAY_RETRY_MAX_ELAPSED = 30.0
 
+# HTTP 429 (rate limit / quota) is retried with backoff regardless of how slow
+# it was — unlike a 5xx it is never an upstream-timeout. A Retry-After header
+# is honoured up to this cap so one hostile value can't stall the run.
+_RETRY_AFTER_CAP = 60.0
+
+
+def _retry_after_seconds(resp, default: float) -> float:
+    """Seconds to wait from a `Retry-After` header (delta-seconds form), capped;
+    `default` when the header is absent or not a plain number."""
+    try:
+        return min(float((resp.headers.get("Retry-After") or "").strip()), _RETRY_AFTER_CAP)
+    except ValueError:
+        return default
+
 # A dropped/half-read stream raises one of these; all are retried with backoff.
 _STREAM_DROP = (requests.Timeout, requests.ConnectionError,
                 requests.exceptions.ChunkedEncodingError)
@@ -344,6 +358,14 @@ class LLMClient:
                               attempt, resp.status_code, elapsed)
                     resp.close()
                     time.sleep(2 * attempt)
+                    t0 = time.monotonic()
+                    continue
+                if resp.status_code == 429 and attempt < attempts:
+                    wait = _retry_after_seconds(resp, 2 * attempt)
+                    log.warning("LLM request attempt %d rate-limited (HTTP 429), "
+                                "waiting %.0fs before retry", attempt, wait)
+                    resp.close()
+                    time.sleep(wait)
                     t0 = time.monotonic()
                     continue
                 resp.raise_for_status()

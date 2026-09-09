@@ -41,6 +41,12 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
     (GH #31). Returns None for any other exception, which keeps propagating."""
     if isinstance(e, requests.HTTPError):
         code = getattr(e.response, "status_code", "?")
+        if code == 429:
+            return ("LLM endpoint rate-limited (HTTP 429) after retries — quota "
+                    "or requests-per-minute exceeded; wait or use a higher-tier key")
+        if isinstance(code, int) and 400 <= code < 500:
+            return (f"LLM endpoint rejected the request (HTTP {code}) — check the "
+                    f"model name, API key and request parameters")
         return (f"LLM endpoint unavailable (HTTP {code}) — the model backend is "
                 f"down or slow; retry later")
     if isinstance(e, (requests.ConnectionError, requests.Timeout)):
