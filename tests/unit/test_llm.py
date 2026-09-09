@@ -3,7 +3,8 @@ import json
 import pytest
 import requests
 
-from salome_agent.llm import LLMClient, _parse_json_content
+from salome_agent.llm import (LLMClient, _parse_json_content, assistant_tool_turn,
+                              continuity_fields)
 
 
 class _FakeResp:
@@ -272,6 +273,76 @@ def test_chat_keeps_reasoning_content_alongside_the_tool_call(monkeypatch):
         tools=[{"name": "mk", "parameters": {"type": "object"}}])
     assert out["tool_call"] == "mk"
     assert out["content"] == "I'll make a box"
+
+
+def test_continuity_fields_keeps_only_the_allowlist():
+    msg = {"role": "assistant", "content": "x", "tool_calls": [],
+           "extra_content": {"google": {"thought_signature": "abc"}},
+           "reasoning_content": "a very long private chain of thought " * 50}
+    assert continuity_fields(msg) == {"extra_content": {"google": {"thought_signature": "abc"}}}
+    assert continuity_fields(None) == {}
+    assert continuity_fields({"content": "x"}) == {}
+
+
+def test_assistant_tool_turn_carries_per_call_and_message_continuity():
+    parsed = [{"name": "make_box", "args": {"dx": 1}, "id": "c1"},
+              {"name": "make_box", "args": {"dx": 2}, "id": "c2"}]
+    raw = {"role": "assistant", "content": None,
+           "extra_content": {"msg_level": 1},
+           "reasoning_content": "long thoughts",
+           "tool_calls": [
+               {"id": "c1", "extra_content": {"google": {"thought_signature": "SIG1"}},
+                "function": {"name": "make_box", "arguments": '{"dx": 1}'}},
+               {"id": "c2", "function": {"name": "make_box", "arguments": '{"dx": 2}'}}]}
+    turn = assistant_tool_turn(parsed, raw)
+    assert turn["extra_content"] == {"msg_level": 1}
+    assert "reasoning_content" not in turn
+    assert turn["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "SIG1"}}
+    assert "extra_content" not in turn["tool_calls"][1]
+
+
+def test_assistant_tool_turn_without_raw_message_is_a_plain_turn():
+    turn = assistant_tool_turn([{"name": "mk", "args": {}, "id": "c1"}], None)
+    assert turn == {"role": "assistant", "content": None, "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "mk", "arguments": "{}"}}]}
+
+
+def test_chat_returns_raw_message_for_echoing_back(monkeypatch):
+    body = {"choices": [{"finish_reason": "tool_calls", "message": {
+        "content": None, "extra_content": {"google": {"thought_signature": "sig"}},
+        "tool_calls": [{"id": "c1", "function": {"name": "mk", "arguments": "{}"}}]}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["raw_message"]["extra_content"] == {"google": {"thought_signature": "sig"}}
+    # also on the prose-only (no tool call) return
+    body2 = {"choices": [{"finish_reason": "stop", "message": {
+        "content": "hmm", "extra_content": {"google": {"thought_signature": "sig2"}}}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body2))
+    out2 = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out2["raw_message"]["extra_content"] == {"google": {"thought_signature": "sig2"}}
+
+
+def test_planner_retry_echoes_continuity_fields_but_not_reasoning(monkeypatch):
+    sent = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None):
+        sent.append(json["messages"])
+        if len(sent) == 1:
+            return _FakeResp({"choices": [{"finish_reason": "stop", "message": {
+                "content": "not json", "extra_content": {"sig": "S"},
+                "reasoning_content": "long thoughts"}}]})
+        return _FakeResp(_msg('{"stages": []}'))
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    LLMClient("http://x/v1", "", "auto").chat(messages=[{"role": "user", "content": "plan"}])
+    echoed = sent[1][-2]
+    assert echoed["role"] == "assistant"
+    assert echoed["extra_content"] == {"sig": "S"}
+    assert "reasoning_content" not in echoed
 
 
 def test_chat_returns_every_tool_call_in_the_turn(monkeypatch):

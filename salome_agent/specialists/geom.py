@@ -2,6 +2,7 @@ import json
 
 from salome_agent.codegen import _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
+from salome_agent.llm import assistant_tool_turn, continuity_fields
 from salome_agent.logs import log
 from salome_agent.specialists.tool_selection import initial_offered, resolve_load
 
@@ -248,7 +249,8 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         if not calls:
             # tool_choice="auto" — the model replied with prose and no call.
             # Keep its message, nudge it, and let the loop try again.
-            messages.append({"role": "assistant", "content": response["content"] or "(no reply)"})
+            messages.append({"role": "assistant", "content": response["content"] or "(no reply)",
+                             **continuity_fields(response.get("raw_message"))})
             messages.append({"role": "user", "content": "You did not call a tool. "
                              "Call at least one tool now — finish_stage once the geometry is done."})
             continue
@@ -261,11 +263,7 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         for j, c in enumerate(calls):
             c.setdefault("id", None)
             c["id"] = c["id"] or f"call_{i}_{j}"
-        messages.append({"role": "assistant", "content": None, "tool_calls": [
-            {"id": c["id"], "type": "function",
-             "function": {"name": c["name"], "arguments": json.dumps(c["args"])}}
-            for c in calls
-        ]})
+        messages.append(assistant_tool_turn(calls, response.get("raw_message")))
         batch_error = None
         finish_call = None
         for k, c in enumerate(calls):
