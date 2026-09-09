@@ -19,6 +19,16 @@ _GATEWAY_RETRY_MAX_ELAPSED = 30.0
 # is honoured up to this cap so one hostile value can't stall the run.
 _RETRY_AFTER_CAP = 60.0
 
+# Exponential backoff between retries: 2s, 4s, 8s, ... capped. A flaky free-tier
+# endpoint (Gemini 503-storms) usually clears within a minute, so a couple of
+# 2s/4s sleeps give up too early — `llm.max_retries` + this curve ride it out.
+_BACKOFF_BASE = 2.0
+_BACKOFF_CAP = 30.0
+
+
+def _backoff_seconds(attempt: int) -> float:
+    return min(_BACKOFF_BASE * (2 ** (attempt - 1)), _BACKOFF_CAP)
+
 
 def _retry_after_seconds(resp, default: float) -> float:
     """Seconds to wait from a `Retry-After` header (delta-seconds form), capped;
@@ -140,7 +150,7 @@ class LLMClient:
                  temperature: float = 0, request_timeout: float = 120,
                  trace_path: str | None = None, extra_headers: dict | None = None,
                  extra_body: dict | None = None, json_retries: int = 2,
-                 module_extra_body: dict | None = None):
+                 module_extra_body: dict | None = None, max_retries: int = 2):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -165,6 +175,10 @@ class LLMClient:
         # JSON, feed the specific parser error back to the model and re-ask,
         # up to this many times, before failing the run (GH #6).
         self.json_retries = json_retries
+        # transient HTTP failures (connection drop, truncated stream, 429,
+        # 502/503/504) get this many retries after the first attempt, with
+        # exponential backoff. Bump it for a flaky free-tier endpoint.
+        self.max_retries = max_retries
         # -vv: append one JSON line per round-trip (request + raw response +
         # whatever reasoning key the provider returns) so tool-selection can be
         # inspected after the run.
@@ -339,7 +353,7 @@ class LLMClient:
             trace_request["extra_body"] = extra_body
         self._trace_prompt(trace_request)
         t0 = time.monotonic()
-        attempts = 3
+        attempts = self.max_retries + 1
         for attempt in range(1, attempts + 1):
             resp = None
             try:
@@ -357,11 +371,11 @@ class LLMClient:
                     log.debug("LLM request attempt %d got HTTP %d after %.1fs, retrying",
                               attempt, resp.status_code, elapsed)
                     resp.close()
-                    time.sleep(2 * attempt)
+                    time.sleep(_backoff_seconds(attempt))
                     t0 = time.monotonic()
                     continue
                 if resp.status_code == 429 and attempt < attempts:
-                    wait = _retry_after_seconds(resp, 2 * attempt)
+                    wait = _retry_after_seconds(resp, _backoff_seconds(attempt))
                     log.warning("LLM request attempt %d rate-limited (HTTP 429), "
                                 "waiting %.0fs before retry", attempt, wait)
                     resp.close()
@@ -378,7 +392,7 @@ class LLMClient:
                     resp.close()
                 if attempt == attempts:
                     raise
-                time.sleep(2 * attempt)
+                time.sleep(_backoff_seconds(attempt))
                 t0 = time.monotonic()
         self.usage["llm_seconds"] += time.monotonic() - t0
         self._record_usage({"usage": usage})

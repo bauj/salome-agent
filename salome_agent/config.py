@@ -10,7 +10,7 @@ REQUIRED = [("llm", "base_url"), ("llm", "model"), ("salome", "root")]
 # effect. Warn loudly instead.
 LLM_KNOWN_KEYS = {
     "base_url", "api_key", "ssl_cert_file", "model", "temperature", "timeout",
-    "json_retries", "extra_headers", "extra_body", "module_extra_body",
+    "json_retries", "max_retries", "extra_headers", "extra_body", "module_extra_body",
 }
 
 
