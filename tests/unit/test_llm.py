@@ -228,6 +228,32 @@ def test_chat_gives_up_after_persistent_429(monkeypatch):
     assert len(calls) == 3
 
 
+def test_max_retries_config_extends_attempts_with_exponential_backoff(monkeypatch):
+    calls = []
+    slept = []
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: calls.append(1) or _FakeResp({}, status_code=503))
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: slept.append(s))
+    with pytest.raises(requests.HTTPError):
+        LLMClient("http://x/v1", "", "auto", max_retries=4).chat(
+            messages=[{"role": "user", "content": "hi"}])
+    assert len(calls) == 5              # 1 initial + 4 retries
+    assert slept == [2.0, 4.0, 8.0, 16.0]   # exponential, before each retry
+
+
+def test_backoff_is_capped(monkeypatch):
+    from salome_agent.llm import _backoff_seconds
+    assert _backoff_seconds(1) == 2.0
+    assert _backoff_seconds(6) == 30.0     # 2*2**5 == 64 -> capped
+
+
+def test_build_llm_reads_max_retries():
+    from salome_agent.cli import build_llm
+
+    cfg = {"llm": {"base_url": "http://x/v1", "model": "auto", "max_retries": 6}}
+    assert build_llm(cfg).max_retries == 6
+
+
 def test_chat_gives_up_after_persistent_gateway_errors(monkeypatch):
     monkeypatch.setattr("salome_agent.llm.requests.post",
                         lambda *a, **k: _FakeResp({}, status_code=502))
