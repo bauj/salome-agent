@@ -268,3 +268,82 @@ def test_first_geom_stage_does_not_call_measure(monkeypatch):
     graph._run_stage_node(state, config)
     client.call_tool.assert_not_called()
     assert captured["tool_selection"] == "all"
+
+
+class _FakeLLM:
+    """An llm client with a real usage dict a fake specialist can advance."""
+    def __init__(self):
+        self.usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                      "llm_seconds": 0.0}
+
+    def burn(self, calls, in_tok, out_tok, seconds):
+        self.usage["calls"] += calls
+        self.usage["prompt_tokens"] += in_tok
+        self.usage["completion_tokens"] += out_tok
+        self.usage["llm_seconds"] += seconds
+
+
+def _geom_state(status_stage=None):
+    return {
+        "stage_idx": 0,
+        "plan": [{"module": "geom", "intent": "box", "params": {}, "inputs": []}],
+        "stages": {0: status_stage or {"module": "geom", "status": "pending"}},
+        "config": {"policy": {"tool_iteration_cap": 5, "on_stage_failure": "abort"}},
+        "last_error": None, "history": [],
+    }
+
+
+def test_run_stage_node_records_per_stage_timing(monkeypatch):
+    from salome_agent import graph
+
+    llm = _FakeLLM()
+
+    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
+                 verify_cadence="final", retry=None, seed_call_log=None):
+        llm.burn(calls=4, in_tok=12000, out_tok=1500, seconds=20.0)
+        return {"call_log": [], "result_names": ["box_1"]}
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    state = _geom_state()
+    cmd = graph._run_stage_node(state, {"configurable": {"llm_client": llm,
+                                                         "executor_client": None}})
+    tm = cmd.update["stages"][0]["timing"]
+    assert tm["turns"] == 4 and tm["in_tok"] == 12000 and tm["out_tok"] == 1500
+    assert tm["llm_s"] == 20.0
+    assert tm["core_s"] == round(tm["wall"] - 20.0, 2)
+
+
+def test_run_stage_node_timing_accumulates_across_a_retry(monkeypatch):
+    from salome_agent import graph
+
+    llm = _FakeLLM()
+
+    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
+                 verify_cadence="final", retry=None, seed_call_log=None):
+        llm.burn(calls=3, in_tok=5000, out_tok=600, seconds=10.0)
+        return {"call_log": [], "result_names": ["box_1"]}
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    prior = {"module": "geom", "status": "failed",
+             "timing": {"wall": 12.0, "llm_s": 10.0, "core_s": 2.0, "turns": 3,
+                        "in_tok": 5000, "out_tok": 600}}
+    state = _geom_state(status_stage=prior)
+    cmd = graph._run_stage_node(state, {"configurable": {"llm_client": llm,
+                                                         "executor_client": None}})
+    tm = cmd.update["stages"][0]["timing"]
+    assert tm["turns"] == 6 and tm["in_tok"] == 10000
+    assert tm["llm_s"] == 20.0
+
+
+def test_run_stage_node_skips_timing_without_a_real_usage_dict(monkeypatch):
+    from salome_agent import graph
+
+    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
+                 verify_cadence="final", retry=None, seed_call_log=None):
+        return {"call_log": [], "result_names": ["box_1"]}
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    state = _geom_state()
+    cmd = graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
+                                                         "executor_client": None}})
+    assert "timing" not in cmd.update["stages"][0]

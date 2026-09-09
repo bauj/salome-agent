@@ -252,6 +252,21 @@ def test_chat_uses_tool_choice_auto(monkeypatch):
     assert captured["payload"]["tool_choice"] == "auto"
 
 
+def test_usage_accumulates_llm_seconds(monkeypatch):
+    body = {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2}}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    import itertools
+    tick = itertools.count(0.0, 0.5)
+    monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(tick))
+    c = LLMClient("http://x/v1", "", "auto")
+    c.chat(messages=[{"role": "user", "content": "x"}])
+    before = c.usage["llm_seconds"]
+    c.chat(messages=[{"role": "user", "content": "y"}])
+    assert c.usage["calls"] == 2
+    assert before > 0 and c.usage["llm_seconds"] > before
+
+
 def test_chat_returns_none_toolcall_when_model_only_talks(monkeypatch):
     body = {"choices": [{"finish_reason": "stop",
                          "message": {"content": "let me think about this"}}]}

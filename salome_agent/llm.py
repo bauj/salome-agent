@@ -124,9 +124,12 @@ class LLMClient:
         # request (messages + FULL tool schemas) summed over every call —
         # the real input cost even when a provider strips its `usage` block,
         # and the only figure that reflects the re-sent tool schemas.
+        # `llm_seconds` sums the wall-clock of each successful round-trip
+        # (final attempt only; retry backoff sleeps excluded) — graph.py diffs
+        # it at stage boundaries to split LLM wait from local/SALOME time.
         self.usage = {"calls": 0, "metered_calls": 0,
                       "prompt_tokens": 0, "completion_tokens": 0,
-                      "approx_prompt_tokens": 0}
+                      "approx_prompt_tokens": 0, "llm_seconds": 0.0}
 
     @staticmethod
     def _approx_tokens(payload: dict) -> int:
@@ -211,6 +214,7 @@ class LLMClient:
             raise RuntimeError(
                 f"LLM endpoint returned HTTP {resp.status_code} with a non-JSON body "
                 f"(is the model/proxy healthy?). Body:\n{snippet or '<empty>'}")
+        self.usage["llm_seconds"] += time.monotonic() - t0
         self._record_usage(body)
         message = body["choices"][0]["message"]
         finish = body["choices"][0].get("finish_reason")
