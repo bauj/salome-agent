@@ -2,7 +2,12 @@
 # attached, so it must self-init the same way the executor's exec namespace
 # does (import convention confirmed 2026-08-29 for this SALOME build).
 
-_KERNEL_INIT = """from salome.kernel import salome
+# KERNEL moved salome/SALOMEDS under salome.kernel after 9.16; the fallback
+# keeps generated scripts runnable on SALOME <= 9.16.
+_KERNEL_INIT = """try:
+    from salome.kernel import salome
+except ImportError:
+    import salome
 salome.salome_init()
 """
 
@@ -14,7 +19,10 @@ _SMESH_INIT = """from salome.smesh import smeshBuilder
 smesh = smeshBuilder.New()
 """
 
-_SALOMEDS_INIT = """from salome.kernel import SALOMEDS
+_SALOMEDS_INIT = """try:
+    from salome.kernel import SALOMEDS
+except ImportError:
+    import SALOMEDS
 """
 
 _GUI_INIT = """gg = salome.ImportComponentGUI("GEOM")
