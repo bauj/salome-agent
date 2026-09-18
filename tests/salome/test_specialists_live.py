@@ -104,9 +104,9 @@ def test_smesh_specialist_live_end_to_end(client, live_llm):
     captured = {}
     real_chat = live_llm.chat
 
-    def spy_chat(messages, tools=None):
+    def spy_chat(messages, tools=None, module=None):
         captured["messages"] = messages
-        return real_chat(messages=messages, tools=tools)
+        return real_chat(messages=messages, tools=tools, module=module)
 
     live_llm.chat = spy_chat
     try:
@@ -174,9 +174,9 @@ def test_paravis_specialist_live_generates_valid_script(client, live_llm):
     captured = {}
     real_chat = live_llm.chat
 
-    def spy_chat(messages, tools=None):
+    def spy_chat(messages, tools=None, module=None):
         captured["messages"] = messages
-        return real_chat(messages=messages, tools=tools)
+        return real_chat(messages=messages, tools=tools, module=module)
 
     live_llm.chat = spy_chat
     try:
