@@ -9,6 +9,19 @@ from salome_agent.logs import log
 _PLAN_KEYS = ("module", "intent", "params", "inputs", "tools")
 
 
+def normalize_plan(edited):
+    if not isinstance(edited, list) or not edited:
+        return None
+    for stage in edited:
+        if not isinstance(stage, dict) or stage.get("module") not in ("geom", "smesh", "paravis"):
+            return None
+        stage.setdefault("intent", "")
+        stage.setdefault("params", {})
+        stage.setdefault("inputs", [])
+        stage.setdefault("tools", [])
+    return edited
+
+
 def _edit_plan_in_editor(plan):
     """Round-trip the plan through $EDITOR as JSON. Returns the parsed new
     plan, or None if the editor is unavailable or the result is unusable."""
@@ -27,16 +40,7 @@ def _edit_plan_in_editor(plan):
         return None
     finally:
         os.unlink(path)
-    if not isinstance(edited, list) or not edited:
-        return None
-    for stage in edited:
-        if not isinstance(stage, dict) or stage.get("module") not in ("geom", "smesh", "paravis"):
-            return None
-        stage.setdefault("intent", "")
-        stage.setdefault("params", {})
-        stage.setdefault("inputs", [])
-        stage.setdefault("tools", [])
-    return edited
+    return normalize_plan(edited)
 
 
 def _render_plan(payload, stream):
@@ -85,22 +89,13 @@ def prompt_retry(payload, read=input, stream=sys.stderr):
         return {"action": "abort"}
 
 
-def resume_interactive(graph, first_result, cfg, read=input, stream=sys.stderr,
-                       edit_fn=_edit_plan_in_editor):
-    from langgraph.types import Command
-
-    result = first_result
-    while result.get("__interrupt__"):
-        payload = result["__interrupt__"][0].value
-        try:
-            if "plan" in payload:
-                decision = prompt_plan(payload, read, stream, edit_fn)
-            elif "last_error" in payload:
-                decision = prompt_retry(payload, read, stream)
-            else:
-                raise RuntimeError(f"unknown interrupt payload: {payload}")
-        except EOFError:
-            log.warning("no input available - aborting run")
-            decision = {"action": "abort"}
-        result = graph.invoke(Command(resume=decision), config=cfg)
-    return result
+def terminal_gate(payload, read=input, stream=sys.stderr, edit_fn=_edit_plan_in_editor):
+    try:
+        if "plan" in payload:
+            return prompt_plan(payload, read, stream, edit_fn)
+        if "last_error" in payload:
+            return prompt_retry(payload, read, stream)
+    except EOFError:
+        log.warning("no input available - aborting run")
+        return {"action": "abort"}
+    raise RuntimeError(f"unknown interrupt payload: {payload}")

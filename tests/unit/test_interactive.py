@@ -1,7 +1,7 @@
 import io
 
 from salome_agent import interactive
-from salome_agent.interactive import prompt_plan, prompt_retry, resume_interactive
+from salome_agent.interactive import prompt_plan, prompt_retry, normalize_plan, terminal_gate
 
 
 def test_edit_preserves_the_tools_hint(monkeypatch):
@@ -84,48 +84,40 @@ def test_prompt_retry_eof_aborts():
     assert d == {"action": "abort"}
 
 
-class _FakeInterrupt:
-    def __init__(self, value):
-        self.value = value
+def test_normalize_plan_fills_defaults():
+    out = normalize_plan([{"module": "geom"}])
+    assert out == [{"module": "geom", "intent": "", "params": {}, "inputs": [], "tools": []}]
 
 
-class _FakeGraph:
-    def __init__(self, results):
-        self._results = list(results)
-        self.resumes = []
-
-    def invoke(self, command, config=None):
-        self.resumes.append(command)
-        return self._results.pop(0)
+def test_normalize_plan_rejects_bad_shapes():
+    assert normalize_plan([]) is None
+    assert normalize_plan({"module": "geom"}) is None
+    assert normalize_plan([{"module": "cad"}]) is None
+    assert normalize_plan(["geom"]) is None
 
 
-def test_resume_interactive_plan_then_retry_then_done():
-    first = {"__interrupt__": (_FakeInterrupt({"plan": []}),)}
-    graph = _FakeGraph([
-        {"__interrupt__": (_FakeInterrupt({"last_error": {"message": "boom"}}),)},
-        {"report": "ok"},
-    ])
-    final = resume_interactive(graph, first, {"configurable": {}},
-                              read=_reader(["y", "s"]), stream=io.StringIO())
-    assert final == {"report": "ok"}
-    assert len(graph.resumes) == 2
+def test_terminal_gate_routes_plan_payload():
+    d = terminal_gate({"plan": []}, read=_reader(["y"]), stream=io.StringIO())
+    assert d == {"action": "approve"}
 
 
-def test_resume_interactive_edit_then_approve():
-    edited = [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]
-    first = {"__interrupt__": (_FakeInterrupt({"plan": [{"module": "smesh"}]}),)}
-    graph = _FakeGraph([
-        {"__interrupt__": (_FakeInterrupt({"plan": edited}),)},  # gate re-prompts
-        {"report": "ok"},
-    ])
-    final = resume_interactive(graph, first, {"configurable": {}},
-                              read=_reader(["e", "y"]), stream=io.StringIO(),
-                              edit_fn=lambda _p: edited)
-    assert final == {"report": "ok"}
-    assert graph.resumes[0].resume == {"action": "edit", "plan": edited}
+def test_terminal_gate_routes_retry_payload():
+    d = terminal_gate({"last_error": {"message": "boom"}}, read=_reader(["s"]),
+                      stream=io.StringIO())
+    assert d == {"action": "skip"}
 
 
-def test_resume_interactive_no_interrupt_is_passthrough():
-    graph = _FakeGraph([])
-    final = resume_interactive(graph, {"report": "done"}, {}, read=_reader([]), stream=io.StringIO())
-    assert final == {"report": "done"}
+def test_terminal_gate_eof_aborts():
+    def _raise(_p=""):
+        raise EOFError
+
+    assert terminal_gate({"plan": []}, read=_raise, stream=io.StringIO()) == {"action": "abort"}
+
+
+def test_terminal_gate_unknown_payload_raises():
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        terminal_gate({"other": 1}, read=_reader([]), stream=io.StringIO())
+
+
