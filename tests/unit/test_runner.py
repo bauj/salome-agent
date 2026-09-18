@@ -86,3 +86,116 @@ def test_fatal_from_run_stage_is_not_also_an_attempt():
     m.events("plan", {"plan": PLAN})
     m.events("run_stage", {})
     assert _kinds(m.events("run_stage", {"fatal": "x"})) == ["fatal"]
+
+
+import threading
+from unittest.mock import MagicMock
+
+import requests
+
+from salome_agent.runner import run_request
+
+ONE_STAGE = {"stages": [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]}
+
+
+def _config(tmp_path):
+    return {"llm": {"base_url": "http://x", "model": "m"}, "work_dir": str(tmp_path),
+            "policy": {"tool_iteration_cap": 3, "on_stage_failure": "abort"}}
+
+
+def _fake_llm(monkeypatch, llm):
+    monkeypatch.setattr("salome_agent.cli.build_llm", lambda *a, **k: llm)
+
+
+def _http_error(code):
+    resp = requests.Response()
+    resp.status_code = code
+    return requests.HTTPError(f"{code} Server Error", response=resp)
+
+
+def test_plan_gate_abort_emits_plan_then_aborted_and_writes_nothing(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.chat.return_value = ONE_STAGE
+    llm.usage = None
+    _fake_llm(monkeypatch, llm)
+    events, gates = [], []
+
+    def on_gate(payload):
+        gates.append(payload)
+        return {"action": "abort"}
+
+    res = run_request("make a box", _config(tmp_path), client=None,
+                      on_event=events.append, on_gate=on_gate, run_id="r1")
+    assert [e["kind"] for e in events] == ["plan", "aborted"]
+    assert gates == [{"plan": ONE_STAGE["stages"]}]
+    assert res.exit_code == 1
+    assert res.run_id == "r1"
+    assert res.run_dir == str(tmp_path / "r1")
+    assert res.final_state["aborted"] is True
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_edit_at_the_gate_re_prompts_with_the_edited_plan(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.chat.return_value = ONE_STAGE
+    llm.usage = None
+    _fake_llm(monkeypatch, llm)
+    edited = [{"module": "geom", "intent": "cylinder", "params": {}, "inputs": []}]
+    answers = iter([{"action": "edit", "plan": edited}, {"action": "abort"}])
+    gates = []
+
+    def on_gate(payload):
+        gates.append(payload)
+        return next(answers)
+
+    run_request("x", _config(tmp_path), client=None, on_event=lambda e: None,
+                on_gate=on_gate, run_id="r1")
+    assert gates[1] == {"plan": edited}
+
+
+def test_endpoint_fatal_in_batch_emits_fatal_and_report(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.chat.side_effect = _http_error(502)
+    llm.usage = {"calls": 1}
+    _fake_llm(monkeypatch, llm)
+    events = []
+
+    res = run_request("x", _config(tmp_path), client=None, on_event=events.append,
+                      on_gate=lambda p: {"action": "abort"}, batch=True, run_id="r1")
+    kinds = [e["kind"] for e in events]
+    assert "fatal" in kinds and kinds[-1] == "report"
+    assert events[-1]["data"]["usage"] == {"calls": 1}
+    assert res.exit_code == 1
+    assert (tmp_path / "r1" / "report.md").exists()
+
+
+def test_cancel_before_the_gate_answers_ends_aborted_without_resuming(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.chat.return_value = ONE_STAGE
+    llm.usage = None
+    _fake_llm(monkeypatch, llm)
+    cancel = threading.Event()
+    events = []
+
+    def on_gate(payload):
+        cancel.set()
+        return {"action": "approve"}
+
+    res = run_request("x", _config(tmp_path), client=None, on_event=events.append,
+                      on_gate=on_gate, cancel=cancel, run_id="r1")
+    assert [e["kind"] for e in events] == ["plan", "aborted"]
+    assert res.final_state["aborted"] is True
+    assert res.exit_code == 1
+    assert llm.chat.call_count == 1          # planner only, no specialist turn
+
+
+def test_client_supplies_the_session_handle(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.chat.return_value = ONE_STAGE
+    llm.usage = None
+    _fake_llm(monkeypatch, llm)
+    client = MagicMock(mode="gui", name_prefix="p_")
+    res = run_request("x", _config(tmp_path), client=client, on_event=lambda e: None,
+                      on_gate=lambda p: {"action": "abort"}, run_id="r1")
+    assert res.final_state["session"]["mode"] == "gui"
+    assert res.final_state["session"]["name_prefix"] == "p_"
