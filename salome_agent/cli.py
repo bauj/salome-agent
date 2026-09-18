@@ -63,7 +63,6 @@ def main(argv: list[str] | None = None) -> int:
 
     from salome_agent import server_conn
     from salome_agent.config import load_config
-    from salome_agent.graph import build_graph
     from salome_agent.logs import log, setup_logging
 
     args = parse_args(argv if argv is not None else sys.argv[1:])
@@ -93,47 +92,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_session:
         log.info("session: --no-session (planner + specialists + static checks only)")
         client = None
-        session_handle = {"mode": "none", "pid": None, "salome_port": None,
-                          "name_prefix": ""}
     else:
         try:
             client = server_conn.connect(run_id)
         except server_conn.ServerUnavailable as e:
             log.error("%s", e)
             return 1
-        session_handle = {"mode": client.mode, "pid": None, "salome_port": None,
-                          "name_prefix": client.name_prefix}
         log.info("session: connected to the %s agent server", client.mode)
 
-    trace_path = os.path.join(run_dir, "llm_trace.jsonl") if args.verbose >= 2 else None
-    if trace_path:
-        log.info("LLM trace: %s", trace_path)
-    cfg = {"configurable": {"thread_id": uuid.uuid4().hex,
-                            "llm_client": build_llm(config, args.timeout, trace_path, run_id),
-                            "executor_client": client}}
-    try:
-        graph = build_graph(batch=args.batch)
-        final = graph.invoke({
-            "user_request": args.request, "config": {**config, "batch": args.batch},
-            "session": session_handle, "plan": [], "plan_approved": False,
-            "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
-            "study_ns": "salome_agent_run", "final_script": None, "report": None,
-            "fatal": None, "aborted": False, "run_id": run_id,
-        }, config=cfg)
-        if not args.batch:
-            from salome_agent.interactive import resume_interactive
+    from salome_agent import runner
+    from salome_agent.interactive import terminal_gate
 
-            final = resume_interactive(graph, final, cfg)
+    try:
+        result = runner.run_request(
+            args.request, config, client=client, on_event=lambda ev: None,
+            on_gate=terminal_gate, batch=args.batch, verbose=args.verbose,
+            run_id=run_id, request_timeout=args.timeout)
     finally:
         if client is not None:
             try:
                 client.close()
             except Exception:
                 pass
-
-    if final.get("__interrupt__"):
-        log.warning("run still paused at an interactive gate - aborting")
-        return 1
+    final = result.final_state
 
     if final.get("aborted"):
         log.info("run aborted at your request - no result.py / report.md written")

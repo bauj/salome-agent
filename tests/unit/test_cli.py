@@ -30,3 +30,46 @@ def test_no_live_gui_or_port():
     args = parse_args(["make a box"])
     assert not hasattr(args, "live_gui")
     assert not hasattr(args, "port")
+
+
+def test_main_no_session_delegates_to_run_request(tmp_path, monkeypatch, capsys):
+    import json
+
+    from salome_agent import cli
+    from salome_agent.runner import RunResult
+
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"llm": {"base_url": "http://x", "model": "m"},
+                               "salome": {"root": "/x"},
+                               "policy": {"on_stage_failure": "abort"},
+                               "work_dir": str(tmp_path)}))
+    seen = {}
+
+    def fake_run(request, config, **kw):
+        seen.update(kw, request=request, config=config)
+        return RunResult(run_id=kw["run_id"], run_dir=str(tmp_path / kw["run_id"]),
+                         final_state={"report": "REPORT-TEXT"}, exit_code=0)
+
+    monkeypatch.setattr("salome_agent.runner.run_request", fake_run)
+    rc = cli.main(["make a box", "--no-session", "--batch", "--config", str(cfg),
+                   "--on-failure", "continue"])
+    assert rc == 0
+    assert seen["request"] == "make a box"
+    assert seen["client"] is None and seen["batch"] is True
+    assert seen["config"]["policy"]["on_stage_failure"] == "continue"
+    assert "REPORT-TEXT" in capsys.readouterr().out
+
+
+def test_main_returns_1_on_abort(tmp_path, monkeypatch):
+    import json
+
+    from salome_agent import cli
+    from salome_agent.runner import RunResult
+
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"llm": {"base_url": "http://x", "model": "m"},
+                               "salome": {"root": "/x"}, "policy": {}}))
+    monkeypatch.setattr(
+        "salome_agent.runner.run_request",
+        lambda request, config, **kw: RunResult(kw["run_id"], "/x", {"aborted": True}, 1))
+    assert cli.main(["x", "--no-session", "--config", str(cfg)]) == 1
