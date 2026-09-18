@@ -1,4 +1,6 @@
 import os
+import threading
+import uuid
 from dataclasses import dataclass
 
 
@@ -66,3 +68,73 @@ class EventMapper:
         if update.get("aborted"):
             out.append(self.event("aborted"))
         return out
+
+
+def _session_handle(client) -> dict:
+    if client is None:
+        return {"mode": "none", "pid": None, "salome_port": None, "name_prefix": ""}
+    return {"mode": client.mode, "pid": None, "salome_port": None,
+            "name_prefix": client.name_prefix}
+
+
+def run_request(request: str, config: dict, *, client, on_event, on_gate,
+                cancel: threading.Event | None = None, batch: bool = False,
+                verbose: int = 0, run_id: str | None = None,
+                request_timeout: float | None = None) -> RunResult:
+    from langgraph.types import Command
+
+    from salome_agent import cli
+    from salome_agent.graph import build_graph
+    from salome_agent.logs import log
+
+    run_id = run_id or uuid.uuid4().hex[:12]
+    work_dir = os.path.expanduser(config.get("work_dir") or ".")
+    run_dir = os.path.join(work_dir, run_id)
+    trace_path = os.path.join(run_dir, "llm_trace.jsonl") if verbose >= 2 else None
+    if trace_path:
+        log.info("LLM trace: %s", trace_path)
+    llm = cli.build_llm(config, request_timeout, trace_path, run_id)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": llm,
+                            "executor_client": client}}
+    graph = build_graph(batch=batch)
+    mapper = EventMapper(run_id, run_dir)
+    inp = {
+        "user_request": request, "config": {**config, "batch": batch},
+        "session": _session_handle(client), "plan": [], "plan_approved": False,
+        "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
+        "study_ns": "salome_agent_run", "final_script": None, "report": None,
+        "fatal": None, "aborted": False, "run_id": run_id,
+    }
+
+    def cancelled() -> bool:
+        return cancel is not None and cancel.is_set()
+
+    stopped = False
+    while True:
+        pending = None
+        for chunk in graph.stream(inp, config=cfg, stream_mode="updates"):
+            for node, update in chunk.items():
+                if node == "__interrupt__":
+                    pending = update[0].value
+                    continue
+                for ev in mapper.events(node, update):
+                    if ev["kind"] == "report":
+                        ev["data"]["usage"] = getattr(llm, "usage", None)
+                    on_event(ev)
+            if cancelled():
+                stopped = True
+                break
+        if stopped or pending is None:
+            break
+        decision = on_gate(pending)
+        if cancelled():
+            stopped = True
+            break
+        inp = Command(resume=decision)
+
+    final = dict(graph.get_state(cfg).values)
+    if stopped and not final.get("aborted"):
+        final["aborted"] = True
+        on_event(mapper.event("aborted"))
+    exit_code = 1 if (final.get("fatal") or final.get("aborted")) else 0
+    return RunResult(run_id=run_id, run_dir=run_dir, final_state=final, exit_code=exit_code)
