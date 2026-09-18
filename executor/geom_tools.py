@@ -1206,7 +1206,10 @@ def tool_set_color(executor, args: dict):
     # Live call for immediate GUI update
     shape = executor.geom_bindings[args["shape"]]
     # Import SALOMEDS at call time
-    from salome.kernel import SALOMEDS
+    try:
+        from salome.kernel import SALOMEDS
+    except ImportError:  # SALOME <= 9.16 layout
+        import SALOMEDS
     color = SALOMEDS.Color(args["red"] / 255.0, args["green"] / 255.0, args["blue"] / 255.0)
     shape.SetColor(color)
 
