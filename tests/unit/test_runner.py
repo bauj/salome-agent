@@ -1,3 +1,5 @@
+import os
+
 from salome_agent.runner import EventMapper
 
 PLAN = [{"module": "geom", "intent": "box", "params": {}, "inputs": []},
@@ -187,6 +189,21 @@ def test_cancel_before_the_gate_answers_ends_aborted_without_resuming(tmp_path, 
     assert res.final_state["aborted"] is True
     assert res.exit_code == 1
     assert llm.chat.call_count == 1          # planner only, no specialist turn
+
+
+def test_run_dir_is_absolute_even_with_a_relative_work_dir(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.chat.return_value = ONE_STAGE
+    llm.usage = None
+    _fake_llm(monkeypatch, llm)
+    monkeypatch.chdir(tmp_path)
+    config = {"llm": {"base_url": "http://x", "model": "m"}, "work_dir": "rel",
+              "policy": {"tool_iteration_cap": 3, "on_stage_failure": "abort"}}
+
+    res = run_request("x", config, client=None, on_event=lambda e: None,
+                      on_gate=lambda p: {"action": "abort"}, run_id="r1")
+    assert os.path.isabs(res.run_dir)
+    assert res.run_dir == str(tmp_path / "rel" / "r1")
 
 
 def test_client_supplies_the_session_handle(tmp_path, monkeypatch):
