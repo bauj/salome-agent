@@ -22,7 +22,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "specialist a per-stage subset it widens on demand; "
                              "'all' offers the full geom registry every call")
     parser.add_argument("--timeout", type=float, default=None,
-                        help="per-request LLM timeout in seconds (overrides llm.timeout in config)")
+                        help="total wall-clock budget per LLM round-trip in seconds; a "
+                             "generation still running at the limit is cut, not retried "
+                             "(overrides llm.timeout in config)")
     parser.add_argument("-v", "--verbose", action="count", default=0,
                         help="-v: per-tool-call / per-retry detail; "
                              "-vv: also dump every LLM prompt, response and "
@@ -74,12 +76,18 @@ def build_llm(config: dict, request_timeout: float | None = None,
     # provider's reasoning_effort knob) — unlike extra_headers, these land in
     # the JSON payload, not the HTTP headers (GH #28).
     extra_body = llm_config.get("extra_body") or {}
+    # module_extra_body: {"planner"|"geom"|"smesh"|"paravis": {...}} — a body
+    # that replaces extra_body for that module's calls, so an expensive knob
+    # (reasoning_effort) can sit on the planner alone.
+    module_extra_body = llm_config.get("module_extra_body") or {}
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
                      temperature=llm_config.get("temperature", 0),
                      request_timeout=request_timeout or llm_config.get("timeout", 120),
                      trace_path=trace_path, extra_headers=extra_headers, extra_body=extra_body,
-                     json_retries=llm_config.get("json_retries", 2))
+                     json_retries=llm_config.get("json_retries", 2),
+                     module_extra_body=module_extra_body,
+                     max_retries=llm_config.get("max_retries", 2))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,7 +96,6 @@ def main(argv: list[str] | None = None) -> int:
 
     from salome_agent import server_conn
     from salome_agent.config import load_config
-    from salome_agent.graph import build_graph
     from salome_agent.logs import log, setup_logging
 
     args = parse_args(argv if argv is not None else sys.argv[1:])
@@ -129,48 +136,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_session:
         log.info("session: --no-session (planner + specialists + static checks only)")
         client = None
-        session_handle = {"mode": "none", "pid": None, "salome_port": None,
-                          "name_prefix": ""}
     else:
         try:
             client = server_conn.connect(run_id)
         except server_conn.ServerUnavailable as e:
             log.error("%s", e)
             return 1
-        session_handle = {"mode": client.mode, "pid": None, "salome_port": None,
-                          "name_prefix": client.name_prefix}
         log.info("session: connected to the %s agent server", client.mode)
 
-    trace_path = os.path.join(run_dir, "llm_trace.jsonl") if args.verbose >= 2 else None
-    if trace_path:
-        log.info("LLM trace: %s", trace_path)
-    cfg = {"configurable": {"thread_id": uuid.uuid4().hex,
-                            "llm_client": build_llm(config, args.timeout, trace_path, run_id),
-                            "executor_client": client}}
-    try:
-        graph = build_graph(batch=args.batch)
-        final = graph.invoke({
-            "user_request": args.request, "reference_images": reference_images,
-            "config": {**config, "batch": args.batch},
-            "session": session_handle, "plan": [], "plan_approved": False,
-            "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
-            "study_ns": "salome_agent_run", "final_script": None, "report": None,
-            "fatal": None, "aborted": False, "run_id": run_id,
-        }, config=cfg)
-        if not args.batch:
-            from salome_agent.interactive import resume_interactive
+    from salome_agent import runner
+    from salome_agent.interactive import terminal_gate
 
-            final = resume_interactive(graph, final, cfg)
+    try:
+        result = runner.run_request(
+            args.request, config, client=client, on_event=lambda ev: None,
+            on_gate=terminal_gate, batch=args.batch, verbose=args.verbose,
+            run_id=run_id, request_timeout=args.timeout,
+            reference_images=reference_images)
     finally:
         if client is not None:
             try:
                 client.close()
             except Exception:
                 pass
-
-    if final.get("__interrupt__"):
-        log.warning("run still paused at an interactive gate - aborting")
-        return 1
+    final = result.final_state
 
     if final.get("aborted"):
         log.info("run aborted at your request - no result.py / report.md written")

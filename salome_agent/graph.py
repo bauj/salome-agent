@@ -1,7 +1,38 @@
+import time
+
 import requests
 from langchain_core.runnables import RunnableConfig
 
+from salome_agent.llm import StreamBudgetExceeded
 from salome_agent.logs import log
+
+
+def _usage_snap(llm) -> dict | None:
+    """The LLM client's running counters, or None if it has no real usage
+    dict (a bare MagicMock in tests) — timing is then skipped."""
+    u = getattr(llm, "usage", None)
+    if not isinstance(u, dict):
+        return None
+    return {"calls": u.get("calls", 0), "prompt_tokens": u.get("prompt_tokens", 0),
+            "completion_tokens": u.get("completion_tokens", 0),
+            "llm_seconds": u.get("llm_seconds", 0.0)}
+
+
+def _timing_delta(before: dict, after: dict, wall: float) -> dict:
+    llm_s = after["llm_seconds"] - before["llm_seconds"]
+    return {"wall": wall, "llm_s": llm_s, "core_s": wall - llm_s,
+            "turns": after["calls"] - before["calls"],
+            "in_tok": after["prompt_tokens"] - before["prompt_tokens"],
+            "out_tok": after["completion_tokens"] - before["completion_tokens"]}
+
+
+def _accum_timing(existing: dict | None, delta: dict) -> dict:
+    """Merge a timing delta into a stage's running timing (retries re-enter
+    the same node, so numbers accumulate)."""
+    t = dict(existing or {})
+    for k, v in delta.items():
+        t[k] = round((t.get(k) or 0) + v, 2)
+    return t
 
 
 def _llm_endpoint_fatal(e: Exception) -> str | None:
@@ -11,8 +42,18 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
     (GH #31). Returns None for any other exception, which keeps propagating."""
     if isinstance(e, requests.HTTPError):
         code = getattr(e.response, "status_code", "?")
+        if code == 429:
+            return ("LLM endpoint rate-limited (HTTP 429) after retries — quota "
+                    "or requests-per-minute exceeded; wait or use a higher-tier key")
+        if isinstance(code, int) and 400 <= code < 500:
+            return (f"LLM endpoint rejected the request (HTTP {code}) — check the "
+                    f"model name, API key and request parameters")
         return (f"LLM endpoint unavailable (HTTP {code}) — the model backend is "
                 f"down or slow; retry later")
+    if isinstance(e, StreamBudgetExceeded):
+        return ("LLM call exceeded llm.timeout total budget — the model kept "
+                "generating (likely a runaway reasoning loop); raise llm.timeout "
+                "or lower the reasoning effort")
     if isinstance(e, (requests.ConnectionError, requests.Timeout)):
         return f"LLM endpoint unreachable ({type(e).__name__}) — retry later"
     if isinstance(e, RuntimeError):
@@ -56,6 +97,38 @@ def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
     return available
 
 
+def retry_context(state: dict, idx: int, client) -> dict | None:
+    """What a geom stage's PREVIOUS attempt left behind, for the retry prompt
+    (GH #38). None on a first attempt. The failed attempt's call_log is
+    reused as-is (both here, for the built-shapes list, and by the caller as
+    the new attempt's seed_call_log) — retry_gate only ever re-enters
+    run_stage for the same stage right after appending at most one
+    retry_hint event, so the LAST such event in history is always the one
+    meant for this retry."""
+    stage = state["stages"].get(idx)
+    if not stage or stage.get("status") != "failed":
+        return None
+    hint = None
+    for event in reversed(state.get("history") or []):
+        if event.get("event") == "retry_hint":
+            hint = event.get("hint")
+            break
+    call_log = stage.get("call_log") or []
+    built = [n for call in call_log for n in (call.get("publish") or [])]
+    built_info = None
+    if built and client is not None:
+        try:
+            m = client.call_tool("measure", {"names": built})
+            if m.get("ok"):
+                built_info = m.get("measurements")
+            else:
+                log.warning("  measure(retry built) failed: %s", m.get("error"))
+        except Exception as e:  # noqa: BLE001 — best-effort, must not abort the retry
+            log.warning("  measure(retry built) errored: %s", e)
+    return {"last_error": state.get("last_error"), "hint": hint, "built": built,
+            "built_info": built_info, "call_log": call_log}
+
+
 # llm_client/executor_client are live, non-serializable objects — they live
 # in the graph's runnable config["configurable"] (never checkpointed), not
 # in RunState itself. Putting them in state made MemorySaver.put() try to
@@ -69,6 +142,8 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     llm = config["configurable"]["llm_client"]
     detail = state["config"]["policy"].get("plan_detail", "balanced")
     log.info("planning... (plan_detail=%s)", detail)
+    snap0 = _usage_snap(llm)
+    t0 = time.monotonic()
     try:
         stage_plans = plan(state["user_request"], llm, detail, images=state.get("reference_images"))
     except Exception as e:  # noqa: BLE001
@@ -81,9 +156,14 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     for i, p in enumerate(stage_plans):
         log.info("  stage %d/%d [%s] %s", i + 1, len(stage_plans), p["module"],
                  p.get("intent", ""))
-    return Command(update={"plan": stage_plans, "stages": blank_stages(stage_plans),
-                           "stage_idx": 0},
-                   goto="plan_gate")
+    update = {"plan": stage_plans, "stages": blank_stages(stage_plans), "stage_idx": 0}
+    if snap0 is not None:
+        pt = {k: round(v, 2) for k, v in
+              _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0).items()}
+        update["plan_timing"] = pt
+        log.info("  planner timing: wall=%ss llm=%ss (%d call)",
+                 pt["wall"], pt["llm_s"], pt["turns"])
+    return Command(update=update, goto="plan_gate")
 
 
 def _run_stage_node(state: dict, config: "RunnableConfig"):
@@ -97,6 +177,8 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     llm = config["configurable"]["llm_client"]
     client = config["configurable"].get("executor_client")
     cap = state["config"]["policy"]["tool_iteration_cap"]
+    snap0 = _usage_snap(llm)
+    t0 = time.monotonic()
 
     stages = dict(state["stages"])
     stage = dict(stages[idx])
@@ -118,12 +200,15 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                 log.warning("  measure(upstream) errored: %s", e)
         tool_selection = state["config"]["policy"].get("tool_selection", "hints")
         verify_cadence = state["config"]["policy"].get("verify_cadence", "final")
+        retry = retry_context(state, idx, client)
         try:
-        result = run_geom_specialist(stage_plan, llm, client, cap,
-                                     upstream=upstream_info,
-                                     tool_selection=tool_selection,
-                                     verify_cadence=verify_cadence,
-                                     reference_images=state.get("reference_images"))
+            result = run_geom_specialist(stage_plan, llm, client, cap,
+                                         upstream=upstream_info,
+                                         tool_selection=tool_selection,
+                                         verify_cadence=verify_cadence,
+                                         reference_images=state.get("reference_images"),
+                                         retry=retry,
+                                         seed_call_log=(retry or {}).get("call_log"))
         except Exception as e:  # noqa: BLE001
             msg = _llm_endpoint_fatal(e)
             if msg is None:
@@ -171,6 +256,10 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             log.warning("  %s specialist: %s", module, result["warning"])
         log.info("  %s specialist produced a %d-char script", module, len(result["script"] or ""))
 
+    if snap0 is not None:
+        stage["timing"] = _accum_timing(
+            stage.get("timing"),
+            _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0))
     stages[idx] = stage
     update["stages"] = stages
     goto = route_after_run_stage({**state, "stages": stages})
@@ -211,7 +300,9 @@ def _verify_exec_node(state: dict, config: "RunnableConfig"):
     client = config["configurable"]["executor_client"]
     timeout = state["config"]["policy"]["exec_timeout_s"]
     log.info("  exec check: running stage script under SALOME (timeout %ss)...", timeout)
+    t0 = time.monotonic()
     result = check_exec(stage["script"], stage["module"], client, timeout)
+    exec_wall = time.monotonic() - t0
 
     if result == "session_died":
         log.error("  SALOME session died during exec - assembling what we have")
@@ -220,12 +311,16 @@ def _verify_exec_node(state: dict, config: "RunnableConfig"):
         log.error("  SALOME agent server poisoned by a timeout - aborting run")
         return Command(update={"fatal": "SALOME agent server poisoned by a stage timeout"},
                        goto="assemble")
-    if result is None:
-        log.info("  exec check: ok")
-        return Command(goto=route_after_verify_exec(state))
 
     stages = dict(state["stages"])
     stage = dict(stage)
+    stage["timing"] = _accum_timing(stage.get("timing"), {"exec_s": exec_wall})
+    stages[idx] = stage
+
+    if result is None:
+        log.info("  exec check: ok")
+        return Command(update={"stages": stages}, goto=route_after_verify_exec(state))
+
     stage["exec_retries"] += 1
     stages[idx] = stage
     cap = state["config"]["policy"]["exec_retries"]
@@ -244,6 +339,11 @@ def _advance_node(state: dict):
     update = advance(state, result_names=result_names)
     update["last_error"] = None
     log.info("  stage %d/%d accepted", idx + 1, len(state["plan"]))
+    tm = (state["stages"][idx].get("timing") or {})
+    if tm:
+        log.info("  stage %d/%d timing: wall=%ss llm=%ss (%s turns) exec=%ss core=%ss",
+                 idx + 1, len(state["plan"]), tm.get("wall", 0), tm.get("llm_s", 0),
+                 tm.get("turns", 0), tm.get("exec_s", 0), tm.get("core_s", 0))
     goto = "assemble" if update["stage_idx"] >= len(state["plan"]) else "run_stage"
     return Command(update=update, goto=goto)
 

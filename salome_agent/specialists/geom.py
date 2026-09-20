@@ -2,7 +2,7 @@ import json
 
 from salome_agent.codegen import _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
-from salome_agent.llm import with_images
+from salome_agent.llm import assistant_tool_turn, continuity_fields, with_images
 from salome_agent.logs import log
 from salome_agent.specialists.tool_selection import initial_offered, resolve_load
 
@@ -185,17 +185,44 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         upstream: dict | None = None,
                         tool_selection: str = "hints",
                         verify_cadence: str = "final",
-                        reference_images: list[str] | None = None) -> dict:
+                        reference_images: list[str] | None = None,
+                        retry: dict | None = None,
+                        seed_call_log: list[dict] | None = None) -> dict:
     try:
         return _run(stage_plan, llm, client, iteration_cap, upstream,
-                    tool_selection, verify_cadence, reference_images)
+                    tool_selection, verify_cadence, reference_images, retry, seed_call_log)
     except (SessionDied, SessionPoisoned) as e:
         return {"fatal": f"SALOME agent server unavailable: {e}"}
 
 
+def _retry_block(retry: dict) -> str:
+    lines = []
+    err = retry.get("last_error")
+    if err:
+        lines.append(f"Your previous attempt at this stage failed: {err.get('message')}")
+    if retry.get("hint"):
+        lines.append(f"User hint for this retry: {retry['hint']}")
+    built = retry.get("built") or []
+    if built:
+        lines.append("Shapes your previous attempt already built and published — reuse "
+                     "them if they are still correct, or rebuild only the ones the error "
+                     "was actually in:")
+        built_info = retry.get("built_info") or {}
+        for name in built:
+            info = built_info.get(name)
+            if info:
+                lines.append(f"  {name} — bbox {info['bbox']}, size {info['size']}, "
+                             f"centre {info['centre']}")
+            else:
+                lines.append(f"  {name}")
+    return "\n".join(lines)
+
+
 def _run(stage_plan: dict, llm, client, iteration_cap: int,
          upstream: dict | None = None, tool_selection: str = "hints",
-         verify_cadence: str = "final", reference_images: list[str] | None = None) -> dict:
+         verify_cadence: str = "final", reference_images: list[str] | None = None,
+         retry: dict | None = None,
+         seed_call_log: list[dict] | None = None) -> dict:
     content = str(stage_plan)
     if upstream:
         lines = []
@@ -209,10 +236,15 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                     "(e.g. to measure or align against) — reference them by these exact "
                     "names, but do not modify, colour or finish_stage them unless this "
                     "stage's own task says to:\n" + "\n".join(lines))
+    if retry:
+        content += "\n\n" + _retry_block(retry)
     messages = [{"role": "system", "content": _geom_prompt(verify_cadence)},
                 {"role": "user", "content": with_images(content, reference_images)}]
-    call_log: list[dict] = []
-    tool_results: dict[int, dict] = {}  # message index -> full result dict
+    # A retry seeds call_log with the failed attempt's records so a shape the
+    # model reuses by name (rather than rebuilding) stays traceable by
+    # codegen's reachability pass instead of silently dropping out of
+    # result.py (GH #38).
+    call_log: list[dict] = list(seed_call_log) if seed_call_log else []
     last_error = None
     # Stage-local record of calls that already failed: hash((tool, args)) ->
     # error. A byte-identical repeat is answered here without a round-trip to
@@ -245,12 +277,15 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         log.debug("    geom iter %d/%d: asking LLM...", i + 1, iteration_cap)
         tools = ([all_defs[n] for n in sorted(offered) if n in all_defs]
                  + [finish_def, load_def])
-        # Compact every prior tool result; only the newest keeps full detail.
-        latest = max(tool_results) if tool_results else -1
-        send = [{**m, "content": str(_compact_result(tool_results[idx]))}
-                if idx in tool_results and idx != latest else m
-                for idx, m in enumerate(messages)]
-        response = llm.chat(messages=send, tools=tools)
+        # Tool results are stored already compacted (see below), so `messages`
+        # is sent verbatim: each turn's request extends the previous one byte
+        # for byte, which keeps a gateway's prefix/KV cache alive. `load_tools`
+        # widening `tools` mid-stage is the one remaining prefix break.
+        # A shallow copy per call: the message dicts are never mutated after
+        # append, so the copy is byte-identical content, and each request is a
+        # verbatim extension of the last.
+        response = llm.chat(messages=list(messages), tools=tools,
+                            module=stage_plan.get("module"))
         if response.get("content"):
             log.debug("    LLM reasoning: %s", response["content"])
         calls = response["tool_calls"]
@@ -258,7 +293,8 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         if not calls:
             # tool_choice="auto" — the model replied with prose and no call.
             # Keep its message, nudge it, and let the loop try again.
-            messages.append({"role": "assistant", "content": response["content"] or "(no reply)"})
+            messages.append({"role": "assistant", "content": response["content"] or "(no reply)",
+                             **continuity_fields(response.get("raw_message"))})
             messages.append({"role": "user", "content": "You did not call a tool. "
                              "Call at least one tool now — finish_stage once the geometry is done."})
             continue
@@ -271,11 +307,7 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
         for j, c in enumerate(calls):
             c.setdefault("id", None)
             c["id"] = c["id"] or f"call_{i}_{j}"
-        messages.append({"role": "assistant", "content": None, "tool_calls": [
-            {"id": c["id"], "type": "function",
-             "function": {"name": c["name"], "arguments": json.dumps(c["args"])}}
-            for c in calls
-        ]})
+        messages.append(assistant_tool_turn(calls, response.get("raw_message")))
         batch_error = None
         finish_call = None
         for k, c in enumerate(calls):
@@ -308,8 +340,8 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                     "gather information first (measure / get_subshapes / check_shape).")}
                 batch_error = {"phase": "exec", "message": failed_calls[key],
                                "offending_line": None, "traceback": None}
-                tool_results[len(messages)] = result
-                messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
+                messages.append({"role": "tool", "tool_call_id": call_id,
+                                 "content": str(_compact_result(result))})
                 continue
             result = client.call_tool(name, args)
             if result["ok"]:
@@ -324,8 +356,8 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                 batch_error = {"phase": "exec", "message": result["error"],
                                "offending_line": None, "traceback": None}
                 log.debug("    tool %s failed: %s", name, result["error"])
-            tool_results[len(messages)] = result
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": str(result)})
+            messages.append({"role": "tool", "tool_call_id": call_id,
+                             "content": str(_compact_result(result))})
         # A later ok call in the same batch must not mask an earlier failure —
         # settle last_error once per turn from the batch outcome.
         last_error = batch_error

@@ -194,7 +194,7 @@ Run the result on its own, with no agent involved:
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--tools {hints,all}` | Geom tool retrieval. `hints` (default): the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the full geom registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
-| `--timeout SECONDS` | Override per-request LLM timeout (`llm.timeout` in config). |
+| `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`. |
 
 ### GUI plugin setup

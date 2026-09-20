@@ -16,13 +16,16 @@ class StageError(TypedDict):
     traceback: Optional[str]
 
 
-class StageRecord(TypedDict):
+class StageRecord(TypedDict, total=False):
     module: str
     status: Literal["pending", "ok", "failed", "skipped"]
     script: Optional[str]
     call_log: Optional[list[dict]]
     static_retries: int
     exec_retries: int
+    # {wall, llm_s, core_s, exec_s, turns, in_tok, out_tok} — accumulated
+    # across retry re-entries. Written by graph nodes, read by report.py.
+    timing: dict
 
 
 class SessionHandle(TypedDict):
@@ -41,6 +44,7 @@ class RunState(TypedDict):
     plan: list[StagePlan]
     plan_approved: bool
     stage_idx: int
+    plan_timing: Optional[dict]
 
     session: SessionHandle
     study_ns: str

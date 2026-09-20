@@ -1206,7 +1206,10 @@ def tool_set_color(executor, args: dict):
     # Live call for immediate GUI update
     shape = executor.geom_bindings[args["shape"]]
     # Import SALOMEDS at call time
-    from salome.kernel import SALOMEDS
+    try:
+        from salome.kernel import SALOMEDS
+    except ImportError:  # SALOME <= 9.16 layout
+        import SALOMEDS
     color = SALOMEDS.Color(args["red"] / 255.0, args["green"] / 255.0, args["blue"] / 255.0)
     shape.SetColor(color)
 
@@ -2117,6 +2120,31 @@ def _reldiff(a: float, b: float) -> float:
     return abs(a - b) / max(abs(b), 1e-9)
 
 
+def _bboxes_all_disjoint(geompy, shapes, tol: float = 1e-4) -> bool:
+    """True only if every pair of operand bounding boxes is separated by more
+    than `tol` on at least one axis — i.e. no two parts can be touching. Used
+    as a cheap broad phase before the fuse "parts do not overlap or touch"
+    note: face contact contributes zero overlap volume, so the volume check
+    alone cannot tell an abutting fuse from a scattered one (task 222).
+    Conservative: any BoundingBox failure returns False (suppress the note)."""
+    boxes = []
+    for s in shapes:
+        info = _shape_info(geompy, s)
+        if info is None:
+            return False
+        boxes.append(info["bbox"])
+    if len(boxes) < 2:
+        return False
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            a, b = boxes[i], boxes[j]
+            sep = any(b[2 * k] - a[2 * k + 1] > tol or a[2 * k] - b[2 * k + 1] > tol
+                      for k in range(3))
+            if not sep:
+                return False
+    return True
+
+
 def _delta_note(executor, name: str, args: dict, result: dict) -> str | None:
     """One-line anomaly note for a boolean or transform whose numeric outcome
     looks wrong — a cut that removed nothing, a fuse of parts that never
@@ -2138,8 +2166,11 @@ def _delta_note(executor, name: str, args: dict, result: dict) -> str | None:
         vs = [_bp_volume(geompy, gb[s]) for s in args.get("shapes", []) if s in gb]
         if len(vs) >= 2 and all(v is not None for v in vs) and sum(vs) > 0:
             if _reldiff(out_v, sum(vs)) <= 0.005:
-                return ("fuse: the result volume equals the sum of the operands "
-                        "— the parts do not overlap or touch; check their placement")
+                shapes = [gb[s] for s in args.get("shapes", []) if s in gb]
+                if _bboxes_all_disjoint(geompy, shapes):
+                    return ("fuse: the result volume equals the sum of the operands "
+                            "and their bounding boxes are disjoint — the parts are "
+                            "separated, not joined; check their placement")
         return None
 
     if name == "cut":

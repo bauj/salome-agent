@@ -1,5 +1,6 @@
 import json
 
+from salome_agent.llm import assistant_tool_turn, continuity_fields
 from salome_agent.logs import log
 
 TOOL_SCHEMAS = {
@@ -47,13 +48,15 @@ def run_specialist(stage_plan: dict, llm, tools: dict, iteration_cap: int,
     last_code = ""
     for i in range(iteration_cap):
         log.debug("    specialist iter %d/%d: asking LLM...", i + 1, iteration_cap)
-        response = llm.chat(messages=messages, tools=tool_defs)
+        response = llm.chat(messages=messages, tools=tool_defs,
+                            module=stage_plan.get("module"))
         if response.get("content"):
             log.debug("    LLM reasoning: %s", response["content"])
         log.debug("    LLM -> %s", response["tool_call"])
         if response["tool_call"] is None:
             # tool_choice="auto" — prose, no call. Keep it, nudge, retry.
-            messages.append({"role": "assistant", "content": response["content"] or "(no reply)"})
+            messages.append({"role": "assistant", "content": response["content"] or "(no reply)",
+                             **continuity_fields(response.get("raw_message"))})
             messages.append({"role": "user", "content": "You did not call a tool. "
                              "Call exactly one tool now — emit_script once the script is ready."})
             continue
@@ -61,10 +64,9 @@ def run_specialist(stage_plan: dict, llm, tools: dict, iteration_cap: int,
         # result — see salome_agent/specialists/geom.py for why (same bug,
         # same fix, found live against a real LLM).
         call_id = response.get("tool_call_id") or "call_0"
-        messages.append({"role": "assistant", "content": None, "tool_calls": [
-            {"id": call_id, "type": "function",
-             "function": {"name": response["tool_call"], "arguments": json.dumps(response["args"])}},
-        ]})
+        messages.append(assistant_tool_turn(
+            [{"name": response["tool_call"], "args": response["args"], "id": call_id}],
+            response.get("raw_message")))
         if response["tool_call"] == "emit_script":
             return {"script": response["args"]["code"], "warning": None}
         tool = tools.get(response["tool_call"])

@@ -4,13 +4,62 @@ import pytest
 import requests
 from langgraph.types import Command
 
-from salome_agent.graph import (build_graph, route_after_run_stage,
+from salome_agent.graph import (build_graph, retry_context, route_after_run_stage,
                                 route_after_verify_exec, select_upstream)
 
 
 def test_select_upstream_passes_all_published_names_by_default():
     stages = {0: {"status": "ok", "result_names": ["box_1", "box_2"]}}
     assert select_upstream({"inputs": []}, stages, 1) == ["box_1", "box_2"]
+
+
+def test_retry_context_is_none_on_a_first_attempt():
+    state = {"stages": {0: {"status": "pending"}}, "history": [], "last_error": None}
+    assert retry_context(state, 0, client=None) is None
+
+
+def test_retry_context_gathers_error_hint_and_built_shapes():
+    state = {
+        "stages": {0: {"status": "failed",
+                       "call_log": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                    "out_vars": ["box_1"], "publish": ["box_1"]}]}},
+        "history": [{"event": "retry_hint", "hint": "move it further right"}],
+        "last_error": {"phase": "exec", "message": "bad box", "offending_line": None,
+                       "traceback": None},
+    }
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": True, "measurements": {
+        "box_1": {"bbox": [0, 10, 0, 10, 0, 10], "size": [10, 10, 10], "centre": [5, 5, 5]}}}
+    ctx = retry_context(state, 0, client=client)
+    assert ctx["last_error"]["message"] == "bad box"
+    assert ctx["hint"] == "move it further right"
+    assert ctx["built"] == ["box_1"]
+    assert ctx["built_info"]["box_1"]["centre"] == [5, 5, 5]
+    assert ctx["call_log"] == state["stages"][0]["call_log"]
+    client.call_tool.assert_called_once_with("measure", {"names": ["box_1"]})
+
+
+def test_retry_context_without_a_hint_leaves_hint_none():
+    state = {
+        "stages": {0: {"status": "failed", "call_log": []}},
+        "history": [],
+        "last_error": {"phase": "exec", "message": "bad box", "offending_line": None,
+                       "traceback": None},
+    }
+    assert retry_context(state, 0, client=None)["hint"] is None
+
+
+def test_retry_context_measure_failure_is_best_effort():
+    state = {
+        "stages": {0: {"status": "failed",
+                       "call_log": [{"fn": "X", "args": [], "out_vars": ["a"], "publish": ["a"]}]}},
+        "history": [], "last_error": None,
+    }
+    client = MagicMock()
+    client.call_tool.side_effect = RuntimeError("session busy")
+    ctx = retry_context(state, 0, client=client)
+    assert ctx["built"] == ["a"]
+    assert ctx["built_info"] is None
 
 
 def test_select_upstream_scopes_to_declared_inputs_when_they_resolve():
@@ -93,7 +142,7 @@ def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
 
     def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
                                  tool_selection="hints", verify_cadence="final",
-                                 reference_images=None):
+                                 reference_images=None, retry=None, seed_call_log=None):
         captured["upstream"] = upstream
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["walls_1"]}
@@ -149,6 +198,15 @@ def test_plan_node_turns_endpoint_5xx_into_a_clean_fatal(monkeypatch):
     assert cmd.update["fatal"].startswith("LLM endpoint")
 
 
+def test_endpoint_fatal_message_distinguishes_429_and_4xx():
+    from salome_agent.graph import _llm_endpoint_fatal
+
+    assert "rate-limited" in _llm_endpoint_fatal(_http_error(429))
+    assert "429" in _llm_endpoint_fatal(_http_error(429))
+    assert "rejected the request" in _llm_endpoint_fatal(_http_error(404))
+    assert "backend is" in _llm_endpoint_fatal(_http_error(502))
+
+
 def test_plan_node_still_raises_a_non_endpoint_error(monkeypatch):
     from salome_agent import graph
 
@@ -200,7 +258,7 @@ def test_first_geom_stage_does_not_call_measure(monkeypatch):
 
     def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
                                  tool_selection="hints", verify_cadence="final",
-                                 reference_images=None):
+                                 reference_images=None, retry=None, seed_call_log=None):
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["box_1"]}
 
@@ -219,3 +277,82 @@ def test_first_geom_stage_does_not_call_measure(monkeypatch):
     graph._run_stage_node(state, config)
     client.call_tool.assert_not_called()
     assert captured["tool_selection"] == "all"
+
+
+class _FakeLLM:
+    """An llm client with a real usage dict a fake specialist can advance."""
+    def __init__(self):
+        self.usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                      "llm_seconds": 0.0}
+
+    def burn(self, calls, in_tok, out_tok, seconds):
+        self.usage["calls"] += calls
+        self.usage["prompt_tokens"] += in_tok
+        self.usage["completion_tokens"] += out_tok
+        self.usage["llm_seconds"] += seconds
+
+
+def _geom_state(status_stage=None):
+    return {
+        "stage_idx": 0,
+        "plan": [{"module": "geom", "intent": "box", "params": {}, "inputs": []}],
+        "stages": {0: status_stage or {"module": "geom", "status": "pending"}},
+        "config": {"policy": {"tool_iteration_cap": 5, "on_stage_failure": "abort"}},
+        "last_error": None, "history": [],
+    }
+
+
+def test_run_stage_node_records_per_stage_timing(monkeypatch):
+    from salome_agent import graph
+
+    llm = _FakeLLM()
+
+    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
+                 verify_cadence="final", reference_images=None, retry=None, seed_call_log=None):
+        llm.burn(calls=4, in_tok=12000, out_tok=1500, seconds=20.0)
+        return {"call_log": [], "result_names": ["box_1"]}
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    state = _geom_state()
+    cmd = graph._run_stage_node(state, {"configurable": {"llm_client": llm,
+                                                         "executor_client": None}})
+    tm = cmd.update["stages"][0]["timing"]
+    assert tm["turns"] == 4 and tm["in_tok"] == 12000 and tm["out_tok"] == 1500
+    assert tm["llm_s"] == 20.0
+    assert tm["core_s"] == round(tm["wall"] - 20.0, 2)
+
+
+def test_run_stage_node_timing_accumulates_across_a_retry(monkeypatch):
+    from salome_agent import graph
+
+    llm = _FakeLLM()
+
+    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
+                 verify_cadence="final", reference_images=None, retry=None, seed_call_log=None):
+        llm.burn(calls=3, in_tok=5000, out_tok=600, seconds=10.0)
+        return {"call_log": [], "result_names": ["box_1"]}
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    prior = {"module": "geom", "status": "failed",
+             "timing": {"wall": 12.0, "llm_s": 10.0, "core_s": 2.0, "turns": 3,
+                        "in_tok": 5000, "out_tok": 600}}
+    state = _geom_state(status_stage=prior)
+    cmd = graph._run_stage_node(state, {"configurable": {"llm_client": llm,
+                                                         "executor_client": None}})
+    tm = cmd.update["stages"][0]["timing"]
+    assert tm["turns"] == 6 and tm["in_tok"] == 10000
+    assert tm["llm_s"] == 20.0
+
+
+def test_run_stage_node_skips_timing_without_a_real_usage_dict(monkeypatch):
+    from salome_agent import graph
+
+    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
+                 verify_cadence="final", reference_images=None, retry=None, seed_call_log=None):
+        return {"call_log": [], "result_names": ["box_1"]}
+
+    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    state = _geom_state()
+    cmd = graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
+                                                         "executor_client": None}})
+    assert "timing" not in cmd.update["stages"][0]

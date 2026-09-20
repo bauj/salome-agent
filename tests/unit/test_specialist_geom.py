@@ -3,11 +3,11 @@ from unittest.mock import MagicMock
 from salome_agent.specialists.geom import run_geom_specialist
 
 
-def _resp(*calls, content=None):
+def _resp(*calls, content=None, raw_message=None):
     """Build a chat() return value. Each call is (name, args_dict); pass none
     for a prose-only turn."""
     return {"tool_calls": [{"name": n, "args": a, "id": None} for n, a in calls],
-            "content": content}
+            "content": content, "raw_message": raw_message}
 
 
 def test_finish_stage_returns_call_log_and_result_names():
@@ -118,7 +118,7 @@ def test_no_tool_call_is_nudged_then_loop_continues():
                for m in second)
 
 
-def test_prior_tool_results_are_compacted_latest_kept_full():
+def test_all_tool_results_are_compacted_including_the_newest():
     llm = MagicMock()
     llm.chat.side_effect = [
         _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
@@ -143,14 +143,49 @@ def test_prior_tool_results_are_compacted_latest_kept_full():
     ]
     run_geom_specialist({"module": "geom", "intent": "two boxes", "params": {}, "inputs": []},
                         llm, client, iteration_cap=6)
-    # 3rd chat call: turn-1 tool result compacted, turn-2 (latest) full.
+    # 3rd chat call: every prior tool result is compacted, newest included.
     sent = llm.chat.call_args_list[2].kwargs["messages"]
     tool_msgs = [m["content"] for m in sent if m.get("role") == "tool"]
     assert len(tool_msgs) == 2
-    assert "MakeBoxDXDYDZ" not in tool_msgs[0]      # verbose records dropped
+    for tm in tool_msgs:
+        assert "MakeBoxDXDYDZ" not in tm            # verbose records dropped
     assert "box_1" in tool_msgs[0]                  # published name still there
     assert "'centre': [5, 5, 5]" in tool_msgs[0]    # shape_info kept
-    assert "MakeBoxDXDYDZ" in tool_msgs[1]          # latest turn untouched
+    assert "box_2" in tool_msgs[1]
+    assert "'centre': [2.5, 2.5, 2.5]" in tool_msgs[1]
+
+
+def test_message_prefix_is_byte_stable_across_turns():
+    # The transcript sent each turn must extend the previous one verbatim (no
+    # per-turn mutation of earlier messages) so a gateway's prefix/KV cache
+    # survives. Only the appended tail and a widening tool list may differ.
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
+        _resp(("make_box", {"dx": 5, "dy": 5, "dz": 5})),
+        _resp(("finish_stage", {"result_names": ["box_2"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    client.call_tool.side_effect = [
+        {"ok": True,
+         "records": [{"fn": "MakeBoxDXDYDZ", "args": [], "out_vars": ["box_1"],
+                      "publish": ["box_1"]}],
+         "sanity": {"ok": True}, "result_shape": "box_1",
+         "shape_info": {"bbox": [0, 10, 0, 10, 0, 10], "size": [10, 10, 10],
+                        "centre": [5, 5, 5]}},
+        {"ok": True,
+         "records": [{"fn": "MakeBoxDXDYDZ", "args": [], "out_vars": ["box_2"],
+                      "publish": ["box_2"]}],
+         "sanity": {"ok": True}, "result_shape": "box_2",
+         "shape_info": {"bbox": [0, 5, 0, 5, 0, 5], "size": [5, 5, 5],
+                        "centre": [2.5, 2.5, 2.5]}},
+    ]
+    run_geom_specialist({"module": "geom", "intent": "two boxes", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=6, verify_cadence="none")
+    sent = [c.kwargs["messages"] for c in llm.chat.call_args_list]
+    for prev, cur in zip(sent, sent[1:]):
+        assert cur[:len(prev)] == prev
 
 
 def test_upstream_shape_info_is_injected_into_the_opening_prompt():
@@ -178,6 +213,56 @@ def test_no_upstream_leaves_the_prompt_unchanged():
                         llm, client, iteration_cap=3)
     sent = llm.chat.call_args.kwargs["messages"][1]["content"]
     assert "already in the study" not in sent
+
+
+def test_retry_context_is_injected_into_the_opening_prompt():
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["box_1"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    run_geom_specialist(
+        {"module": "geom", "intent": "box", "params": {}, "inputs": []},
+        llm, client, iteration_cap=3,
+        retry={"last_error": {"message": "MakeBoxDXDYDZ failed"},
+               "hint": "make it smaller", "built": ["box_1"],
+               "built_info": {"box_1": {"bbox": [0, 10, 0, 10, 0, 10],
+                                        "size": [10, 10, 10], "centre": [5, 5, 5]}},
+               "call_log": []},
+    )
+    sent = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "MakeBoxDXDYDZ failed" in sent
+    assert "make it smaller" in sent
+    assert "box_1" in sent
+    assert "centre [5, 5, 5]" in sent
+
+
+def test_no_retry_leaves_the_prompt_unchanged():
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=3)
+    sent = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "previous attempt" not in sent
+
+
+def test_seed_call_log_keeps_reused_shapes_reachable():
+    # retry's opening prompt tells the model box_1 already exists; the model
+    # names it in finish_stage without rebuilding — the seeded call_log record
+    # must still be there so codegen can trace it (not silently dropped).
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["box_1"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    seed = [{"fn": "MakeBoxDXDYDZ", "args": [], "out_vars": ["box_1"], "publish": ["box_1"]}]
+    result = run_geom_specialist(
+        {"module": "geom", "intent": "box", "params": {}, "inputs": []},
+        llm, client, iteration_cap=3, seed_call_log=seed,
+    )
+    assert client.call_tool.call_count == 0
+    assert result["result_names"] == ["box_1"]
+    assert result["call_log"] == seed
 
 
 def test_system_prompt_mandates_a_placement_self_check():
@@ -237,6 +322,30 @@ def test_batched_calls_all_run_in_one_turn():
     ids = [tc["id"] for tc in asst[0]["tool_calls"]]
     tool_ids = [m["tool_call_id"] for m in sent if m.get("role") == "tool"]
     assert tool_ids == ids
+
+
+def test_provider_continuity_field_is_echoed_into_history_reasoning_dropped():
+    # Gemini 3 hangs thought_signature on the individual tool_call, not the message.
+    raw = {"role": "assistant", "content": None,
+           "reasoning_content": "long private thoughts",
+           "tool_calls": [{"id": None,
+                           "extra_content": {"google": {"thought_signature": "SIG"}},
+                           "function": {"name": "make_box", "arguments": "{}"}}]}
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("make_box", {"dx": 1, "dy": 1, "dz": 1}), raw_message=raw),
+        _resp(("finish_stage", {"result_names": ["box_1"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    client.call_tool.return_value = {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                     "out_vars": ["box_1"], "publish": ["box_1"]}]}
+    run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=5, verify_cadence="none")
+    sent = llm.chat.call_args_list[1].kwargs["messages"]
+    asst = next(m for m in sent if m.get("role") == "assistant" and m.get("tool_calls"))
+    assert asst["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "SIG"}}
+    assert "reasoning_content" not in asst
 
 
 def test_batch_ending_in_finish_stage_runs_earlier_calls_then_finishes():

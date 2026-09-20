@@ -28,10 +28,18 @@ def _find_object_factory(salome_kernel):
 
 
 def build_namespace(live: bool) -> dict:
+    # KERNEL moved its modules under salome.kernel after 9.16; SALOME <= 9.16
+    # exposes them as top-level modules (KernelBasis, salome, SALOMEDS).
     if not live:
-        from salome.kernel import KernelBasis
+        try:
+            from salome.kernel import KernelBasis
+        except ImportError:
+            import KernelBasis
         KernelBasis.setSSLMode(True)
-    from salome.kernel import salome, SALOMEDS
+    try:
+        from salome.kernel import salome, SALOMEDS
+    except ImportError:
+        import salome, SALOMEDS
     salome.salome_init()   # guarded — no-op if the GUI already ran it (live=True)
     from salome.geom import geomBuilder
     geompy = geomBuilder.New()
