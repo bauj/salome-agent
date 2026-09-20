@@ -899,3 +899,29 @@ def test_trace_records_ttft(monkeypatch, tmp_path):
         messages=[{"role": "user", "content": "hi"}])
     entry = json.loads(trace.read_text().splitlines()[0])
     assert "ttft_s" in entry["response"]
+
+
+def test_stream_is_decoded_as_utf8_not_latin1(monkeypatch):
+    seen = {}
+
+    class _Resp(_FakeResp):
+        encoding = "ISO-8859-1"  # what requests guesses for a charset-less SSE reply
+
+        def iter_lines(self, chunk_size=512, decode_unicode=False):
+            seen["encoding"] = self.encoding
+            yield from super().iter_lines(chunk_size, decode_unicode)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _Resp({"choices": [{"message": {"content": "{}"}}]}))
+    LLMClient("http://x/v1", "k", "m", ssl_cert_file="").chat(
+        messages=[{"role": "user", "content": "hi"}])
+    assert seen["encoding"] == "utf-8"
+
+
+def test_length_finish_reason_warns_about_truncation(monkeypatch, caplog):
+    body = {"choices": [{"message": {"content": "{}"}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 2700, "completion_tokens": 1396}}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    LLMClient("http://x/v1", "k", "m", ssl_cert_file="").chat(
+        messages=[{"role": "user", "content": "hi"}])
+    assert "cut off" in caplog.text and "2700" in caplog.text

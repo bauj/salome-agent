@@ -605,3 +605,16 @@ def test_compact_result_keeps_a_delta_note():
     from salome_agent.specialists.geom import _compact_result
     compact = _compact_result({"ok": True, "records": [], "delta": "cut: removed nothing"})
     assert compact["delta"] == "cut: removed nothing"
+
+
+def test_image_description_is_injected_as_text_never_as_images():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("finish_stage", {"result_names": []}))]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": []}
+    run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=3,
+                        image_description="Summary: an L-bracket")
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert isinstance(user, str)
+    assert "Summary: an L-bracket" in user

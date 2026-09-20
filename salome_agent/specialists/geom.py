@@ -2,7 +2,7 @@ import json
 
 from salome_agent.codegen import _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
-from salome_agent.llm import assistant_tool_turn, continuity_fields, with_images
+from salome_agent.llm import assistant_tool_turn, continuity_fields
 from salome_agent.logs import log
 from salome_agent.specialists.tool_selection import initial_offered, resolve_load
 
@@ -59,13 +59,13 @@ need a tool that is not in your list, call load_tools with specific tool
 `names` or whole `categories` (primitive, sketch, swept, boolean, transform,
 feature, display, query) to add them, then call the tool you wanted.
 
-If reference image(s) are attached to your first message, treat them as the
-visual target for the geometry you build: match the proportions, shape and
-relative placement they show. Several images are usually different
-views/plans of the same part (e.g. front, top, side) -- read them together
-to infer the 3D shape, not as separate parts. Use explicit numeric
-dimensions from the request/params when given; only estimate a dimension
-from the image(s) when none is given."""
+If your first message includes a "Description of the user's reference image(s)"
+block, treat it as the visual target for the geometry you build: match the
+proportions, shape and relative placement it gives. You do not see the images
+themselves, only that description. Use explicit numeric dimensions from the
+request/params first, then dimensions the description says were read from the
+image; values marked with "~" are estimates. If a stage-level dimension is
+missing, estimate it from the description rather than inventing detail."""
 
 # policy.verify_cadence — how hard the specialist is pushed to self-check
 # shape placement. shape_info rides on every ok result for free; the question
@@ -185,12 +185,12 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         upstream: dict | None = None,
                         tool_selection: str = "hints",
                         verify_cadence: str = "final",
-                        reference_images: list[str] | None = None,
+                        image_description: str | None = None,
                         retry: dict | None = None,
                         seed_call_log: list[dict] | None = None) -> dict:
     try:
         return _run(stage_plan, llm, client, iteration_cap, upstream,
-                    tool_selection, verify_cadence, reference_images, retry, seed_call_log)
+                    tool_selection, verify_cadence, image_description, retry, seed_call_log)
     except (SessionDied, SessionPoisoned) as e:
         return {"fatal": f"SALOME agent server unavailable: {e}"}
 
@@ -220,7 +220,7 @@ def _retry_block(retry: dict) -> str:
 
 def _run(stage_plan: dict, llm, client, iteration_cap: int,
          upstream: dict | None = None, tool_selection: str = "hints",
-         verify_cadence: str = "final", reference_images: list[str] | None = None,
+         verify_cadence: str = "final", image_description: str | None = None,
          retry: dict | None = None,
          seed_call_log: list[dict] | None = None) -> dict:
     content = str(stage_plan)
@@ -236,10 +236,15 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                     "(e.g. to measure or align against) — reference them by these exact "
                     "names, but do not modify, colour or finish_stage them unless this "
                     "stage's own task says to:\n" + "\n".join(lines))
+    if image_description:
+        content += ("\n\nDescription of the user's reference image(s), written by an "
+                    "image-analysis agent (you do not see the images themselves). Use it "
+                    "for proportions and placement; the stage's own params win over it:\n"
+                    + image_description)
     if retry:
         content += "\n\n" + _retry_block(retry)
     messages = [{"role": "system", "content": _geom_prompt(verify_cadence)},
-                {"role": "user", "content": with_images(content, reference_images)}]
+                {"role": "user", "content": content}]
     # A retry seeds call_log with the failed attempt's records so a shape the
     # model reuses by name (rather than rebuilding) stays traceable by
     # codegen's reachability pass instead of silently dropping out of

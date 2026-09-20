@@ -91,3 +91,11 @@ def test_plan_unknown_detail_falls_back_to_no_hint():
     system = llm.chat.call_args.kwargs["messages"][0]["content"]
     from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT
     assert system == PLANNER_SYSTEM_PROMPT
+
+
+def test_plan_appends_image_description_to_the_request():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("make this bracket", llm, image_description="Summary: an L-bracket")
+    user_content = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert user_content == "make this bracket\n\nImage description:\nSummary: an L-bracket"

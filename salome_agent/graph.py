@@ -135,6 +135,34 @@ def retry_context(state: dict, idx: int, client) -> dict | None:
 # msgpack them and fail with "Type is not msgpack serializable: MagicMock"
 # the first time a live end-to-end run actually exercised the checkpointer.
 
+def _describe_image_node(state: dict, config: "RunnableConfig"):
+    from langgraph.types import Command
+    from salome_agent.nodes.vision import describe_images, format_description
+
+    images = state.get("reference_images")
+    if not images:
+        return Command(goto="plan")
+    llm = config["configurable"]["llm_client"]
+    log.info("describing %d reference image(s)...", len(images))
+    snap0 = _usage_snap(llm)
+    t0 = time.monotonic()
+    try:
+        desc = describe_images(state["user_request"], images, llm)
+    except Exception as e:  # noqa: BLE001
+        msg = _llm_endpoint_fatal(e)
+        if msg is None:
+            raise
+        log.error("%s", msg)
+        return Command(update={"fatal": msg}, goto="assemble")
+    text = format_description(desc)
+    log.info("image description:\n%s", text)
+    update = {"image_description": text}
+    if snap0 is not None:
+        vt = _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0)
+        log.info("  vision timing: wall=%.1fs llm=%.1fs", vt["wall"], vt["llm_s"])
+    return Command(update=update, goto="plan")
+
+
 def _plan_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
     from salome_agent.nodes.planner import blank_stages, plan
@@ -145,7 +173,12 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     snap0 = _usage_snap(llm)
     t0 = time.monotonic()
     try:
-        stage_plans = plan(state["user_request"], llm, detail, images=state.get("reference_images"))
+        description = state.get("image_description")
+        # The vision agent's description replaces the raw images for the planner;
+        # they are only passed through if no description was produced.
+        stage_plans = plan(state["user_request"], llm, detail,
+                           images=None if description else state.get("reference_images"),
+                           image_description=description)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -206,7 +239,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                                          upstream=upstream_info,
                                          tool_selection=tool_selection,
                                          verify_cadence=verify_cadence,
-                                         reference_images=state.get("reference_images"),
+                                         image_description=state.get("image_description"),
                                          retry=retry,
                                          seed_call_log=(retry or {}).get("call_log"))
         except Exception as e:  # noqa: BLE001
@@ -391,6 +424,7 @@ def build_graph(batch: bool):
     from salome_agent.nodes.gates import plan_gate, retry_gate
 
     g = StateGraph(RunState)
+    g.add_node("describe_image", _describe_image_node)
     g.add_node("plan", _plan_node)
     g.add_node("plan_gate", plan_gate)
     g.add_node("run_stage", _run_stage_node)
@@ -401,5 +435,5 @@ def build_graph(batch: bool):
     g.add_node("skip", _skip_node)
     g.add_node("assemble", _assemble_node)
     g.add_node("report", _report_node)
-    g.add_edge(START, "plan")
+    g.add_edge(START, "describe_image")
     return g.compile(checkpointer=MemorySaver())

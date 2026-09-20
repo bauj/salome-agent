@@ -142,7 +142,7 @@ def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
 
     def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
                                  tool_selection="hints", verify_cadence="final",
-                                 reference_images=None, retry=None, seed_call_log=None):
+                                 image_description=None, retry=None, seed_call_log=None):
         captured["upstream"] = upstream
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["walls_1"]}
@@ -258,7 +258,7 @@ def test_first_geom_stage_does_not_call_measure(monkeypatch):
 
     def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
                                  tool_selection="hints", verify_cadence="final",
-                                 reference_images=None, retry=None, seed_call_log=None):
+                                 image_description=None, retry=None, seed_call_log=None):
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["box_1"]}
 
@@ -308,7 +308,7 @@ def test_run_stage_node_records_per_stage_timing(monkeypatch):
     llm = _FakeLLM()
 
     def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
-                 verify_cadence="final", reference_images=None, retry=None, seed_call_log=None):
+                 verify_cadence="final", image_description=None, retry=None, seed_call_log=None):
         llm.burn(calls=4, in_tok=12000, out_tok=1500, seconds=20.0)
         return {"call_log": [], "result_names": ["box_1"]}
 
@@ -328,7 +328,7 @@ def test_run_stage_node_timing_accumulates_across_a_retry(monkeypatch):
     llm = _FakeLLM()
 
     def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
-                 verify_cadence="final", reference_images=None, retry=None, seed_call_log=None):
+                 verify_cadence="final", image_description=None, retry=None, seed_call_log=None):
         llm.burn(calls=3, in_tok=5000, out_tok=600, seconds=10.0)
         return {"call_log": [], "result_names": ["box_1"]}
 
@@ -348,7 +348,7 @@ def test_run_stage_node_skips_timing_without_a_real_usage_dict(monkeypatch):
     from salome_agent import graph
 
     def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
-                 verify_cadence="final", reference_images=None, retry=None, seed_call_log=None):
+                 verify_cadence="final", image_description=None, retry=None, seed_call_log=None):
         return {"call_log": [], "result_names": ["box_1"]}
 
     monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
@@ -356,3 +356,51 @@ def test_run_stage_node_skips_timing_without_a_real_usage_dict(monkeypatch):
     cmd = graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
                                                          "executor_client": None}})
     assert "timing" not in cmd.update["stages"][0]
+
+
+def test_describe_image_node_skips_straight_to_plan_without_images():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    cmd = graph._describe_image_node({"user_request": "x"}, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "plan" and not cmd.update
+    llm.chat.assert_not_called()
+
+
+def test_describe_image_node_stores_the_description_for_the_planner():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.return_value = {"summary": "an L-bracket"}
+    state = {"user_request": "x", "reference_images": ["data:image/png;base64,AAAA"]}
+    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "plan"
+    assert "an L-bracket" in cmd.update["image_description"]
+
+
+def test_describe_image_node_turns_endpoint_error_into_a_clean_fatal():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.side_effect = _http_error(503)
+    state = {"user_request": "x", "reference_images": ["data:image/png;base64,AAAA"]}
+    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "assemble" and "503" in cmd.update["fatal"]
+
+
+def test_plan_node_hands_the_description_not_the_images_to_the_planner(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.nodes import planner
+
+    seen = {}
+
+    def fake_plan(request, llm, detail="balanced", images=None, image_description=None):
+        seen.update(images=images, image_description=image_description)
+        return [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]
+
+    monkeypatch.setattr(planner, "plan", fake_plan)
+    state = {"user_request": "x", "config": {"policy": {}},
+             "reference_images": ["data:image/png;base64,AAAA"],
+             "image_description": "Summary: a box"}
+    graph._plan_node(state, {"configurable": {"llm_client": MagicMock()}})
+    assert seen == {"images": None, "image_description": "Summary: a box"}

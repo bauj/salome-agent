@@ -101,6 +101,7 @@ def run_request(request: str, config: dict, *, client, on_event, on_gate,
     mapper = EventMapper(run_id, run_dir)
     inp = {
         "user_request": request, "reference_images": reference_images,
+        "image_description": None,
         "config": {**config, "batch": batch},
         "session": _session_handle(client), "plan": [], "plan_approved": False,
         "stage_idx": 0, "stages": {}, "last_error": None, "history": [],

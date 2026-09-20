@@ -428,6 +428,10 @@ class LLMClient:
                     t0 = time.monotonic()
                     continue
                 resp.raise_for_status()
+                # An SSE reply is text/event-stream with no charset, which
+                # requests decodes as ISO-8859-1 -- turning "Ø" / "°" into
+                # "Ã" / "Â°". JSON is UTF-8 by spec.
+                resp.encoding = "utf-8"
                 message, usage, finish, ttft = self._consume_stream(resp, t0)
                 break
             except StreamBudgetExceeded as e:
@@ -451,6 +455,14 @@ class LLMClient:
                      "ttft_s": ttft, "usage": usage, "message": message})
         log.debug("LLM response in %.1fs (ttft %ss): finish=%s",
                   time.monotonic() - t0, ttft, finish)
+        if finish == "length":
+            u = usage or {}
+            log.warning("LLM output was cut off (finish_reason=length; prompt %s + "
+                        "completion %s tokens): the context window or max-tokens limit "
+                        "was hit. Hidden reasoning counts against it -- raise the "
+                        "server's context (Ollama defaults to 4096) or lower the "
+                        "reasoning effort (llm.module_extra_body).",
+                        u.get("prompt_tokens", "?"), u.get("completion_tokens", "?"))
         return message
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
