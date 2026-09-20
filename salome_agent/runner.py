@@ -80,7 +80,8 @@ def _session_handle(client) -> dict:
 def run_request(request: str, config: dict, *, client, on_event, on_gate,
                 cancel: threading.Event | None = None, batch: bool = False,
                 verbose: int = 0, run_id: str | None = None,
-                request_timeout: float | None = None) -> RunResult:
+                request_timeout: float | None = None,
+                reference_images: list[str] | None = None) -> RunResult:
     from langgraph.types import Command
 
     from salome_agent import cli
@@ -99,7 +100,8 @@ def run_request(request: str, config: dict, *, client, on_event, on_gate,
     graph = build_graph(batch=batch)
     mapper = EventMapper(run_id, run_dir)
     inp = {
-        "user_request": request, "config": {**config, "batch": batch},
+        "user_request": request, "reference_images": reference_images,
+        "config": {**config, "batch": batch},
         "session": _session_handle(client), "plan": [], "plan_approved": False,
         "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
         "study_ns": "salome_agent_run", "final_script": None, "report": None,
