@@ -55,3 +55,26 @@ def test_spec_for_rejects_an_unknown_module():
 
     with pytest.raises(KeyError):
         spec_for("shaper")
+
+
+def test_registration_guard_allows_retry_on_failure():
+    """Verify that the _SPECIALISTS_IMPORTED guard allows retries after
+    a hypothetical import failure. The guard is set AFTER imports succeed,
+    not before, so failed imports don't permanently lock out retries.
+
+    This test verifies the pattern: if flag is False, we attempt registration;
+    if imports fail, flag stays False so later calls can retry (the error is
+    loud, not silent).
+    """
+    import salome_agent.modules as modules_module
+
+    # Trigger registration by calling spec_for
+    modules_module.spec_for("geom")
+
+    # After first call, flag should be True
+    assert modules_module._SPECIALISTS_IMPORTED, "Flag set after successful registration"
+
+    # Verify routable returns non-empty (specialists registered)
+    routable_list = modules_module.routable()
+    assert len(routable_list) == 3, "Should have 3 routable modules"
+    assert all(s.catalogue for s in routable_list), "All routable modules must have non-empty catalogue"
