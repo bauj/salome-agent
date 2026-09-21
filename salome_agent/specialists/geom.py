@@ -4,7 +4,8 @@ from salome_agent.codegen import _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.llm import assistant_tool_turn, continuity_fields
 from salome_agent.logs import log
-from salome_agent.specialists.tool_selection import initial_offered, resolve_load
+from salome_agent.modules import ModuleSpec, Terminator, register
+from salome_agent.specialists.tool_selection import CORE_TOOLS, initial_offered, resolve_load
 
 _GEOM_BASE = """You build geometry by calling tools, not by writing
 geompy source. Each tool carries its own description — read it, especially
@@ -88,6 +89,12 @@ _PLACEMENT_RISKY = {"boolean", "transform"}
 _MEASURE_TOOLS = {"measure", "check_shape"}
 # strict: nudge once every N risky ops with no intervening measure.
 _STRICT_NUDGE_EVERY = 3
+
+# The result.py preamble a geom stage needs. Assembler owns when to emit it;
+# the module owns what it is.
+_GEOM_PREAMBLE = """from salome.geom import geomBuilder
+geompy = geomBuilder.New()
+"""
 
 
 def _geom_prompt(verify_cadence: str = "final") -> str:
@@ -383,3 +390,70 @@ def _run(stage_plan: dict, llm, client, iteration_cap: int,
                 "their placement before continuing."})
             risky_since_measure = 0
     return {"call_log": call_log, "last_error": last_error}
+
+def _finish_stage(args: dict, call_log: list) -> dict:
+    result_names = args["result_names"]
+    # A schema hint doesn't guarantee compliance — seen live, a model returned
+    # this as a JSON-encoded string, which codegen's set() would then iterate
+    # as individual characters.
+    if isinstance(result_names, str):
+        result_names = json.loads(result_names)
+    return {"call_log": call_log, "result_names": _leaf_result_names(call_log, result_names)}
+
+
+def _geom_tools_for(client) -> dict:
+    return {t["name"]: t for t in client.list_tools()["tools"]}
+
+
+def _geom_upstream(client, names: list[str]) -> str | None:
+    """The measured upstream block. Measuring belongs here, not in graph.py:
+    knowing what a bbox is is geom's business."""
+    if not names or client is None:
+        return None
+    info = None
+    try:
+        m = client.call_tool("measure", {"names": names})
+        if m.get("ok"):
+            info = m.get("measurements")
+        else:
+            log.warning("  measure(upstream) failed: %s", m.get("error"))
+    except Exception as e:  # noqa: BLE001 — best-effort, must not abort the stage
+        log.warning("  measure(upstream) errored: %s", e)
+    if not info:
+        return None
+    lines = []
+    for name in names:
+        detail = info.get(name)
+        if detail:
+            lines.append(f"  {name} — bbox {detail['bbox']}, size {detail['size']}, "
+                         f"centre {detail['centre']}")
+        else:
+            lines.append(f"  {name} — (geometry unavailable)")
+    return ("Objects built by an EARLIER stage, given only for reference "
+            "(e.g. to measure or align against) — reference them by these exact "
+            "names, but do not modify, colour or finish_stage them unless this "
+            "stage's own task says to:\n" + "\n".join(lines))
+
+
+GEOM_SPEC = register(ModuleSpec(
+    name="geom",
+    prompt=_geom_prompt,
+    terminator=Terminator(name="finish_stage", schema=FINISH_STAGE_SCHEMA,
+                          description=FINISH_STAGE_DESCRIPTION, handle=_finish_stage),
+    execute=lambda client, name, args: client.call_tool(name, args),
+    render_result=lambda result: str(_compact_result(result)),
+    tools_for=_geom_tools_for,
+    no_tool_nudge=("You did not call a tool. Call at least one tool now — "
+                   "finish_stage once the geometry is done."),
+    on_exhausted=lambda call_log, last_error: {"call_log": call_log, "last_error": last_error},
+    core_tools=frozenset(CORE_TOOLS),
+    categories=frozenset({"primitive", "sketch", "swept", "boolean",
+                          "transform", "feature", "display", "query"}),
+    risky_categories=frozenset(_PLACEMENT_RISKY),
+    measure_tools=frozenset(_MEASURE_TOOLS),
+    render_upstream=_geom_upstream,
+    render_retry=lambda retry: _retry_block(retry) or None,
+    call_prefix="geompy.",
+    preamble=_GEOM_PREAMBLE,
+    catalogue="",  # filled in Task 4, from the tool registry
+))
