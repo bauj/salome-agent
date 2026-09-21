@@ -15,7 +15,9 @@ class ServerBusy(Exception):
 
 
 class ExecutorClient:
-    def __init__(self, host: str, port: int, token: str, run_id: str):
+    def __init__(self, host: str, port: int, token: str, run_id: str,
+                 record_path: str | None = None):
+        self.record_path = record_path
         self._sock = socket.create_connection((host, port), timeout=10)
         self._f = self._sock.makefile("rwb")
         self._next_id = 1
@@ -52,7 +54,22 @@ class ExecutorClient:
         resp = self._recv()
         if resp.get("fatal"):
             raise SessionPoisoned(resp.get("error", "poisoned"))
+        if self.record_path:
+            self._record(cmd, payload, resp)
         return resp
+
+    def _record(self, cmd: str, payload: dict, resp: dict) -> None:
+        # Recorded so a run can be replayed offline against a golden result.py;
+        # a failure here must never abort the run it is only observing.
+        try:
+            import os
+
+            os.makedirs(os.path.dirname(self.record_path) or ".", exist_ok=True)
+            with open(self.record_path, "a") as f:
+                f.write(json.dumps({"cmd": cmd, "payload": payload, "response": resp},
+                                   default=str, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
 
     def run(self, code, timeout, module=None):
         return self._call("run", code=code, timeout=timeout, module=module)

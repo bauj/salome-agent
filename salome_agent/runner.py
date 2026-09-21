@@ -90,6 +90,8 @@ def run_request(request: str, config: dict, *, client, on_event, on_gate,
     run_id = run_id or uuid.uuid4().hex[:12]
     work_dir = os.path.expanduser(config.get("work_dir") or ".")
     run_dir = os.path.abspath(os.path.join(work_dir, run_id))
+    # exec_trace.jsonl (salome_agent/cli.py) is recorded under this same
+    # verbose >= 2 condition — a recorded run always has both halves or neither.
     trace_path = os.path.join(run_dir, "llm_trace.jsonl") if verbose >= 2 else None
     if trace_path:
         log.info("LLM trace: %s", trace_path)
