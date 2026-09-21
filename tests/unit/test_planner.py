@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import salome_agent.specialists.geom  # noqa: F401 — trigger GEOM_SPEC registration
+import salome_agent.specialists.script_modules  # noqa: F401 — trigger SMESH_SPEC/PARAVIS_SPEC registration
 from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT, plan
 
 
@@ -71,3 +73,23 @@ def test_plan_unknown_detail_falls_back_to_no_hint():
     system = llm.chat.call_args.kwargs["messages"][0]["content"]
     from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT
     assert system == PLANNER_SYSTEM_PROMPT
+
+
+def test_every_routable_module_contributes_its_catalogue():
+    from salome_agent.modules import routable
+
+    specs = {s.name for s in routable()}
+    assert specs == {"geom", "smesh", "paravis"}
+    for spec in routable():
+        assert spec.catalogue.strip() in PLANNER_SYSTEM_PROMPT
+
+
+def test_a_module_with_no_catalogue_is_not_routable():
+    from salome_agent.modules import ModuleSpec, Terminator, routable
+
+    spec = ModuleSpec(
+        name="amend", prompt=lambda c: "",
+        terminator=Terminator("finish_turn", {}, "", lambda a, c: {}),
+        execute=lambda c, n, a: {"ok": True}, render_result=str,
+        tools_for=lambda c: {}, no_tool_nudge="", on_exhausted=lambda c, e: {})
+    assert spec not in routable()

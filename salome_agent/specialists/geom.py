@@ -1,5 +1,6 @@
 import json
 
+from executor.geom_tools import TOOL_DESCRIPTIONS
 from salome_agent.codegen import _refs_in
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec, Terminator, register
@@ -243,6 +244,13 @@ def _geom_upstream(client, names: list[str]) -> str | None:
     return _upstream_block({n: info.get(n) for n in names})
 
 
+def _geom_catalogue_str() -> str:
+    # Names + one-liners only (no arg schemas) so the planner knows what a
+    # single geom stage can actually do and stops over-splitting parts.
+    lines = [f"  {n} -- {d}" for n, d in TOOL_DESCRIPTIONS.items()]
+    return "geom tools available to a single geom stage:\n" + "\n".join(lines)
+
+
 GEOM_SPEC = register(ModuleSpec(
     name="geom",
     prompt=_geom_prompt,
@@ -263,5 +271,5 @@ GEOM_SPEC = register(ModuleSpec(
     render_retry=lambda retry: _retry_block(retry) or None,
     call_prefix="geompy.",
     preamble=_GEOM_PREAMBLE,
-    catalogue="",  # filled in Task 4, from the tool registry
+    catalogue=_geom_catalogue_str(),
 ))

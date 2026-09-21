@@ -53,7 +53,8 @@ def _reachable_with_display(call_log: list[dict], reachable: set[str]) -> set[tu
     return reachable_calls
 
 
-def generate(call_log: list[dict], result_names: list[str]) -> str:
+def generate(call_log: list[dict], result_names: list[str],
+             call_prefix: str = "geompy.") -> str:
     # A weak model can call finish_stage with names that match no shape it
     # actually built (invented names, or an empty list). Pruning to those would
     # emit nothing and silently drop the whole stage from result.py (issue #7),
@@ -83,9 +84,10 @@ def generate(call_log: list[dict], result_names: list[str]) -> str:
 
         if emit == "geompy_call":
             assign_target = call["out_vars"][0] if call["out_vars"] else "_"
-            lines.append(f"{assign_target} = geompy.{call['fn']}({args_src})")
+            lines.append(f"{assign_target} = {call_prefix}{call['fn']}({args_src})")
             if call.get("publish"):
                 for var, name in zip(call["out_vars"], call["publish"]):
+                    # geompy.addToStudy is the publish API, not the module's call prefix
                     lines.append(f"geompy.addToStudy({var}, {name!r})")
         elif emit == "method_call":
             recv = call.get("recv")
@@ -98,13 +100,14 @@ def generate(call_log: list[dict], result_names: list[str]) -> str:
             lines.append("    pass")
         elif emit == "list_call":
             tmp = f"_sub_{i}"
-            lines.append(f"{tmp} = geompy.{call['fn']}({args_src})")
+            lines.append(f"{tmp} = {call_prefix}{call['fn']}({args_src})")
             pubs = dict(zip(call["out_vars"], call.get("publish") or []))
             for idx, var in enumerate(call["out_vars"]):
                 if var not in reachable:
                     continue
                 lines.append(f"{var} = {tmp}[{idx}]")
                 if var in pubs:
+                    # geompy.addToStudy is the publish API, not the module's call prefix
                     lines.append(f"geompy.addToStudy({var}, {pubs[var]!r})")
 
     return "\n".join(lines)

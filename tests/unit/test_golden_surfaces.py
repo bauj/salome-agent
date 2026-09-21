@@ -1,6 +1,9 @@
 import json
 import os
 
+import salome_agent.specialists.geom  # noqa: F401 — trigger GEOM_SPEC registration
+import salome_agent.specialists.script_modules  # noqa: F401 — trigger SMESH_SPEC/PARAVIS_SPEC registration
+
 _FIX = os.path.join(os.path.dirname(__file__), "..", "fixtures", "golden")
 
 

@@ -1,11 +1,4 @@
-from executor.geom_tools import TOOL_DESCRIPTIONS
-
-
-def _geom_catalogue() -> str:
-    # Names + one-liners only (no arg schemas) so the planner knows what a
-    # single geom stage can actually do and stops over-splitting parts.
-    lines = [f"  {n} -- {d}" for n, d in TOOL_DESCRIPTIONS.items()]
-    return "geom tools available to a single geom stage:\n" + "\n".join(lines)
+from salome_agent.modules import spec_for
 
 
 _PLANNER_BASE = """You turn a natural-language SALOME request into an
@@ -51,7 +44,10 @@ Module scope:
   contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
   Only use paravis when the request involves a results/field/MED file."""
 
-PLANNER_SYSTEM_PROMPT = _PLANNER_BASE + "\n\n" + _geom_catalogue()
+# The smesh and paravis one-liners stay in _PLANNER_BASE (not restructured);
+# they also appear in their spec.catalogue strings so routable() includes them.
+# Do NOT move those three lines out — the prompt's byte-identity depends on them.
+PLANNER_SYSTEM_PROMPT = _PLANNER_BASE + "\n\n" + spec_for("geom").catalogue
 
 _DETAIL_HINT = {
     "coarse": "\n\nPrefer the fewest stages: keep an assembly's parts in one "

@@ -225,3 +225,16 @@ def test_list_call_emit_unpacks_every_subshape_when_all_reachable():
     assert "_sub_1 = geompy.SubShapeAllSortedCentres(box_1, 4)" in source
     assert "box_1_face_1 = _sub_1[0]" in source
     assert "box_1_face_2 = _sub_1[1]" in source
+
+
+def test_call_prefix_is_configurable():
+    call_log = [{"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 1}],
+                 "out_vars": ["box_1"], "publish": None}]
+    assert generate(call_log, ["box_1"], call_prefix="shaper.") == (
+        "box_1 = shaper.MakeBoxDXDYDZ(1)")
+
+
+def test_call_prefix_defaults_to_geompy():
+    call_log = [{"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 1}],
+                 "out_vars": ["box_1"], "publish": None}]
+    assert generate(call_log, ["box_1"]).startswith("box_1 = geompy.")
