@@ -112,25 +112,6 @@ FINISH_STAGE_DESCRIPTION = (
     "their dependencies are kept, everything else is dropped."
 )
 
-LOAD_TOOLS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "names": {"type": "array", "items": {"type": "string"},
-                  "description": "specific geom tool names to add"},
-        "categories": {"type": "array", "items": {
-            "type": "string",
-            "enum": ["primitive", "sketch", "swept", "boolean",
-                     "transform", "feature", "display", "query"]},
-            "description": "whole tool categories to add"},
-    },
-}
-LOAD_TOOLS_DESCRIPTION = (
-    "Add geom tools to your available set for the rest of this stage. Pass "
-    "tool `names`, a list of `categories`, or both. Use it whenever the tool "
-    "you need is not in your current list."
-)
-
-
 # Boolean ops consume their operands into the result — an operand kept in
 # result_names alongside the boolean's output is a superseded intermediate.
 # Transforms (translate/rotate/align/...) are copy semantics: the source
@@ -155,10 +136,6 @@ def _leaf_result_names(call_log: list[dict], names: list[str]) -> list[str]:
                 consumed |= _refs_in(arg)
     leaves = [n for n in names if n not in consumed]
     return leaves or names
-
-
-def _call_key(name: str, args: dict) -> tuple:
-    return (name, json.dumps(args, sort_keys=True, default=str))
 
 
 def _compact_result(result: dict) -> dict:
@@ -278,8 +255,8 @@ GEOM_SPEC = register(ModuleSpec(
                    "finish_stage once the geometry is done."),
     on_exhausted=lambda call_log, last_error: {"call_log": call_log, "last_error": last_error},
     core_tools=frozenset(CORE_TOOLS),
-    categories=frozenset({"primitive", "sketch", "swept", "boolean",
-                          "transform", "feature", "display", "query"}),
+    categories=("primitive", "sketch", "swept", "boolean",
+               "transform", "feature", "display", "query"),
     risky_categories=frozenset(_PLACEMENT_RISKY),
     measure_tools=frozenset(_MEASURE_TOOLS),
     render_upstream=_geom_upstream,

@@ -41,7 +41,7 @@ class ToolSpecialist:
                                   "description": "specific geom tool names to add"},
                         "categories": {"type": "array", "items": {
                             "type": "string",
-                            "enum": sorted(self.spec.categories)},
+                            "enum": list(self.spec.categories)},
                             "description": "whole tool categories to add"},
                     }}}
 
