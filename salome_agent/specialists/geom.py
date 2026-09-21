@@ -1,11 +1,10 @@
 import json
 
 from salome_agent.codegen import _refs_in
-from salome_agent.executor_client import SessionDied, SessionPoisoned
-from salome_agent.llm import assistant_tool_turn, continuity_fields
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec, Terminator, register
-from salome_agent.specialists.tool_selection import CORE_TOOLS, initial_offered, resolve_load
+from salome_agent.specialists.tool_selection import CORE_TOOLS
+from salome_agent.specialists.tool_specialist import ToolSpecialist
 
 _GEOM_BASE = """You build geometry by calling tools, not by writing
 geompy source. Each tool carries its own description — read it, especially
@@ -186,11 +185,15 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         verify_cadence: str = "final",
                         retry: dict | None = None,
                         seed_call_log: list[dict] | None = None) -> dict:
-    try:
-        return _run(stage_plan, llm, client, iteration_cap, upstream,
-                    tool_selection, verify_cadence, retry, seed_call_log)
-    except (SessionDied, SessionPoisoned) as e:
-        return {"fatal": f"SALOME agent server unavailable: {e}"}
+    """Kept as the geom entry point for the existing tests and callers; the
+    loop itself is generic now."""
+    blocks = []
+    if upstream:
+        blocks.append(_upstream_block(upstream))
+    return ToolSpecialist(GEOM_SPEC).run(
+        stage_plan, llm, client, iteration_cap, blocks=tuple(blocks),
+        tool_selection=tool_selection, verify_cadence=verify_cadence,
+        retry=retry, seed_call_log=seed_call_log)
 
 
 def _retry_block(retry: dict) -> str:
@@ -216,181 +219,6 @@ def _retry_block(retry: dict) -> str:
     return "\n".join(lines)
 
 
-def _run(stage_plan: dict, llm, client, iteration_cap: int,
-         upstream: dict | None = None, tool_selection: str = "hints",
-         verify_cadence: str = "final", retry: dict | None = None,
-         seed_call_log: list[dict] | None = None) -> dict:
-    content = str(stage_plan)
-    if upstream:
-        lines = []
-        for name, info in upstream.items():
-            if info:
-                lines.append(f"  {name} — bbox {info['bbox']}, size {info['size']}, "
-                             f"centre {info['centre']}")
-            else:
-                lines.append(f"  {name} — (geometry unavailable)")
-        content += ("\n\nObjects built by an EARLIER stage, given only for reference "
-                    "(e.g. to measure or align against) — reference them by these exact "
-                    "names, but do not modify, colour or finish_stage them unless this "
-                    "stage's own task says to:\n" + "\n".join(lines))
-    if retry:
-        content += "\n\n" + _retry_block(retry)
-    messages = [{"role": "system", "content": _geom_prompt(verify_cadence)},
-                {"role": "user", "content": content}]
-    # A retry seeds call_log with the failed attempt's records so a shape the
-    # model reuses by name (rather than rebuilding) stays traceable by
-    # codegen's reachability pass instead of silently dropping out of
-    # result.py (GH #38).
-    call_log: list[dict] = list(seed_call_log) if seed_call_log else []
-    last_error = None
-    # Stage-local record of calls that already failed: hash((tool, args)) ->
-    # error. A byte-identical repeat is answered here without a round-trip to
-    # the server, and the model is told it is repeating itself (seen live:
-    # weak models loop 4x on the same failing call, inventing a new wrong
-    # diagnosis each time — task 215). Reset per stage.
-    failed_calls: dict[tuple, str] = {}
-    # policy.verify_cadence bookkeeping: count placement-risky ops (boolean /
-    # transform) since the last measure/check_shape. "final" nudges once at
-    # finish_stage if any are outstanding; "strict" also nudges mid-loop every
-    # _STRICT_NUDGE_EVERY of them.
-    risky_since_measure = 0
-    nudged_final = False
-    # Per-stage tool retrieval: offer CORE_TOOLS + the planner's hints, not the
-    # whole registry (which was ~66% of a run's input tokens). The model widens
-    # its set on demand via load_tools. "all" restores the send-everything
-    # behaviour. finish_stage/load_tools are always appended, never in `offered`.
-    all_defs = {t["name"]: t for t in client.list_tools()["tools"]}
-    finish_def = {"name": "finish_stage", "parameters": FINISH_STAGE_SCHEMA,
-                  "description": FINISH_STAGE_DESCRIPTION}
-    load_def = {"name": "load_tools", "parameters": LOAD_TOOLS_SCHEMA,
-                "description": LOAD_TOOLS_DESCRIPTION}
-    if tool_selection == "all":
-        offered = set(all_defs)
-    else:
-        offered = initial_offered(stage_plan, set(all_defs))
-    log.info("  geom stage: offered %d/%d tools (%s)",
-             len(offered), len(all_defs), ", ".join(sorted(offered)))
-    for i in range(iteration_cap):
-        log.debug("    geom iter %d/%d: asking LLM...", i + 1, iteration_cap)
-        tools = ([all_defs[n] for n in sorted(offered) if n in all_defs]
-                 + [finish_def, load_def])
-        # Tool results are stored already compacted (see below), so `messages`
-        # is sent verbatim: each turn's request extends the previous one byte
-        # for byte, which keeps a gateway's prefix/KV cache alive. `load_tools`
-        # widening `tools` mid-stage is the one remaining prefix break.
-        # A shallow copy per call: the message dicts are never mutated after
-        # append, so the copy is byte-identical content, and each request is a
-        # verbatim extension of the last.
-        response = llm.chat(messages=list(messages), tools=tools,
-                            module=stage_plan.get("module"))
-        if response.get("content"):
-            log.debug("    LLM reasoning: %s", response["content"])
-        calls = response["tool_calls"]
-        log.debug("    LLM -> %s", [(c["name"], c["args"]) for c in calls])
-        if not calls:
-            # tool_choice="auto" — the model replied with prose and no call.
-            # Keep its message, nudge it, and let the loop try again.
-            messages.append({"role": "assistant", "content": response["content"] or "(no reply)",
-                             **continuity_fields(response.get("raw_message"))})
-            messages.append({"role": "user", "content": "You did not call a tool. "
-                             "Call at least one tool now — finish_stage once the geometry is done."})
-            continue
-        # The assistant's own tool-call turn must be echoed back before any
-        # tool result — without it the model has no memory of what it just
-        # did (each turn looks like a fresh start) and, seen live against a
-        # real LLM, it just calls make_box forever instead of ever finishing.
-        # The model may batch several independent calls in one turn; every
-        # one gets executed and answered below, in order.
-        for j, c in enumerate(calls):
-            c.setdefault("id", None)
-            c["id"] = c["id"] or f"call_{i}_{j}"
-        messages.append(assistant_tool_turn(calls, response.get("raw_message")))
-        batch_error = None
-        finish_call = None
-        for k, c in enumerate(calls):
-            name, args, call_id = c["name"], c["args"], c["id"]
-            if name == "finish_stage":
-                finish_call = (call_id, args)
-                # Anything the model batched after finish_stage still needs a
-                # tool response for its id, or the next request is malformed.
-                for skipped in calls[k + 1:]:
-                    messages.append({"role": "tool", "tool_call_id": skipped["id"],
-                                     "content": "skipped — finish_stage was called"})
-                break
-            if name == "load_tools":
-                added = resolve_load(args.get("names"), args.get("categories"), all_defs)
-                new = added - offered
-                offered |= added
-                obs = (f"added: {', '.join(sorted(new)) or '(nothing new)'} "
-                       f"— {len(offered)} tools available")
-                log.info("  load_tools(names=%s, categories=%s) -> +%d, %d available",
-                         args.get("names"), args.get("categories"), len(new), len(offered))
-                messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
-                continue
-            key = _call_key(name, args)
-            if key in failed_calls:
-                log.info("  repeat of a call that already failed (%s) — answered "
-                         "locally, no round-trip", name)
-                result = {"ok": False, "repeat": True, "error": (
-                    f"identical call already failed with: {failed_calls[key]}. "
-                    "Do not repeat it — change the arguments or the approach, or "
-                    "gather information first (measure / get_subshapes / check_shape).")}
-                batch_error = {"phase": "exec", "message": failed_calls[key],
-                               "offending_line": None, "traceback": None}
-                messages.append({"role": "tool", "tool_call_id": call_id,
-                                 "content": str(_compact_result(result))})
-                continue
-            result = client.call_tool(name, args)
-            if result["ok"]:
-                call_log.extend(result["records"])
-                log.debug("    tool %s ok", name)
-                if name in _MEASURE_TOOLS:
-                    risky_since_measure = 0
-                elif all_defs.get(name, {}).get("category") in _PLACEMENT_RISKY:
-                    risky_since_measure += 1
-            else:
-                failed_calls[key] = result["error"]
-                batch_error = {"phase": "exec", "message": result["error"],
-                               "offending_line": None, "traceback": None}
-                log.debug("    tool %s failed: %s", name, result["error"])
-            messages.append({"role": "tool", "tool_call_id": call_id,
-                             "content": str(_compact_result(result))})
-        # A later ok call in the same batch must not mask an earlier failure —
-        # settle last_error once per turn from the batch outcome.
-        last_error = batch_error
-
-        if finish_call is not None:
-            call_id, args = finish_call
-            if (verify_cadence in ("final", "strict")
-                    and risky_since_measure > 0 and not nudged_final):
-                nudged_final = True
-                log.info("  verify_cadence=%s: nudging a measure before finish_stage",
-                         verify_cadence)
-                messages.append({"role": "tool", "tool_call_id": call_id, "content":
-                    "You have moved or combined shapes since your last measure. "
-                    "Call `measure` on your result shape(s) and confirm their "
-                    "placement, then call finish_stage again."})
-                continue
-            result_names = args["result_names"]
-            # A schema hint doesn't guarantee compliance — seen live, a model
-            # returned this as a JSON-encoded string instead of an actual
-            # array, which codegen's set(result_names) would then silently
-            # iterate as individual characters.
-            if isinstance(result_names, str):
-                result_names = json.loads(result_names)
-            result_names = _leaf_result_names(call_log, result_names)
-            return {"call_log": call_log, "result_names": result_names}
-
-        if verify_cadence == "strict" and risky_since_measure >= _STRICT_NUDGE_EVERY:
-            log.info("  verify_cadence=strict: nudging a measure (%d risky ops)",
-                     risky_since_measure)
-            messages.append({"role": "user", "content":
-                f"You have made {risky_since_measure} shapes since your last "
-                "measure. Call `measure` on your recent shapes and confirm "
-                "their placement before continuing."})
-            risky_since_measure = 0
-    return {"call_log": call_log, "last_error": last_error}
-
 def _finish_stage(args: dict, call_log: list) -> dict:
     result_names = args["result_names"]
     # A schema hint doesn't guarantee compliance — seen live, a model returned
@@ -403,6 +231,20 @@ def _finish_stage(args: dict, call_log: list) -> dict:
 
 def _geom_tools_for(client) -> dict:
     return {t["name"]: t for t in client.list_tools()["tools"]}
+
+
+def _upstream_block(info: dict) -> str:
+    lines = []
+    for name, detail in info.items():
+        if detail:
+            lines.append(f"  {name} — bbox {detail['bbox']}, size {detail['size']}, "
+                         f"centre {detail['centre']}")
+        else:
+            lines.append(f"  {name} — (geometry unavailable)")
+    return ("Objects built by an EARLIER stage, given only for reference "
+            "(e.g. to measure or align against) — reference them by these exact "
+            "names, but do not modify, colour or finish_stage them unless this "
+            "stage's own task says to:\n" + "\n".join(lines))
 
 
 def _geom_upstream(client, names: list[str]) -> str | None:
@@ -421,18 +263,7 @@ def _geom_upstream(client, names: list[str]) -> str | None:
         log.warning("  measure(upstream) errored: %s", e)
     if not info:
         return None
-    lines = []
-    for name in names:
-        detail = info.get(name)
-        if detail:
-            lines.append(f"  {name} — bbox {detail['bbox']}, size {detail['size']}, "
-                         f"centre {detail['centre']}")
-        else:
-            lines.append(f"  {name} — (geometry unavailable)")
-    return ("Objects built by an EARLIER stage, given only for reference "
-            "(e.g. to measure or align against) — reference them by these exact "
-            "names, but do not modify, colour or finish_stage them unless this "
-            "stage's own task says to:\n" + "\n".join(lines))
+    return _upstream_block({n: info.get(n) for n in names})
 
 
 GEOM_SPEC = register(ModuleSpec(
