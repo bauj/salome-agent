@@ -184,39 +184,47 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     stage = dict(stages[idx])
     update: dict = {}
 
-    if module == "geom":
-        from salome_agent.specialists.geom import run_geom_specialist
+    from salome_agent.modules import spec_for
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+    import salome_agent.specialists.geom  # noqa: F401 — registers GEOM_SPEC
+    import salome_agent.specialists.script_modules  # noqa: F401 — registers the script specs
 
-        upstream_info = None
-        upstream = select_upstream(stage_plan, state["stages"], idx)
-        if upstream and client is not None:
-            try:
-                m = client.call_tool("measure", {"names": upstream})
-                if m.get("ok"):
-                    upstream_info = m.get("measurements")
-                else:
-                    log.warning("  measure(upstream) failed: %s", m.get("error"))
-            except Exception as e:  # noqa: BLE001 — best-effort, must not abort the stage
-                log.warning("  measure(upstream) errored: %s", e)
-        tool_selection = state["config"]["policy"].get("tool_selection", "hints")
-        verify_cadence = state["config"]["policy"].get("verify_cadence", "final")
+    spec = spec_for(module)
+    upstream = select_upstream(stage_plan, state["stages"], idx)
+    blocks = []
+    if spec.render_upstream is not None:
+        block = spec.render_upstream(client, upstream)
+        if block:
+            blocks.append(block)
+    if module == "geom":
         retry = retry_context(state, idx, client)
-        try:
-            result = run_geom_specialist(stage_plan, llm, client, cap,
-                                         upstream=upstream_info,
-                                         tool_selection=tool_selection,
-                                         verify_cadence=verify_cadence,
-                                         retry=retry,
-                                         seed_call_log=(retry or {}).get("call_log"))
-        except Exception as e:  # noqa: BLE001
-            msg = _llm_endpoint_fatal(e)
-            if msg is None:
-                raise
-            log.error("  %s", msg)
-            return Command(update={"fatal": msg}, goto="assemble")
-        if "fatal" in result:
-            log.error("  %s", result["fatal"])
-            return Command(update={"fatal": result["fatal"]}, goto="assemble")
+        seed = (retry or {}).get("call_log")
+    else:
+        retry = {"last_error": state.get("last_error")}
+        seed = None
+    policy = state["config"]["policy"]
+    try:
+        result = ToolSpecialist(spec).run(
+            stage_plan, llm, client, cap, blocks=tuple(blocks),
+            tool_selection=policy.get("tool_selection", "hints"),
+            verify_cadence=policy.get("verify_cadence", "final"),
+            retry=retry, seed_call_log=seed)
+    except Exception as e:  # noqa: BLE001
+        msg = _llm_endpoint_fatal(e)
+        if msg is None:
+            raise
+        log.error("  %s", msg)
+        return Command(update={"fatal": msg}, goto="assemble")
+    if "fatal" in result:
+        log.error("  %s", result["fatal"])
+        return Command(update={"fatal": result["fatal"]}, goto="assemble")
+    if "script" in result:
+        stage["script"] = result["script"]
+        if result.get("warning"):
+            log.warning("  %s specialist: %s", module, result["warning"])
+        log.info("  %s specialist produced a %d-char script", module,
+                 len(result["script"] or ""))
+    else:
         stage["call_log"] = result.get("call_log")
         if "result_names" in result:
             stage["status"] = "ok"
@@ -228,32 +236,6 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             stage["status"] = "failed"
             update["last_error"] = result.get("last_error")
             log.warning("  geom specialist failed: %s", result.get("last_error"))
-    else:
-        from salome_agent.specialists.base import run_specialist
-        from salome_agent.specialists.paravis import PARAVIS_SYSTEM_PROMPT
-        from salome_agent.specialists.smesh import SMESH_SYSTEM_PROMPT
-
-        system_prompt = {"smesh": SMESH_SYSTEM_PROMPT, "paravis": PARAVIS_SYSTEM_PROMPT}.get(module)
-        tools = {}
-        if client is not None:
-            tools = {
-                "api_introspect": lambda name: str(client.introspect([name])),
-                "list_study": lambda: str(client.list_study()),
-            }
-        upstream = select_upstream(stage_plan, state["stages"], idx)
-        try:
-            result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt,
-                                    upstream_names=upstream, last_error=state.get("last_error"))
-        except Exception as e:  # noqa: BLE001
-            msg = _llm_endpoint_fatal(e)
-            if msg is None:
-                raise
-            log.error("  %s", msg)
-            return Command(update={"fatal": msg}, goto="assemble")
-        stage["script"] = result["script"]
-        if result.get("warning"):
-            log.warning("  %s specialist: %s", module, result["warning"])
-        log.info("  %s specialist produced a %d-char script", module, len(result["script"] or ""))
 
     if snap0 is not None:
         stage["timing"] = _accum_timing(
