@@ -1,5 +1,7 @@
 import ast
 
+import salome_agent.specialists.geom  # noqa: F401 — trigger GEOM_SPEC registration
+import salome_agent.specialists.script_modules  # noqa: F401 — trigger SMESH_SPEC/PARAVIS_SPEC registration
 from salome_agent.nodes.assembler import assemble
 
 
@@ -99,3 +101,30 @@ def test_both_salomeds_and_gui_imports_when_both_used():
     ast.parse(result)
     assert "from salome.kernel import SALOMEDS" in result
     assert 'gg = salome.ImportComponentGUI("GEOM")' in result
+
+
+def test_geom_preamble_comes_from_the_module_spec():
+    from salome_agent.modules import spec_for
+
+    state = {"run_id": "r", "user_request": "x", "stages": {
+        0: {"module": "geom", "status": "ok", "script": "box_1 = geompy.MakeBoxDXDYDZ(1, 1, 1)"}}}
+    assert spec_for("geom").preamble in assemble(state)
+
+
+def test_smesh_preamble_comes_from_the_module_spec():
+    from salome_agent.modules import spec_for
+
+    state = {"run_id": "r", "user_request": "x", "stages": {
+        0: {"module": "smesh", "status": "ok", "script": "mesh.Compute()"}}}
+    assert spec_for("smesh").preamble in assemble(state)
+
+
+def test_the_two_copies_of_each_preamble_cannot_drift():
+    # assembler keeps its own constants for the frozen body-sniffing
+    # fallbacks; the specs carry the same text for the module-driven path.
+    from salome_agent.modules import spec_for
+    from salome_agent.nodes.assembler import _GEOM_INIT, _SMESH_INIT
+
+    assert spec_for("geom").preamble == _GEOM_INIT
+    assert spec_for("smesh").preamble == _SMESH_INIT
+    assert spec_for("paravis").preamble == _SMESH_INIT

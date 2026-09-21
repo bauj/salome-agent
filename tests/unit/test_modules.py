@@ -38,6 +38,7 @@ def test_geom_levers_are_configured_on():
     assert spec.measure_tools == frozenset({"measure", "check_shape"})
     assert spec.categories
     assert spec.call_prefix == "geompy."
+    assert spec.catalogue  # geom is routable
 
 
 def test_module_spec_is_frozen():
