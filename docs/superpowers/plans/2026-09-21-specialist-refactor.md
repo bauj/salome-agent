@@ -157,17 +157,22 @@ Expected: **3 passed** (the fixtures were just captured from this tree).
 
 - [ ] **Step 4: Write the failing test for executor-call recording**
 
-Append to `tests/unit/test_executor_client.py`:
+`tests/unit/test_executor_client.py` drives a **real socket against a fake server thread**. Its helpers are `_fake_server(port_box, responses, *, hello=None)` and `_connect(box)` at line 30, which currently hardcodes `ExecutorClient("127.0.0.1", box[0], "tok", "run1")`. Widen `_connect` to forward extra kwargs:
 
 ```python
-def test_record_path_appends_one_json_line_per_call(tmp_path, monkeypatch):
+def _connect(box, **kw):
+    return ExecutorClient("127.0.0.1", box[0], "tok", "run1", **kw)
+```
+
+then append, following that file's existing fake-server idiom for starting the thread and collecting `responses`:
+
+```python
+def test_record_path_appends_one_json_line_per_call(tmp_path):
     import json
 
-    from salome_agent import executor_client as ec
-
     path = tmp_path / "exec_trace.jsonl"
-    client = _connected_client(monkeypatch, record_path=str(path))
-    client._replies.append({"id": 1, "ok": True, "records": []})
+    box = _fake_server([0], [{"id": 1, "ok": True, "records": []}])
+    client = _connect(box, record_path=str(path))
     client.call_tool("make_box", {"dx": 1, "dy": 2, "dz": 3})
 
     lines = [json.loads(l) for l in path.read_text().splitlines()]
@@ -176,7 +181,7 @@ def test_record_path_appends_one_json_line_per_call(tmp_path, monkeypatch):
     assert lines[-1]["response"]["ok"] is True
 ```
 
-`_connected_client` is the existing helper in that file; if it does not accept extra kwargs, widen it to `**kw` and forward them to `ExecutorClient(...)`. Read the file first and follow its own fake-socket idiom rather than inventing a second one.
+Read `_fake_server`'s actual signature and wire it the way the neighbouring tests do — the call above is the shape, not the specification. Do not invent a second fake-socket mechanism alongside the existing one.
 
 - [ ] **Step 5: Run it to verify it fails**
 
@@ -233,7 +238,7 @@ For each production construction site, pass `record_path=os.path.join(run_dir, "
 - [ ] **Step 9: Run the full suite**
 
 Run: `.venv/bin/python -m pytest tests/unit -q`
-Expected: **388 passed** (385 + 3 byte guards; the recording test replaces nothing).
+Expected: **389 passed** (385 + 3 byte guards + 1 recording test).
 
 - [ ] **Step 10: Write the replay harness**
 
@@ -405,7 +410,7 @@ def test_generated_script_from_a_replayed_call_log():
                    "geompy.addToStudy(box_1, 'box_1')")
 ```
 
-`tests/` needs to be importable as a package for `from tests.replay import ...`. `tests/unit/__init__.py` exists but `tests/__init__.py` may not — create an empty `tests/__init__.py` if it is missing.
+`tests/` needs to be importable as a package for `from tests.replay import ...`. `tests/unit/__init__.py` exists; **`tests/__init__.py` does not** (verified) — create it empty.
 
 - [ ] **Step 12: Run the harness tests**
 
@@ -895,7 +900,8 @@ The user message is now built from `blocks` — pre-rendered strings the caller 
 - Create: `salome_agent/specialists/tool_specialist.py`
 - Create: `tests/unit/test_tool_specialist.py`
 - Modify: `salome_agent/specialists/geom.py` (delete `_run`; `run_geom_specialist` delegates)
-- Modify: `salome_agent/graph.py:187-230` (pass `blocks`)
+
+**`graph.py` is NOT touched by this task.** `run_geom_specialist` keeps its `upstream` kwarg and builds `blocks` internally, so every caller is unaffected. Task 3 is what collapses the fork in `graph.py`.
 
 **Interfaces:**
 - Consumes: `ModuleSpec` and `GEOM_SPEC` from Task 1; `tool_selection.initial_offered`, `resolve_load`; `llm.assistant_tool_turn`, `llm.continuity_fields`.
@@ -1336,7 +1342,6 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'salome_agent.specialis
 
 ```python
 from salome_agent.modules import ModuleSpec, Terminator, register
-from salome_agent.nodes.assembler import _SMESH_INIT  # noqa: F401 — see _SCRIPT_PREAMBLE
 from salome_agent.specialists.paravis import PARAVIS_SYSTEM_PROMPT
 from salome_agent.specialists.smesh import SMESH_SYSTEM_PROMPT
 
@@ -1427,7 +1432,9 @@ SMESH_SPEC = register(_script_spec("smesh", SMESH_SYSTEM_PROMPT, catalogue=""))
 PARAVIS_SPEC = register(_script_spec("paravis", PARAVIS_SYSTEM_PROMPT, catalogue=""))
 ```
 
-`catalogue=""` here and in Task 1 is temporary; Task 4 fills all three and asserts the planner prompt comes out byte-identical. Drop the unused `_SMESH_INIT` import — `_SCRIPT_PREAMBLE` is written out literally so `assembler.py` can stop owning it in Task 4; verify it matches `assembler.py:18-20` character for character.
+`catalogue=""` here and in Task 1 is temporary; Task 4 fills all three and asserts the planner prompt comes out byte-identical.
+
+`_SCRIPT_PREAMBLE` is written out **literally** — `script_modules.py` imports nothing from `salome_agent.nodes.assembler` (a specialist importing from nodes is a dependency inversion). Verify it matches `assembler.py:18-20` character for character; Task 4 adds the test that pins the two copies together.
 
 - [ ] **Step 4: Collapse the fork in `graph.py`**
 
@@ -1581,6 +1588,17 @@ def test_smesh_preamble_comes_from_the_module_spec():
     state = {"run_id": "r", "user_request": "x", "stages": {
         0: {"module": "smesh", "status": "ok", "script": "mesh.Compute()"}}}
     assert spec_for("smesh").preamble in assemble(state)
+
+
+def test_the_two_copies_of_each_preamble_cannot_drift():
+    # assembler keeps its own constants for the frozen body-sniffing
+    # fallbacks; the specs carry the same text for the module-driven path.
+    from salome_agent.modules import spec_for
+    from salome_agent.nodes.assembler import _GEOM_INIT, _SMESH_INIT
+
+    assert spec_for("geom").preamble == _GEOM_INIT
+    assert spec_for("smesh").preamble == _SMESH_INIT
+    assert spec_for("paravis").preamble == _SMESH_INIT
 ```
 
 Append to `tests/unit/test_planner.py`:
@@ -1639,6 +1657,8 @@ At each production call site, resolve the prefix as `spec_for(stage["module"]).c
 
 - [ ] **Step 4: Drive the assembler preamble from the specs**
 
+**`assembler.py` keeps its local `_GEOM_INIT` and `_SMESH_INIT` constants.** The body-sniffing fallbacks (`"geompy" in body`, `"smesh" in body`) reference them, and the spec freezes those heuristics — only the *module-driven* half moves to `spec.preamble`. That leaves the same text in two places, so Step 1 below adds a test pinning them equal.
+
 In `salome_agent/nodes/assembler.py`, replace lines 69-72:
 
 ```python
@@ -1646,10 +1666,10 @@ In `salome_agent/nodes/assembler.py`, replace lines 69-72:
         spec = spec_for(name)
         if spec.preamble and spec.preamble not in preamble:
             preamble += spec.preamble
-    if "geompy" in body and _GEOM_PREAMBLE not in preamble:
-        preamble += _GEOM_PREAMBLE
-    if "smesh" in body and _SMESH_PREAMBLE not in preamble:
-        preamble += _SMESH_PREAMBLE
+    if "geompy" in body and _GEOM_INIT not in preamble:
+        preamble += _GEOM_INIT
+    if "smesh" in body and _SMESH_INIT not in preamble:
+        preamble += _SMESH_INIT
 ```
 
 **Verify the emitted order does not change.** Today `_GEOM_INIT` is always emitted before `_SMESH_INIT`. `sorted({"geom", "paravis", "smesh"})` gives `geom, paravis, smesh`, and paravis's preamble is the same smesh init text — so the `not in preamble` guard is what keeps it emitted once, in geom-then-smesh order. Confirm with a test that a geom+smesh+paravis state produces exactly the same preamble as before; if it does not, keep an explicit ordered list of module names rather than `sorted`.
@@ -1813,13 +1833,13 @@ Add the registry-wide invariant to `tests/unit/test_geom_tools.py` (this is the 
 
 ```python
 def test_every_registered_geom_tool_is_complete():
-    from executor.geom_tools import _REGISTRY
+    from executor.geom_tools import registry
 
-    for name in _REGISTRY.names:
-        assert _REGISTRY.descriptions()[name], f"no description for {name}"
-        assert _REGISTRY.schemas()[name].get("type") == "object", f"bad schema for {name}"
-        assert name in _REGISTRY.arg_types(), f"no arg_types entry for {name}"
-        assert _REGISTRY.categories()[name] in _VALID_CATEGORIES, f"bad category for {name}"
+    for name in registry.names:
+        assert registry.descriptions()[name], f"no description for {name}"
+        assert registry.schemas()[name].get("type") == "object", f"bad schema for {name}"
+        assert name in registry.arg_types(), f"no arg_types entry for {name}"
+        assert registry.categories()[name] in _VALID_CATEGORIES, f"bad category for {name}"
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -1914,9 +1934,11 @@ from executor.registry import ToolRegistry
 
 _VALID_CATEGORIES = {"primitive", "sketch", "swept", "boolean", "transform",
                      "feature", "display", "query"}
-_REGISTRY = ToolRegistry(valid_categories=_VALID_CATEGORIES)
-tool = _REGISTRY.tool
+registry = ToolRegistry(valid_categories=_VALID_CATEGORIES)
+tool = registry.tool
 ```
+
+**The name `registry` is load-bearing across three tasks.** Task 6 moves this same instance to `executor/geom/helpers.py` under the same name, and Task 7's test alias re-exports it. Do not rename it to `_REGISTRY` or anything else.
 
 Then, for each of the 44 handlers, move its four facts onto the decorator and **delete its entry from the four dicts**:
 
@@ -1935,22 +1957,22 @@ def tool_make_box(executor, args):
 Then replace the five literal dicts with projections, after every decorator has run:
 
 ```python
-TOOLS = _REGISTRY.handlers()
-TOOL_CATEGORY = _REGISTRY.categories()
-ARG_TYPES = _REGISTRY.arg_types()
-TOOL_SCHEMAS = _REGISTRY.schemas()
-TOOL_DESCRIPTIONS = _REGISTRY.descriptions()
+TOOLS = registry.handlers()
+TOOL_CATEGORY = registry.categories()
+ARG_TYPES = registry.arg_types()
+TOOL_SCHEMAS = registry.schemas()
+TOOL_DESCRIPTIONS = registry.descriptions()
 ```
 
 and point `list_tools` / `call_tool` / `_coerce_args` at the registry, keeping `call_tool`'s result decoration (`_attach_shape_info`, `_delta_note`) exactly where it is:
 
 ```python
 def _coerce_args(name: str, args: dict) -> dict:
-    return _REGISTRY.coerce_args(name, args)
+    return registry.coerce_args(name, args)
 
 
 def list_tools() -> list[dict]:
-    return _REGISTRY.list_tools()
+    return registry.list_tools()
 ```
 
 **The order trap.** Registration order is *definition* order in the file; the old wire order was the `TOOLS` literal's order. Before deleting the literal, capture it and compare:
@@ -2327,7 +2349,9 @@ Plus three fields the spec's dataclass sketch does not list: `no_tool_nudge` and
 
 **Three behaviour divergences in smesh/paravis**, listed in Task 3 and deliberately accepted rather than engineered around: batched calls are now all answered, synthetic tool-call ids change shape, and an unknown tool name now gets a tool message instead of a dangling id. The first and third were latent malformed-request bugs. smesh's prompt is not preserved byte-for-byte because it is being rewritten in its own task next; **geom's is**, and that is what the goldens guard.
 
-**Placeholder scan.** No TBDs. Four steps deliberately say "read the current code and port its body" rather than restating it — `_coerce_args` (Task 5 Step 3), the loop body (Task 2 Step 3), `call_tool`'s result decoration (Task 6 Step 3), and the `_connected_client` helper (Task 0 Step 4). In each case the existing code *is* the specification, and transcribing ~150 lines into a plan would invite a transcription error that the "move, not rewrite" rule exists to prevent. Every such step names the exact file and line range.
+**Placeholder scan.** No TBDs. Four steps deliberately say "read the current code and port its body" rather than restating it — `_coerce_args` (Task 5 Step 3), the loop body (Task 2 Step 3), `call_tool`'s result decoration (Task 6 Step 3), and `_fake_server` (Task 0 Step 4). In each case the existing code *is* the specification, and transcribing ~150 lines into a plan would invite a transcription error that the "move, not rewrite" rule exists to prevent. Every such step names the exact file and line range.
+
+**Corrections applied after a pre-execution scan of this plan against the code** (each is also a ruling in the SDD ledger): Task 2's file list claimed a `graph.py` edit its steps never make (removed); Task 3 imported `_SMESH_INIT` from `assembler.py` and then said to drop it (now a literal, with a Task 4 test pinning the copies); Task 4 referenced assembler preamble constants under three different names (now `_GEOM_INIT`/`_SMESH_INIT` throughout); Tasks 5 and 6 named the same registry object `_REGISTRY` and `registry` (now `registry` everywhere); Task 0's recording test used a `_connected_client` helper that does not exist (rewritten against the real `_fake_server`/`_connect` idiom); Task 0's Step 9 count was off by one (389, not 388); `tests/__init__.py` confirmed absent rather than "may not exist".
 
 **Type consistency.** `ModuleSpec`'s field names are used identically in Tasks 1, 2, 3 and 4: `prompt`, `terminator`, `execute`, `render_result`, `tools_for`, `no_tool_nudge`, `on_exhausted`, `core_tools`, `categories`, `risky_categories`, `measure_tools`, `render_upstream`, `render_retry`, `call_prefix`, `preamble`, `catalogue`. `Terminator.handle(args, call_log)` has the same two-argument shape in Tasks 1, 2 and 3. `ToolRegistry`'s five projections (`handlers`, `categories`, `arg_types`, `schemas`, `descriptions`) are named identically in Tasks 5, 6 and 7. `generate(call_log, result_names, call_prefix)` is defined in Task 4 and used nowhere earlier.
 
