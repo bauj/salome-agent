@@ -1,0 +1,20 @@
+{
+  "llm": [
+    {"role": "assistant", "content": "One box.",
+     "tool_calls": [{"id": "c1", "type": "function",
+       "function": {"name": "make_box", "arguments": "{\"dx\": 10, \"dy\": 20, \"dz\": 30}"}}]},
+    {"role": "assistant", "content": "Done.",
+     "tool_calls": [{"id": "c2", "type": "function",
+       "function": {"name": "finish_stage", "arguments": "{\"result_names\": [\"box_1\"]}"}}]}
+  ],
+  "exec": [
+    {"cmd": "list_tools", "payload": {},
+     "response": {"tools": [{"name": "make_box", "category": "primitive",
+       "parameters": {"type": "object", "properties": {}}, "description": "box"}]}},
+    {"cmd": "call_tool", "payload": {"name": "make_box", "args": {"dx": 10, "dy": 20, "dz": 30}},
+     "response": {"ok": true, "records": [{"fn": "MakeBoxDXDYDZ",
+       "args": [{"kind": "literal", "value": 10}, {"kind": "literal", "value": 20},
+                {"kind": "literal", "value": 30}],
+       "out_vars": ["box_1"], "publish": ["box_1"]}]}}
+  ]
+}

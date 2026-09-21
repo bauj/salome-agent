@@ -1,0 +1,1231 @@
+[
+  {
+    "name": "make_box",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "dx": {
+          "type": "number"
+        },
+        "dy": {
+          "type": "number"
+        },
+        "dz": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "dx",
+        "dy",
+        "dz"
+      ]
+    },
+    "description": "Axis-aligned solid box with one corner at the origin, extending +X/+Y/+Z by dx/dy/dz.",
+    "category": "primitive"
+  },
+  {
+    "name": "make_box_two_pnt",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pnt1": {
+          "type": "string",
+          "description": "first corner: a point name or \"x,y,z\""
+        },
+        "pnt2": {
+          "type": "string",
+          "description": "opposite corner: a point name or \"x,y,z\""
+        }
+      },
+      "required": [
+        "pnt1",
+        "pnt2"
+      ]
+    },
+    "description": "Axis-aligned solid box spanning two opposite corner points.",
+    "category": "primitive"
+  },
+  {
+    "name": "make_cylinder",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "radius": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "radius",
+        "height"
+      ]
+    },
+    "description": "Solid cylinder, base centred at the origin, axis along +Z.",
+    "category": "primitive"
+  },
+  {
+    "name": "make_sphere",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "radius": {
+          "type": "number"
+        },
+        "center": {
+          "type": "string",
+          "description": "optional center point"
+        }
+      },
+      "required": [
+        "radius"
+      ]
+    },
+    "description": "Solid sphere centred at the origin (or at `center` if given).",
+    "category": "primitive"
+  },
+  {
+    "name": "make_cone",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "radius1": {
+          "type": "number"
+        },
+        "radius2": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "radius1",
+        "radius2",
+        "height"
+      ]
+    },
+    "description": "Solid (truncated) cone, base radius1 at the origin, radius2 at height, axis along +Z. radius2=0 for a sharp tip.",
+    "category": "primitive"
+  },
+  {
+    "name": "make_torus",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "radius_major": {
+          "type": "number"
+        },
+        "radius_minor": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "radius_major",
+        "radius_minor"
+      ]
+    },
+    "description": "Solid torus centred at the origin, axis along +Z; radius_major = ring centre-line, radius_minor = tube.",
+    "category": "primitive"
+  },
+  {
+    "name": "make_face",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "height": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number"
+        },
+        "orientation": {
+          "type": "integer",
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "default": 1
+        }
+      },
+      "required": [
+        "height",
+        "width"
+      ]
+    },
+    "description": "Planar rectangular face height x width. orientation 1=XOY, 2=YOZ, 3=ZOX.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_disk",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "radius": {
+          "type": "number"
+        },
+        "orientation": {
+          "type": "integer",
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "default": 1
+        }
+      },
+      "required": [
+        "radius"
+      ]
+    },
+    "description": "Planar circular face of the given radius. orientation 1=XOY, 2=YOZ, 3=ZOX.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_point",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    "description": "A vertex at (x, y, z).",
+    "category": "sketch"
+  },
+  {
+    "name": "make_vector",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "dx": {
+          "type": "number"
+        },
+        "dy": {
+          "type": "number"
+        },
+        "dz": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "dx",
+        "dy",
+        "dz"
+      ]
+    },
+    "description": "A free vector with components (dx, dy, dz) from the origin.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_line",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pnt1": {
+          "type": "string",
+          "description": "first point"
+        },
+        "pnt2": {
+          "type": "string",
+          "description": "second point"
+        }
+      },
+      "required": [
+        "pnt1",
+        "pnt2"
+      ]
+    },
+    "description": "An infinite line through two points.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_plane",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "point": {
+          "type": "string",
+          "description": "point on plane"
+        },
+        "normal": {
+          "type": "string",
+          "description": "normal vector"
+        },
+        "trim_size": {
+          "type": "number",
+          "default": 2000
+        }
+      },
+      "required": [
+        "point",
+        "normal"
+      ]
+    },
+    "description": "An unbounded plane through `point` with the given `normal` vector (trimmed for display at trim_size).",
+    "category": "sketch"
+  },
+  {
+    "name": "make_circle",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "center": {
+          "type": "string",
+          "description": "center point"
+        },
+        "normal": {
+          "type": "string",
+          "description": "normal vector"
+        },
+        "radius": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "center",
+        "normal",
+        "radius"
+      ]
+    },
+    "description": "A circular edge (wire), centre point, `normal` axis, radius.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_prism",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "type": "string",
+          "description": "face/wire/edge to extrude"
+        },
+        "dx": {
+          "type": "number"
+        },
+        "dy": {
+          "type": "number"
+        },
+        "dz": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "base",
+        "dx",
+        "dy",
+        "dz"
+      ]
+    },
+    "description": "Linear extrusion of a face/wire/edge by the vector (dx, dy, dz).",
+    "category": "swept"
+  },
+  {
+    "name": "make_revolution",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "type": "string",
+          "description": "face/wire/edge to revolve"
+        },
+        "axis": {
+          "description": "\"OX\"/\"OY\"/\"OZ\" or published vector name",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "OX",
+                "OY",
+                "OZ"
+              ]
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "angle_deg": {
+          "type": "number",
+          "description": "rotation angle in degrees"
+        }
+      },
+      "required": [
+        "base",
+        "axis",
+        "angle_deg"
+      ]
+    },
+    "description": "Revolve a face/wire/edge about `axis` by angle_deg. The profile must not touch the axis.",
+    "category": "swept"
+  },
+  {
+    "name": "make_pipe",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "type": "string",
+          "description": "cross-section to sweep"
+        },
+        "path": {
+          "type": "string",
+          "description": "wire/edge to sweep along"
+        }
+      },
+      "required": [
+        "base",
+        "path"
+      ]
+    },
+    "description": "Sweep a cross-section `base` along a `path` wire/edge.",
+    "category": "swept"
+  },
+  {
+    "name": "make_thick_solid",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string",
+          "description": "shape to thicken"
+        },
+        "thickness": {
+          "type": "number"
+        },
+        "faces": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "face subshape IDs to remove (open) -- required; a closed solid cannot be thickened without at least one"
+        },
+        "inside": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "shape",
+        "thickness",
+        "faces"
+      ]
+    },
+    "description": "Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened).",
+    "category": "swept"
+  },
+  {
+    "name": "make_filling",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "contours": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "edges/wires to fill"
+        }
+      },
+      "required": [
+        "contours"
+      ]
+    },
+    "description": "A surface filling a set of boundary contour edges/wires.",
+    "category": "swept"
+  },
+  {
+    "name": "fuse",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shapes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "shapes to fuse (2 or more)"
+        }
+      },
+      "required": [
+        "shapes"
+      ]
+    },
+    "description": "Boolean union of two or more shapes into one.",
+    "category": "boolean"
+  },
+  {
+    "name": "cut",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "main": {
+          "type": "string",
+          "description": "main shape"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "tool shapes (1 or more)"
+        }
+      },
+      "required": [
+        "main",
+        "tools"
+      ]
+    },
+    "description": "Boolean subtraction: `main` minus every shape in `tools`.",
+    "category": "boolean"
+  },
+  {
+    "name": "common",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shapes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "shapes to intersect"
+        }
+      },
+      "required": [
+        "shapes"
+      ]
+    },
+    "description": "Boolean intersection of two or more shapes.",
+    "category": "boolean"
+  },
+  {
+    "name": "partition",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shapes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "shapes to partition"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "optional tool shapes",
+          "default": []
+        }
+      },
+      "required": [
+        "shapes"
+      ]
+    },
+    "description": "Split `shapes` by each other (and optional `tools`), keeping all resulting pieces in one compound.",
+    "category": "boolean"
+  },
+  {
+    "name": "translate",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "dx": {
+          "type": "number"
+        },
+        "dy": {
+          "type": "number"
+        },
+        "dz": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "shape",
+        "dx",
+        "dy",
+        "dz"
+      ]
+    },
+    "description": "A COPY of `shape` moved by (dx, dy, dz); the source is unchanged -- refer to the new name afterwards.",
+    "category": "transform"
+  },
+  {
+    "name": "rotate",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "axis": {
+          "description": "\"OX\"/\"OY\"/\"OZ\" or published vector name",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "OX",
+                "OY",
+                "OZ"
+              ]
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "angle_deg": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "shape",
+        "axis",
+        "angle_deg"
+      ]
+    },
+    "description": "A COPY of `shape` rotated about `axis` by angle_deg; the source is unchanged.",
+    "category": "transform"
+  },
+  {
+    "name": "mirror",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "by": {
+          "type": "string",
+          "enum": [
+            "plane",
+            "axis",
+            "point"
+          ],
+          "default": "plane"
+        },
+        "entity": {
+          "description": "plane/axis/point name, or XOY/YOZ/ZOX/OX/OY/OZ/O for shortcuts",
+          "type": "string"
+        }
+      },
+      "required": [
+        "shape",
+        "entity"
+      ]
+    },
+    "description": "A COPY of `shape` mirrored across a plane, axis or point (`by` picks which; `entity` names it or a shortcut).",
+    "category": "transform"
+  },
+  {
+    "name": "scale",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "factor": {
+          "type": "number",
+          "description": "uniform scale factor"
+        },
+        "factor_x": {
+          "type": "number",
+          "description": "X-axis scale factor"
+        },
+        "factor_y": {
+          "type": "number",
+          "description": "Y-axis scale factor"
+        },
+        "factor_z": {
+          "type": "number",
+          "description": "Z-axis scale factor"
+        },
+        "center": {
+          "type": "string",
+          "description": "center point (O or point name)",
+          "default": "O"
+        }
+      },
+      "required": [
+        "shape"
+      ]
+    },
+    "description": "A COPY of `shape` scaled about `center` -- uniform `factor`, or per-axis factor_x/y/z.",
+    "category": "transform"
+  },
+  {
+    "name": "multi_translate",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "vector": {
+          "description": "OX/OY/OZ or vector name",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "OX",
+                "OY",
+                "OZ"
+              ]
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "step": {
+          "type": "number"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "vector2": {
+          "type": "string",
+          "description": "optional second vector for 2D"
+        },
+        "step2": {
+          "type": "number",
+          "description": "optional second step"
+        },
+        "count2": {
+          "type": "integer",
+          "description": "optional second count"
+        }
+      },
+      "required": [
+        "shape",
+        "vector",
+        "step",
+        "count"
+      ]
+    },
+    "description": "A COPY of `shape` replicated `count` times along `vector` at spacing `step` (add vector2/step2/count2 for a 2D grid).",
+    "category": "transform"
+  },
+  {
+    "name": "multi_rotate",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "axis": {
+          "description": "OX/OY/OZ or axis name",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "OX",
+                "OY",
+                "OZ"
+              ]
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "description": "number of copies"
+        },
+        "angle_deg": {
+          "type": "number",
+          "description": "optional angle step (degrees)"
+        }
+      },
+      "required": [
+        "shape",
+        "axis",
+        "count"
+      ]
+    },
+    "description": "A COPY of `shape` replicated `count` times about `axis` (angle_deg = step, default full circle).",
+    "category": "transform"
+  },
+  {
+    "name": "offset_shape",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "shape",
+        "offset"
+      ]
+    },
+    "description": "A COPY of `shape` with every face offset outward (+) or inward (-) by `offset`.",
+    "category": "transform"
+  },
+  {
+    "name": "position",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string",
+          "description": "shape to place (a copy is made)"
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "target frame origin [x,y,z]; default [0,0,0]"
+        },
+        "x_dir": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "target frame X-axis direction; default [1,0,0]"
+        },
+        "y_dir": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "target frame Y-axis direction; default [0,1,0]"
+        }
+      },
+      "required": [
+        "shape"
+      ]
+    },
+    "description": "A COPY of `shape` with its local frame placed at target `origin` with axes `x_dir`/`y_dir` -- use to assemble parts.",
+    "category": "transform"
+  },
+  {
+    "name": "align",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string",
+          "description": "shape to move (a copy is made)"
+        },
+        "to": {
+          "type": "string",
+          "description": "reference shape to align against"
+        },
+        "match": {
+          "type": "array",
+          "description": "one alignment constraint per axis; axes not listed are unchanged",
+          "items": {
+            "type": "object",
+            "properties": {
+              "axis": {
+                "type": "string",
+                "enum": [
+                  "x",
+                  "y",
+                  "z"
+                ]
+              },
+              "my": {
+                "type": "string",
+                "enum": [
+                  "min",
+                  "max",
+                  "center"
+                ],
+                "description": "which extreme of `shape` on this axis"
+              },
+              "target": {
+                "type": "string",
+                "enum": [
+                  "min",
+                  "max",
+                  "center"
+                ],
+                "description": "which extreme of `to` on this axis"
+              },
+              "gap": {
+                "type": "number",
+                "description": "signed offset in mm, default 0"
+              }
+            },
+            "required": [
+              "axis",
+              "my",
+              "target"
+            ]
+          }
+        }
+      },
+      "required": [
+        "shape",
+        "to",
+        "match"
+      ]
+    },
+    "description": "Move `shape` so chosen faces/centres line up with `to`. `match` is a list of {axis, my, target, gap}: `shape` is translated along that axis until its `my` (min|max|center) meets `to`'s `target` plus `gap` mm. Axes not listed stay put. Use for assembly -- placing a part against, on top of, flush with, or centred on another; the tool does the bounding-box arithmetic and emits a plain translation.",
+    "category": "transform"
+  },
+  {
+    "name": "fillet_edges",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string",
+          "description": "published name of the shape to fillet"
+        },
+        "edges": {
+          "description": "\"all\" or a list of edge subshape ids",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "all"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          ]
+        },
+        "where": {
+          "description": "instead of `edges`, select the edges inline: same predicate as get_subshapes -- {\"sorted_by\":\"z\",\"take\":\"max\",\"count\":4}, {\"by_size\":\"longest\",\"count\":N}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"
+        },
+        "radius": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "shape",
+        "radius"
+      ]
+    },
+    "description": "Round edges of `shape` with the given `radius`. Select edges with `edges` (\"all\" or a list of edge ids from get_subshapes/explode) or inline with a `where` predicate (same as get_subshapes). Fails if the radius is too large for the shape.",
+    "category": "feature"
+  },
+  {
+    "name": "chamfer_edges",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string",
+          "description": "published name of the shape to chamfer"
+        },
+        "d1": {
+          "type": "number",
+          "description": "first chamfer distance"
+        },
+        "d2": {
+          "type": "number",
+          "description": "second chamfer distance (defaults to d1)"
+        },
+        "edges": {
+          "description": "\"all\" or a list of edge subshape ids",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "all"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          ]
+        },
+        "where": {
+          "description": "instead of `edges`, select the edges inline: same predicate as get_subshapes"
+        }
+      },
+      "required": [
+        "shape",
+        "d1"
+      ]
+    },
+    "description": "Bevel edges of `shape` by distances d1/d2. Select edges with `edges` (\"all\" or a list of edge ids) or inline with a `where` predicate (same as get_subshapes).",
+    "category": "feature"
+  },
+  {
+    "name": "set_color",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "red": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "green": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "blue": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        }
+      },
+      "required": [
+        "shape",
+        "red",
+        "green",
+        "blue"
+      ]
+    },
+    "description": "Set the display colour of `shape` (r/g/b 0-255). Apply once, last, on the final shape.",
+    "category": "display"
+  },
+  {
+    "name": "set_transparency",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "transparency": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      },
+      "required": [
+        "shape",
+        "transparency"
+      ]
+    },
+    "description": "Set display transparency of `shape` (0 opaque .. 1 invisible).",
+    "category": "display"
+  },
+  {
+    "name": "set_display_mode",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "description": "0=wireframe, 1=shading, 2=shading+edges"
+        }
+      },
+      "required": [
+        "shape",
+        "mode"
+      ]
+    },
+    "description": "Set display mode of `shape` (0=wireframe, 1=shading, 2=shading+edges).",
+    "category": "display"
+  },
+  {
+    "name": "check_shape",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "shape"
+      ]
+    },
+    "description": "Report whether `shape` is a valid geometry, with a diagnostic message.",
+    "category": "query"
+  },
+  {
+    "name": "list_study_objects",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    },
+    "description": "List the names of every object currently published in the study.",
+    "category": "query"
+  },
+  {
+    "name": "measure",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "published shape names to measure"
+        }
+      },
+      "required": [
+        "names"
+      ]
+    },
+    "description": "Report bbox/size/centre (mm) of one or more published shapes by name. Use it to check where a shape landed and to see upstream shapes you did not build.",
+    "category": "query"
+  },
+  {
+    "name": "explode",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string",
+          "description": "name of the shape to decompose"
+        },
+        "sub_type": {
+          "type": "string",
+          "enum": [
+            "vertex",
+            "edge",
+            "wire",
+            "face",
+            "shell",
+            "solid"
+          ]
+        }
+      },
+      "required": [
+        "shape",
+        "sub_type"
+      ]
+    },
+    "description": "Publish every subshape of the given sub_type (edge, face, ...) of `shape` as its own named object, sorted by centre for a deterministic order. Use get_subshapes instead if you only need ids.",
+    "category": "feature"
+  },
+  {
+    "name": "get_subshape",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "subshape ids from explode or get_subshapes"
+        }
+      },
+      "required": [
+        "shape",
+        "ids"
+      ]
+    },
+    "description": "Build one new named shape from a list of subshape ids of `shape` (e.g. a group of faces). Get the ids from get_subshapes or explode.",
+    "category": "feature"
+  },
+  {
+    "name": "get_subshapes",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        },
+        "sub_type": {
+          "type": "string",
+          "enum": [
+            "vertex",
+            "edge",
+            "wire",
+            "face",
+            "shell",
+            "solid"
+          ]
+        },
+        "where": {
+          "description": "\"all\", or {\"sorted_by\":\"x|y|z\",\"take\":\"max|min\",\"count\":N}, or {\"by_size\":\"longest|shortest|largest|smallest\",\"count\":N}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"
+        }
+      },
+      "required": [
+        "shape",
+        "sub_type",
+        "where"
+      ]
+    },
+    "description": "Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = \"all\", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state).",
+    "category": "query"
+  },
+  {
+    "name": "min_distance",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape1": {
+          "type": "string"
+        },
+        "shape2": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "shape1",
+        "shape2"
+      ]
+    },
+    "description": "Report the shortest distance (mm) between two published shapes.",
+    "category": "query"
+  },
+  {
+    "name": "basic_properties",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "shape": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "shape"
+      ]
+    },
+    "description": "Report [length, area, volume] of `shape` (mm): length for an edge/wire, area for a face/shell, volume for a solid; the others are 0.",
+    "category": "query"
+  }
+]

@@ -94,7 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         client = None
     else:
         try:
-            client = server_conn.connect(run_id)
+            # same condition as runner.py's llm_trace.jsonl: a recorded run
+            # always has both trace halves, or neither.
+            record_path = (os.path.join(run_dir, "exec_trace.jsonl")
+                           if args.verbose >= 2 else None)
+            client = server_conn.connect(run_id, record_path=record_path)
         except server_conn.ServerUnavailable as e:
             log.error("%s", e)
             return 1
