@@ -55,6 +55,25 @@ class ModuleSpec:
 
 
 MODULES: dict[str, ModuleSpec] = {}
+_SPECIALISTS_IMPORTED = False
+
+
+def _ensure_specialists_registered() -> None:
+    """Ensure specialists are imported so they register their specs.
+
+    MODULES is populated as a side effect of importing specialist modules.
+    This function is called on first use of spec_for/routable to guarantee
+    that a fresh interpreter (without prior specialist imports) still works.
+    Guard prevents re-entry; it is safe to call multiple times.
+    """
+    global _SPECIALISTS_IMPORTED
+    if _SPECIALISTS_IMPORTED:
+        return
+    _SPECIALISTS_IMPORTED = True
+    # Import in order to trigger registration via @register decorator.
+    # Must be done here, not at module level, to avoid import cycles.
+    import salome_agent.specialists.geom  # noqa: F401 — trigger registration
+    import salome_agent.specialists.script_modules  # noqa: F401 — trigger registration
 
 
 def register(spec: ModuleSpec) -> ModuleSpec:
@@ -63,9 +82,11 @@ def register(spec: ModuleSpec) -> ModuleSpec:
 
 
 def spec_for(name: str) -> ModuleSpec:
+    _ensure_specialists_registered()
     return MODULES[name]
 
 
 def routable() -> list[ModuleSpec]:
     """Modules the planner may put in a plan — those with catalogue text."""
+    _ensure_specialists_registered()
     return [s for s in MODULES.values() if s.catalogue]
