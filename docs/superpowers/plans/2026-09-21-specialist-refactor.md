@@ -82,7 +82,7 @@ Two of the guards are capturable **offline, right now**: `list_tools()`'s serial
 - Create: `tests/fixtures/golden/planner_prompt.txt`
 - Create: `tests/unit/test_replay_harness.py`
 - Modify: `salome_agent/executor_client.py`
-- Modify: `salome_agent/runner.py:93-96`
+- Modify: `salome_agent/server_conn.py:32` and `salome_agent/cli.py` — **this is where `ExecutorClient` is actually constructed.** `runner.py:93-96` builds the LLM trace path, not the client, and gets a comment only.
 
 **Interfaces:**
 - Consumes: `salome_agent.llm.LLMClient._round_trip(payload, tool_names, extra_body) -> dict` (the provider `message` dict); `salome_agent.executor_client.ExecutorClient._call(cmd, **payload) -> dict`.
