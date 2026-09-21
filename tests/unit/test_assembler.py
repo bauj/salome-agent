@@ -126,3 +126,37 @@ def test_the_two_copies_of_each_preamble_cannot_drift():
     assert spec_for("geom").preamble == _GEOM_INIT
     assert spec_for("smesh").preamble == _SMESH_INIT
     assert spec_for("paravis").preamble == _SMESH_INIT
+
+
+def test_geom_smesh_paravis_preamble_is_exactly_as_before():
+    """Assemble with all three modules (geom, smesh, paravis) and verify the
+    full preamble is EXACTLY as before: kernel init, then geom init, then
+    smesh init exactly ONCE (not duplicated for paravis). This tests the
+    'not in preamble' guard suppresses the duplicate.
+    """
+    from salome_agent.nodes.assembler import _KERNEL_INIT, _GEOM_INIT, _SMESH_INIT
+
+    state = {
+        "run_id": "r",
+        "user_request": "x",
+        "stages": {
+            0: {"module": "geom", "status": "ok", "script": "box_1 = geompy.MakeBoxDXDYDZ(1, 1, 1)"},
+            1: {"module": "smesh", "status": "ok", "script": "mesh.Compute()"},
+            2: {"module": "paravis", "status": "ok", "script": "print('done')"}
+        }
+    }
+    result = assemble(state)
+
+    # Verify the preamble contains exactly one of each init
+    assert result.count("from salome.geom import geomBuilder") == 1, "geom init should appear exactly once"
+    assert result.count("from salome.smesh import smeshBuilder") == 1, "smesh init should appear exactly once (not duplicated for paravis)"
+
+    # Verify order: kernel init < geom init < smesh init
+    kernel_pos = result.index("salome_init()")
+    geom_pos = result.index("geomBuilder")
+    smesh_pos = result.index("smeshBuilder")
+    assert kernel_pos < geom_pos < smesh_pos, f"Wrong order: kernel={kernel_pos}, geom={geom_pos}, smesh={smesh_pos}"
+
+    # Verify the stage scripts come after the preamble
+    stage_pos = result.index("# stage 1/3:")
+    assert geom_pos < stage_pos and smesh_pos < stage_pos, "Init should come before stages"

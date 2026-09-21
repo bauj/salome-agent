@@ -64,16 +64,30 @@ def _ensure_specialists_registered() -> None:
     MODULES is populated as a side effect of importing specialist modules.
     This function is called on first use of spec_for/routable to guarantee
     that a fresh interpreter (without prior specialist imports) still works.
-    Guard prevents re-entry; it is safe to call multiple times.
+
+    Guard pattern: flag is set AFTER imports succeed (not before). Tension:
+    re-entry protection wants early flag set, but failure recovery requires
+    late set to avoid silent MODULES=={} if an import fails. We choose late
+    set: a failed import must not leave the registry looking permanently empty,
+    because routable() would silently return [] and produce wrong plans instead
+    of raising a diagnostic error. Re-entry is still protected: on second call,
+    if first call failed and didn't set flag, we retry; if it succeeded, flag
+    is set and we skip. The failure case retries indefinitely (OK: imports are
+    deterministic, and the error is loud, so operator sees and fixes it).
     """
     global _SPECIALISTS_IMPORTED
     if _SPECIALISTS_IMPORTED:
         return
-    _SPECIALISTS_IMPORTED = True
     # Import in order to trigger registration via @register decorator.
     # Must be done here, not at module level, to avoid import cycles.
-    import salome_agent.specialists.geom  # noqa: F401 — trigger registration
-    import salome_agent.specialists.script_modules  # noqa: F401 — trigger registration
+    try:
+        import salome_agent.specialists.geom  # noqa: F401 — trigger registration
+        import salome_agent.specialists.script_modules  # noqa: F401 — trigger registration
+    except Exception:
+        # Do not set flag; let caller retry on next spec_for/routable call.
+        # This ensures MODULES is not left silently empty.
+        raise
+    _SPECIALISTS_IMPORTED = True
 
 
 def register(spec: ModuleSpec) -> ModuleSpec:
