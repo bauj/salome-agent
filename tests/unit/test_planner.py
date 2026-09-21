@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock
 
-import salome_agent.specialists.geom  # noqa: F401 — trigger GEOM_SPEC registration
-import salome_agent.specialists.script_modules  # noqa: F401 — trigger SMESH_SPEC/PARAVIS_SPEC registration
 from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT, plan
 
 
