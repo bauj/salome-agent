@@ -47,15 +47,15 @@ class ToolSpecialist:
 
     def run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
             tool_selection="hints", verify_cadence="final", retry=None,
-            seed_call_log=None) -> dict:
+            seed_call_log=None, seed_calls=None) -> dict:
         try:
             return self._run(stage_plan, llm, client, iteration_cap, blocks,
-                             tool_selection, verify_cadence, retry, seed_call_log)
+                             tool_selection, verify_cadence, retry, seed_call_log, seed_calls)
         except (SessionDied, SessionPoisoned) as e:
             return {"fatal": f"SALOME agent server unavailable: {e}"}
 
     def _run(self, stage_plan, llm, client, iteration_cap, blocks,
-             tool_selection, verify_cadence, retry, seed_call_log) -> dict:
+             tool_selection, verify_cadence, retry, seed_call_log, seed_calls) -> dict:
         spec = self.spec
         parts = [str(stage_plan)] + [b for b in blocks if b]
         if retry and spec.render_retry:
@@ -69,6 +69,11 @@ class ToolSpecialist:
         # codegen's reachability pass instead of silently dropping out of
         # result.py (GH #38).
         call_log: list[dict] = list(seed_call_log) if seed_call_log else []
+        calls: list[dict] = list(seed_calls) if seed_calls else []
+        terms = {spec.terminator.name: spec.terminator,
+                 **{t.name: t for t in spec.extra_terminators}}
+        extra_defs = [{"name": t.name, "parameters": t.schema, "description": t.description}
+                      for t in spec.extra_terminators]
         last_error = None
         # Stage-local record of calls that already failed: hash((tool, args)) ->
         # error. A byte-identical repeat is answered here without a round-trip to
@@ -99,7 +104,8 @@ class ToolSpecialist:
         for i in range(iteration_cap):
             log.debug("    %s iter %d/%d: asking LLM...", spec.name, i + 1, iteration_cap)
             tools = ([all_defs[n] for n in sorted(offered) if n in all_defs]
-                     + [finish_def] + ([load_def] if load_def is not None else []))
+                     + [finish_def] + extra_defs
+                     + ([load_def] if load_def is not None else []))
             # Tool results are stored already compacted (see below), so `messages`
             # is sent verbatim: each turn's request extends the previous one byte
             # for byte, which keeps a gateway's prefix/KV cache alive. `load_tools`
@@ -111,9 +117,9 @@ class ToolSpecialist:
                                 module=stage_plan.get("module"))
             if response.get("content"):
                 log.debug("    LLM reasoning: %s", response["content"])
-            calls = response["tool_calls"]
-            log.debug("    LLM -> %s", [(c["name"], c["args"]) for c in calls])
-            if not calls:
+            tool_calls = response["tool_calls"]
+            log.debug("    LLM -> %s", [(c["name"], c["args"]) for c in tool_calls])
+            if not tool_calls:
                 # tool_choice="auto" — the model replied with prose and no call.
                 # Keep its message, nudge it, and let the loop try again.
                 messages.append({"role": "assistant", "content": response["content"] or "(no reply)",
@@ -126,19 +132,19 @@ class ToolSpecialist:
             # real LLM, it just calls make_box forever instead of ever finishing.
             # The model may batch several independent calls in one turn; every
             # one gets executed and answered below, in order.
-            for j, c in enumerate(calls):
+            for j, c in enumerate(tool_calls):
                 c.setdefault("id", None)
                 c["id"] = c["id"] or f"call_{i}_{j}"
-            messages.append(assistant_tool_turn(calls, response.get("raw_message")))
+            messages.append(assistant_tool_turn(tool_calls, response.get("raw_message")))
             batch_error = None
             finish_call = None
-            for k, c in enumerate(calls):
+            for k, c in enumerate(tool_calls):
                 name, args, call_id = c["name"], c["args"], c["id"]
-                if name == spec.terminator.name:
-                    finish_call = (call_id, args)
+                if name in terms:
+                    finish_call = (call_id, args, terms[name])
                     # Anything the model batched after finish_stage still needs a
                     # tool response for its id, or the next request is malformed.
-                    for skipped in calls[k + 1:]:
+                    for skipped in tool_calls[k + 1:]:
                         messages.append({"role": "tool", "tool_call_id": skipped["id"],
                                          "content": "skipped — finish_stage was called"})
                     break
@@ -168,6 +174,9 @@ class ToolSpecialist:
                 result = spec.execute(client, name, args)
                 if result["ok"]:
                     call_log.extend(result.get("records") or [])
+                    if result.get("records"):
+                        calls.append({"tool": name, "tool_args": args,
+                                      "records": list(result["records"])})
                     log.debug("    tool %s ok", name)
                     if spec.risky_categories:
                         if name in spec.measure_tools:
@@ -186,8 +195,9 @@ class ToolSpecialist:
             last_error = batch_error
 
             if finish_call is not None:
-                call_id, args = finish_call
-                if (spec.measure_tools and verify_cadence in ("final", "strict")
+                call_id, args, term = finish_call
+                if (term is spec.terminator and spec.measure_tools
+                        and verify_cadence in ("final", "strict")
                         and risky_since_measure > 0 and not nudged_final):
                     nudged_final = True
                     log.info("  verify_cadence=%s: nudging a measure before finish_stage",
@@ -197,7 +207,7 @@ class ToolSpecialist:
                         "Call `measure` on your result shape(s) and confirm their "
                         "placement, then call finish_stage again."})
                     continue
-                return spec.terminator.handle(args, call_log)
+                return _with_calls(term.handle(args, call_log), calls)
 
             if (spec.risky_categories and verify_cadence == "strict"
                     and risky_since_measure >= _STRICT_NUDGE_EVERY):
@@ -208,4 +218,10 @@ class ToolSpecialist:
                     "measure. Call `measure` on your recent shapes and confirm "
                     "their placement before continuing."})
                 risky_since_measure = 0
-        return spec.on_exhausted(call_log, last_error)
+        return _with_calls(spec.on_exhausted(call_log, last_error), calls)
+
+
+def _with_calls(result: dict, calls: list) -> dict:
+    if "call_log" in result:
+        return {**result, "calls": calls}
+    return result
