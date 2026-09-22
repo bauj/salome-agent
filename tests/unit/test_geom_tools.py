@@ -555,6 +555,76 @@ class TestBasicObjectTools:
         assert record["args"][0] == {"kind": "ref", "value": "pt1"}
         assert record["args"][1] == {"kind": "ref", "value": "pt2"}
 
+    def test_make_line_is_described_as_a_segment(self):
+        assert "segment" in geom_tools.TOOL_DESCRIPTIONS["make_line"]
+        assert "infinite" not in geom_tools.TOOL_DESCRIPTIONS["make_line"]
+
+    def test_make_polygon_face_from_coordinates(self):
+        """Closed polyline through the corners -> planar face (GH #45)."""
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeVertex.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy}, geom_bindings={})
+
+        result = geom_tools.tool_make_polygon_face(
+            ex, {"points": ["0,0,80", "0,120,80", "0,60,120"]})
+
+        assert result["ok"] is True, result.get("error")
+        assert [r["fn"] for r in result["records"]] == [
+            "MakeVertex", "MakeVertex", "MakeVertex", "MakePolyline", "MakeFaceWires"]
+        pts = [r["out_vars"][0] for r in result["records"][:3]]
+        poly, face = result["records"][3], result["records"][4]
+        assert poly["args"] == [{"kind": "list", "value": [{"kind": "ref", "value": p} for p in pts]},
+                                {"kind": "literal", "value": True}]
+        assert poly["publish"] is None
+        assert face["args"] == [{"kind": "list", "value": [{"kind": "ref", "value": poly["out_vars"][0]}]},
+                                {"kind": "literal", "value": 1}]
+        assert face["publish"] == face["out_vars"] == ["sa_face_1"]
+        assert "sa_face_1" in ex.geom_bindings
+
+    def test_make_polygon_face_accepts_point_names(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
+                             geom_bindings={"a": 1, "b": 2, "c": 3})
+
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c"]})
+
+        assert result["ok"] is True
+        assert [r["fn"] for r in result["records"]] == ["MakePolyline", "MakeFaceWires"]
+        geompy.MakePolyline.assert_called_once_with([1, 2, 3], True)
+
+    def test_make_polygon_face_needs_three_points(self):
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": MagicMock()}, geom_bindings={})
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["0,0,0", "1,0,0"]})
+        assert result["ok"] is False
+        assert "at least 3" in result["error"]
+
+    def test_make_polygon_face_non_planar_says_so(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeFaceWires.side_effect = RuntimeError("MakeFaceWires : Face creation failed")
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
+                             geom_bindings={"a": 1, "b": 2, "c": 3, "d": 4})
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c", "d"]})
+        assert result["ok"] is False
+        assert "same plane" in result["error"]
+
+    def test_make_polygon_face_codegen(self):
+        from salome_agent.codegen import generate
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
+                             geom_bindings={"a": 1, "b": 2, "c": 3})
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c"]})
+        assert generate(result["records"], ["face_1"]) == (
+            "wire_1 = geompy.MakePolyline([a, b, c], True)\n"
+            "face_1 = geompy.MakeFaceWires([wire_1], 1)\n"
+            "geompy.addToStudy(face_1, 'face_1')")
+
     def test_make_plane(self):
         """make_plane creates a plane from point and normal."""
         geom_tools.reset_counters()
