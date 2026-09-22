@@ -7,7 +7,7 @@ from agent_server.core import Core
 
 class FakeStudy:
     def __init__(self, names):
-        self.objs = {n: SimpleNamespace(name=n) for n in names}
+        self.objs = {n: SimpleNamespace(name=n, GetID=lambda n=n: f"0:1:{n}") for n in names}
         self.removed = []
 
     def FindObjectByName(self, name, component):
@@ -59,3 +59,30 @@ def test_core_forget_command_refreshes_geom():
     r = Core(backend).handle({"id": 4, "cmd": "forget", "names": ["box_1"]})
     assert r == {"id": 4, "ok": True, "removed": ["box_1"]}
     assert refreshed == ["GEOM"]
+
+
+def test_forget_erases_each_study_object_from_the_viewer_before_removing_it():
+    study = FakeStudy(["box_1"])
+    order = []
+    orig = study.NewBuilder
+
+    def builder():
+        b = orig()
+        remove = b.RemoveObjectWithChildren
+        b.RemoveObjectWithChildren = lambda so: (order.append(("remove", so.name)), remove(so))
+        return b
+
+    study.NewBuilder = builder
+    forget_names(_ns(study), {"box_1": 1, "vec_1": 2}, ["box_1", "vec_1"],
+                 erase=lambda entry: order.append(("erase", entry)))
+    assert order == [("erase", "0:1:box_1"), ("remove", "box_1")]
+
+
+def test_a_failing_erase_does_not_stop_the_forget():
+    study = FakeStudy(["box_1"])
+
+    def boom(entry):
+        raise RuntimeError("no viewer")
+
+    r = forget_names(_ns(study), {}, ["box_1"], erase=boom)
+    assert r["removed"] == ["box_1"] and "box_1" not in study.objs
