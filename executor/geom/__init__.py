@@ -7,14 +7,6 @@ from executor.geom.helpers import (  # noqa: F401
 from executor.geom.results import (  # noqa: F401
     _attach_shape_info, _delta_note, _select_subshapes,
 )
-from executor.geom import (  # noqa: F401  — import for registration side effects
-    primitives, sketch, swept, booleans, transforms, features, display, queries,
-)
-# subshapes.py holds explode/get_subshape/get_subshapes/min_distance/
-# basic_properties (tools 39-43 of the pre-split wire order) and is imported
-# last so registration order reproduces that order — see task-6-brief ruling 1.
-from executor.geom import subshapes  # noqa: F401
-
 from executor.geom.primitives import (  # noqa: F401
     tool_make_box, tool_make_box_two_pnt, tool_make_cylinder, tool_make_sphere,
     tool_make_cone, tool_make_torus,
@@ -43,6 +35,9 @@ from executor.geom.display import (  # noqa: F401
 from executor.geom.queries import (  # noqa: F401
     tool_check_shape, tool_list_study_objects, tool_measure,
 )
+# subshapes.py holds explode/get_subshape/get_subshapes/min_distance/
+# basic_properties (tools 39-43 of the pre-split wire order) and is imported
+# last so registration order reproduces that order — see task-6-brief ruling 1.
 from executor.geom.subshapes import (  # noqa: F401
     tool_explode, tool_get_subshape, tool_get_subshapes, tool_min_distance,
     tool_basic_properties,

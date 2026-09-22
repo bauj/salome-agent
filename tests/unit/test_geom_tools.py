@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Use the alias to avoid rewriting ~1800 lines of assertions (task 7 cleanup).
+# Alias keeps the assertions below unedited after the geom_tools -> geom package move.
 from executor import geom as geom_tools
 
 _VALID_CATEGORIES = {

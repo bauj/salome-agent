@@ -178,10 +178,14 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     stage = dict(stages[idx])
     update: dict = {}
 
-    from salome_agent.modules import spec_for
+    from salome_agent.modules import MODULES, spec_for
     from salome_agent.specialists.tool_specialist import ToolSpecialist
     import salome_agent.specialists.geom  # noqa: F401 — registers GEOM_SPEC
     import salome_agent.specialists.script_modules  # noqa: F401 — registers the script specs
+
+    if module not in MODULES:
+        return Command(update={"fatal": f"planner produced unknown module {module!r}"},
+                       goto="assemble")
 
     spec = spec_for(module)
     upstream = select_upstream(stage_plan, state["stages"], idx)

@@ -160,3 +160,17 @@ def test_geom_smesh_paravis_preamble_is_exactly_as_before():
     # Verify the stage scripts come after the preamble
     stage_pos = result.index("# stage 1/3:")
     assert geom_pos < stage_pos and smesh_pos < stage_pos, "Init should come before stages"
+
+
+def test_geom_init_precedes_smesh_init_with_no_geom_stage():
+    # modules={"smesh"} but the smesh script references geompy (an object
+    # built in an earlier, already-assembled run) — geom init still comes
+    # first, matching main's fixed order.
+    from salome_agent.nodes.assembler import _GEOM_INIT, _SMESH_INIT
+
+    state = {"run_id": "r", "user_request": "x", "stages": {
+        0: {"module": "smesh", "status": "ok",
+            "script": "box_1 = geompy.MakeBoxDXDYDZ(1, 1, 1)\nmesh.Compute()"}}}
+    result = assemble(state)
+
+    assert result.index(_GEOM_INIT) < result.index(_SMESH_INIT)

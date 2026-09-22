@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-# Use the alias to avoid rewriting test assertions (task 7 cleanup).
+# Alias keeps the assertions below unedited after the geom_tools -> geom package move.
 from executor import geom as geom_tools
 
 

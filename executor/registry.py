@@ -62,9 +62,3 @@ class ToolRegistry:
             if key in coerced:
                 coerced[key] = cast(coerced[key])
         return coerced
-
-    def call(self, executor, name: str, args: dict) -> dict:
-        entry = self._entries.get(name)
-        if entry is None:
-            return {"ok": False, "error": f"unknown tool {name!r}"}
-        return entry["fn"](executor, self.coerce_args(name, args))
