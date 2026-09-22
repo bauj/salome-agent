@@ -137,3 +137,15 @@ def test_turn_input_carries_graph_turn_and_selection(conv, monkeypatch):
     conv.turn("x", selection=sel, on_event=lambda e: None, on_gate=None)
     assert seen["turn_idx"] == 1 and seen["selection"] == sel
     assert seen["build_graph"]["nodes"][0]["id"] == "n1"
+
+
+def test_ok_turn_undo_and_rebuild_display_the_results(conv, monkeypatch):
+    shown = []
+    monkeypatch.setattr(conv_mod, "show_results", lambda client, g: shown.append(g))
+    _fake_drive(monkeypatch, {"build_graph": _graph_with(1).to_dict()})
+    conv.turn("one", on_event=lambda e: None, on_gate=None)
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    conv.undo()
+    monkeypatch.setattr(conv_mod, "rebuild_all", lambda client, graph, extra_names=(): graph.copy())
+    conv.rebuild()
+    assert len(shown) == 3

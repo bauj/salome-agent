@@ -82,6 +82,23 @@ def _session_handle(client) -> dict:
             "name_prefix": client.name_prefix}
 
 
+def show_results(client, build_graph: dict | None) -> None:
+    """Best-effort: draw the model's result objects in the GUI viewer (a no-op
+    headless). Publishing to the study alone leaves them hidden."""
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.logs import log
+
+    if client is None or not build_graph:
+        return
+    names = BuildGraph.from_dict(build_graph).result_names()
+    if not names:
+        return
+    try:
+        client.display(names)
+    except Exception as e:  # noqa: BLE001 — display must never fail a run
+        log.warning("could not display the results: %s", e)
+
+
 def initial_state(request: str, config: dict, client, run_id: str, batch: bool) -> dict:
     return {
         "user_request": request, "config": {**config, "batch": batch},
@@ -154,5 +171,7 @@ def run_request(request: str, config: dict, *, client, on_event, on_gate,
     inp = initial_state(request, config, client, run_id, batch)
 
     final = drive(graph, inp, cfg, mapper, llm, on_event, on_gate, cancel)
+    if not final.get("aborted"):
+        show_results(client, final.get("build_graph"))
     exit_code = 1 if (final.get("fatal") or final.get("aborted")) else 0
     return RunResult(run_id=run_id, run_dir=run_dir, final_state=final, exit_code=exit_code)

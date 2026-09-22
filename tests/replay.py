@@ -76,6 +76,9 @@ class ReplayExecutorClient:
     def forget(self, names):
         return self._next("forget", {"names": names})
 
+    def display(self, names):
+        return self._next("display", {"names": names})
+
     def introspect(self, names):
         return self._next("introspect", {"names": names})
 

@@ -98,6 +98,9 @@ class ExecutorClient:
     def forget(self, names):
         return self._call("forget", names=names)
 
+    def display(self, names):
+        return self._call("display", names=names)
+
     def shutdown(self):
         return self._call("shutdown")
 
