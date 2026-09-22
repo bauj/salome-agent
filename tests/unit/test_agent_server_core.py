@@ -29,6 +29,9 @@ class FakeBackend:
     def refresh(self, module):
         self.refreshed.append(module)
 
+    def forget(self, names):
+        return {"ok": True, "removed": []}
+
     def find_object(self, name):
         return name
 

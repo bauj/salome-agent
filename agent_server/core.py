@@ -54,6 +54,10 @@ class Core:
             if r.get("ok"):
                 b.refresh("GEOM")
             return {"id": rid, **r}
+        if cmd == "forget":
+            r = b.forget(req["names"])
+            b.refresh("GEOM")
+            return {"id": rid, **r}
         if cmd == "shutdown":
             b.end_session()
             return {"id": rid, "ok": True}

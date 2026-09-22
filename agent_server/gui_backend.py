@@ -7,6 +7,7 @@ if SalomePyQt.usePySide():
 else:
     from PyQt5.QtCore import QObject, pyqtSignal as _Signal, Qt
 
+from agent_server.backend import forget_names
 from executor import geom
 
 
@@ -133,6 +134,10 @@ class GuiBackend:
             self._invoker.run_on_main(_do, timeout=10)
         except Exception:
             pass
+
+    def forget(self, names):
+        return self._invoker.run_on_main(
+            lambda: forget_names(self.namespace, self.geom_bindings, names), timeout=30)
 
     def find_object(self, name):
         def _do():
