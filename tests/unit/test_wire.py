@@ -132,7 +132,7 @@ def test_hold_is_released_when_the_holder_disconnects(server):
     s1, f1 = _client(port)
     f1.write(b'{"cmd":"hello","token":"secret","id":1,"hold":true}\n'); f1.flush()
     f1.readline()
-    s1.close()
+    f1.close(); s1.close()
     time.sleep(0.3)
     s2, f2 = _client(port)
     f2.write(b'{"cmd":"hello","token":"secret","id":1}\n'); f2.flush()
