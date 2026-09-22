@@ -1871,3 +1871,13 @@ class TestDeltaNote:
                                       {"shape": "box_1", "dx": 10, "dy": 0, "dz": 0})
         assert result["ok"] is True
         assert "volume changed" in result["delta"]
+
+
+def test_every_registered_geom_tool_is_complete():
+    from executor.geom_tools import registry
+
+    for name in registry.names:
+        assert registry.descriptions()[name], f"no description for {name}"
+        assert registry.schemas()[name].get("type") == "object", f"bad schema for {name}"
+        assert name in registry.arg_types(), f"no arg_types entry for {name}"
+        assert registry.categories()[name] in _VALID_CATEGORIES, f"bad category for {name}"

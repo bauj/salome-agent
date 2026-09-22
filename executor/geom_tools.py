@@ -3,6 +3,14 @@ from typing import Any, Callable, TypedDict
 from typing_extensions import NotRequired
 
 
+from executor.registry import ToolRegistry
+
+_VALID_CATEGORIES = {"primitive", "sketch", "swept", "boolean", "transform",
+                     "feature", "display", "query"}
+registry = ToolRegistry(valid_categories=_VALID_CATEGORIES)
+tool = registry.tool
+
+
 class ArgRef(TypedDict):
     kind: str    # "literal" | "ref" | "list" | "study" | "salomeds_color"
     value: Any
@@ -248,6 +256,10 @@ def _resolve_point(executor, arg, records: list) -> str:
     return arg
 
 
+@tool("make_box", category="primitive",
+      description='Axis-aligned solid box with one corner at the origin, extending +X/+Y/+Z by dx/dy/dz.',
+      schema={"type": "object", "properties": {"dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"}}, "required": ["dx", "dy", "dz"]},
+      arg_types={"dx": float, "dy": float, "dz": float})
 def tool_make_box(executor, args: dict):
     geompy = executor.namespace["geompy"]
     box = geompy.MakeBoxDXDYDZ(args["dx"], args["dy"], args["dz"])
@@ -267,120 +279,10 @@ def tool_make_box(executor, args: dict):
     }
 
 
-def _normalise_edge_ids(tool: str, edges, shape, geompy) -> list:
-    """Coerce the `edges` arg of fillet/chamfer into a list of int edge ids.
-
-    Accepts "all", an int, a list, or a string like "1,2,3" / "(1,2,3)" /
-    "[1, 2, 3]" (a real LLM has produced all of these). Anything else raises a
-    clear error rather than letting a bare string reach geompy, which returns
-    an opaque `CORBA.BAD_PARAM ... Expecting sequence, got <class 'str'>`.
-    """
-    if edges == "all":
-        return geompy.SubShapeAllIDs(shape, geompy.ShapeType["EDGE"])
-    if isinstance(edges, int):
-        edges = [edges]
-    if isinstance(edges, str):
-        edges = [p for p in edges.strip(" []()").replace(" ", "").split(",") if p]
-    if not isinstance(edges, (list, tuple)) or not edges:
-        raise ValueError(
-            f'{tool}: pass `edges` ("all" or a list of edge ids) or a `where` '
-            f'predicate, got edges={edges!r}')
-    try:
-        return [int(e) for e in edges]
-    except (TypeError, ValueError):
-        raise ValueError(f'{tool}: every entry in `edges` must be an integer, got {edges!r}')
-
-
-def _edge_ids_for(tool: str, executor, args: dict, shape):
-    """Edge ids for fillet/chamfer: a `where` predicate (inline get_subshapes)
-    if given, otherwise the `edges` arg via _normalise_edge_ids."""
-    geompy = executor.namespace["geompy"]
-    if "where" in args and args["where"] is not None:
-        try:
-            selected = _select_subshapes(
-                geompy, shape, int(geompy.ShapeType["EDGE"]), args["where"])
-        except ValueError as e:
-            raise ValueError(f"{tool}: {e}")
-        return [i for i, _ in selected]
-    return _normalise_edge_ids(tool, args.get("edges"), shape, geompy)
-
-
-def tool_fillet_edges(executor, args: dict):
-    geompy = executor.namespace["geompy"]
-    shape = executor.geom_bindings[args["shape"]]
-    try:
-        edge_ids = _edge_ids_for("fillet_edges", executor, args, shape)
-    except ValueError as e:
-        return {"ok": False, "error": str(e)}
-    # geompy.ShapeType["EDGE"] evaluates to 6 (hardcoded literal for result.py)
-    edge_type = 6  # geompy.ShapeType["EDGE"]
-    try:
-        filleted = geompy.MakeFillet(shape, args["radius"], edge_type, edge_ids)
-    except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
-        return {"ok": False, "error": f"fillet_edges: MakeFillet failed ({e}); "
-                f"try a smaller radius or check the edge ids"}
-    # theReturnStatus=1 -> (isValid, description); the default (0) returns
-    # a bare bool, which broke unpacking here until caught in testing.
-    is_valid, msg = geompy.CheckShape(filleted, True, 1)
-    if not is_valid:
-        # Not published yet at this point, so there is nothing to clean
-        # up — the invariant decision 16 wants (no orphan survives a
-        # failed call) holds by construction rather than by an explicit
-        # delete step.
-        return {"ok": False, "error": f"fillet_edges: CheckShape failed on result ({msg})"}
-    name = _next_name(executor, "fillet")
-    _publish(executor, filleted, name)
-    return {
-        "ok": True,
-        "records": [{
-            "fn": "MakeFillet",
-            "args": [{"kind": "ref", "value": args["shape"]},
-                     {"kind": "literal", "value": args["radius"]},
-                     {"kind": "literal", "value": edge_type},
-                     {"kind": "literal", "value": edge_ids}],
-            "out_vars": [name],
-            "publish": [name],
-        }],
-        "sanity": {"ok": True},
-    }
-
-
-def tool_chamfer_edges(executor, args: dict):
-    geompy = executor.namespace["geompy"]
-    shape = executor.geom_bindings[args["shape"]]
-    d1 = args["d1"]
-    d2 = args.get("d2", d1)
-    try:
-        edge_ids = _edge_ids_for("chamfer_edges", executor, args, shape)
-    except ValueError as e:
-        return {"ok": False, "error": str(e)}
-    # MakeChamferEdges(theShape, theD1, theD2, theEdges) -- no shape-type arg,
-    # unlike MakeFillet.
-    try:
-        chamfered = geompy.MakeChamferEdges(shape, d1, d2, edge_ids)
-    except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
-        return {"ok": False, "error": f"chamfer_edges: MakeChamferEdges failed ({e}); "
-                f"try smaller distances or check the edge ids"}
-    is_valid, msg = geompy.CheckShape(chamfered, True, 1)
-    if not is_valid:
-        return {"ok": False, "error": f"chamfer_edges: CheckShape failed on result ({msg})"}
-    name = _next_name(executor, "chamfer")
-    _publish(executor, chamfered, name)
-    return {
-        "ok": True,
-        "records": [{
-            "fn": "MakeChamferEdges",
-            "args": [{"kind": "ref", "value": args["shape"]},
-                     {"kind": "literal", "value": d1},
-                     {"kind": "literal", "value": d2},
-                     {"kind": "literal", "value": edge_ids}],
-            "out_vars": [name],
-            "publish": [name],
-        }],
-        "sanity": {"ok": True},
-    }
-
-
+@tool("make_box_two_pnt", category="primitive",
+      description='Axis-aligned solid box spanning two opposite corner points.',
+      schema={"type": "object", "properties": {"pnt1": {"type": "string", "description": "first corner: a point name or \"x,y,z\""}, "pnt2": {"type": "string", "description": "opposite corner: a point name or \"x,y,z\""}}, "required": ["pnt1", "pnt2"]},
+      arg_types={})
 def tool_make_box_two_pnt(executor, args: dict):
     geompy = executor.namespace["geompy"]
     records: list = []
@@ -401,6 +303,10 @@ def tool_make_box_two_pnt(executor, args: dict):
     return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
+@tool("make_cylinder", category="primitive",
+      description='Solid cylinder, base centred at the origin, axis along +Z.',
+      schema={"type": "object", "properties": {"radius": {"type": "number"}, "height": {"type": "number"}}, "required": ["radius", "height"]},
+      arg_types={"radius": float, "height": float})
 def tool_make_cylinder(executor, args: dict):
     geompy = executor.namespace["geompy"]
     cyl = geompy.MakeCylinderRH(args["radius"], args["height"])
@@ -422,6 +328,10 @@ def tool_make_cylinder(executor, args: dict):
     }
 
 
+@tool("make_sphere", category="primitive",
+      description='Solid sphere centred at the origin (or at `center` if given).',
+      schema={"type": "object", "properties": {"radius": {"type": "number"}, "center": {"type": "string", "description": "optional center point"}}, "required": ["radius"]},
+      arg_types={"radius": float})
 def tool_make_sphere(executor, args: dict):
     geompy = executor.namespace["geompy"]
     records: list = []
@@ -449,6 +359,10 @@ def tool_make_sphere(executor, args: dict):
     return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
+@tool("make_cone", category="primitive",
+      description='Solid (truncated) cone, base radius1 at the origin, radius2 at height, axis along +Z. radius2=0 for a sharp tip.',
+      schema={"type": "object", "properties": {"radius1": {"type": "number"}, "radius2": {"type": "number"}, "height": {"type": "number"}}, "required": ["radius1", "radius2", "height"]},
+      arg_types={"radius1": float, "radius2": float, "height": float})
 def tool_make_cone(executor, args: dict):
     geompy = executor.namespace["geompy"]
     cone = geompy.MakeConeR1R2H(args["radius1"], args["radius2"], args["height"])
@@ -471,6 +385,10 @@ def tool_make_cone(executor, args: dict):
     }
 
 
+@tool("make_torus", category="primitive",
+      description='Solid torus centred at the origin, axis along +Z; radius_major = ring centre-line, radius_minor = tube.',
+      schema={"type": "object", "properties": {"radius_major": {"type": "number"}, "radius_minor": {"type": "number"}}, "required": ["radius_major", "radius_minor"]},
+      arg_types={"radius_major": float, "radius_minor": float})
 def tool_make_torus(executor, args: dict):
     geompy = executor.namespace["geompy"]
     torus = geompy.MakeTorusRR(args["radius_major"], args["radius_minor"])
@@ -492,6 +410,10 @@ def tool_make_torus(executor, args: dict):
     }
 
 
+@tool("make_face", category="sketch",
+      description='Planar rectangular face height x width. orientation 1=XOY, 2=YOZ, 3=ZOX.',
+      schema={"type": "object", "properties": {"height": {"type": "number"}, "width": {"type": "number"}, "orientation": {"type": "integer", "enum": [1, 2, 3], "default": 1}}, "required": ["height", "width"]},
+      arg_types={"height": float, "width": float, "orientation": int})
 def tool_make_face(executor, args: dict):
     geompy = executor.namespace["geompy"]
     orientation = args.get("orientation", 1)
@@ -515,6 +437,10 @@ def tool_make_face(executor, args: dict):
     }
 
 
+@tool("make_disk", category="sketch",
+      description='Planar circular face of the given radius. orientation 1=XOY, 2=YOZ, 3=ZOX.',
+      schema={"type": "object", "properties": {"radius": {"type": "number"}, "orientation": {"type": "integer", "enum": [1, 2, 3], "default": 1}}, "required": ["radius"]},
+      arg_types={"radius": float, "orientation": int})
 def tool_make_disk(executor, args: dict):
     geompy = executor.namespace["geompy"]
     orientation = args.get("orientation", 1)
@@ -537,6 +463,10 @@ def tool_make_disk(executor, args: dict):
     }
 
 
+@tool("make_point", category="sketch",
+      description='A vertex at (x, y, z).',
+      schema={"type": "object", "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}, "required": ["x", "y", "z"]},
+      arg_types={"x": float, "y": float, "z": float})
 def tool_make_point(executor, args: dict):
     geompy = executor.namespace["geompy"]
     pt = geompy.MakeVertex(args["x"], args["y"], args["z"])
@@ -557,6 +487,10 @@ def tool_make_point(executor, args: dict):
     }
 
 
+@tool("make_vector", category="sketch",
+      description='A free vector with components (dx, dy, dz) from the origin.',
+      schema={"type": "object", "properties": {"dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"}}, "required": ["dx", "dy", "dz"]},
+      arg_types={"dx": float, "dy": float, "dz": float})
 def tool_make_vector(executor, args: dict):
     geompy = executor.namespace["geompy"]
     vec = geompy.MakeVectorDXDYDZ(args["dx"], args["dy"], args["dz"])
@@ -577,6 +511,10 @@ def tool_make_vector(executor, args: dict):
     }
 
 
+@tool("make_line", category="sketch",
+      description='An infinite line through two points.',
+      schema={"type": "object", "properties": {"pnt1": {"type": "string", "description": "first point"}, "pnt2": {"type": "string", "description": "second point"}}, "required": ["pnt1", "pnt2"]},
+      arg_types={})
 def tool_make_line(executor, args: dict):
     geompy = executor.namespace["geompy"]
     records: list = []
@@ -594,6 +532,10 @@ def tool_make_line(executor, args: dict):
     return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
+@tool("make_plane", category="sketch",
+      description='An unbounded plane through `point` with the given `normal` vector (trimmed for display at trim_size).',
+      schema={"type": "object", "properties": {"point": {"type": "string", "description": "point on plane"}, "normal": {"type": "string", "description": "normal vector"}, "trim_size": {"type": "number", "default": 2000}}, "required": ["point", "normal"]},
+      arg_types={"trim_size": float})
 def tool_make_plane(executor, args: dict):
     geompy = executor.namespace["geompy"]
     records: list = []
@@ -617,6 +559,10 @@ def tool_make_plane(executor, args: dict):
     return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
+@tool("make_circle", category="sketch",
+      description='A circular edge (wire), centre point, `normal` axis, radius.',
+      schema={"type": "object", "properties": {"center": {"type": "string", "description": "center point"}, "normal": {"type": "string", "description": "normal vector"}, "radius": {"type": "number"}}, "required": ["center", "normal", "radius"]},
+      arg_types={"radius": float})
 def tool_make_circle(executor, args: dict):
     geompy = executor.namespace["geompy"]
     records: list = []
@@ -636,6 +582,10 @@ def tool_make_circle(executor, args: dict):
     return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
+@tool("make_prism", category="swept",
+      description='Linear extrusion of a face/wire/edge by the vector (dx, dy, dz).',
+      schema={"type": "object", "properties": {"base": {"type": "string", "description": "face/wire/edge to extrude"}, "dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"}}, "required": ["base", "dx", "dy", "dz"]},
+      arg_types={"dx": float, "dy": float, "dz": float})
 def tool_make_prism(executor, args: dict):
     geompy = executor.namespace["geompy"]
     base = executor.geom_bindings[args["base"]]
@@ -660,6 +610,10 @@ def tool_make_prism(executor, args: dict):
     }
 
 
+@tool("make_revolution", category="swept",
+      description='Revolve a face/wire/edge about `axis` by angle_deg. The profile must not touch the axis.',
+      schema={"type": "object", "properties": {"base": {"type": "string", "description": "face/wire/edge to revolve"}, "axis": {"description": "\"OX\"/\"OY\"/\"OZ\" or published vector name", "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]}, {"type": "string"}]}, "angle_deg": {"type": "number", "description": "rotation angle in degrees"}}, "required": ["base", "axis", "angle_deg"]},
+      arg_types={"angle_deg": float})
 def tool_make_revolution(executor, args: dict):
     geompy = executor.namespace["geompy"]
     base = executor.geom_bindings[args["base"]]
@@ -687,6 +641,10 @@ def tool_make_revolution(executor, args: dict):
     }
 
 
+@tool("make_pipe", category="swept",
+      description='Sweep a cross-section `base` along a `path` wire/edge.',
+      schema={"type": "object", "properties": {"base": {"type": "string", "description": "cross-section to sweep"}, "path": {"type": "string", "description": "wire/edge to sweep along"}}, "required": ["base", "path"]},
+      arg_types={})
 def tool_make_pipe(executor, args: dict):
     geompy = executor.namespace["geompy"]
     base = executor.geom_bindings[args["base"]]
@@ -710,6 +668,10 @@ def tool_make_pipe(executor, args: dict):
     }
 
 
+@tool("make_thick_solid", category="swept",
+      description='Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened).',
+      schema={"type": "object", "properties": {"shape": {"type": "string", "description": "shape to thicken"}, "thickness": {"type": "number"}, "faces": {"type": "array", "items": {"type": "integer"}, "description": "face subshape IDs to remove (open) -- required; a closed solid cannot be thickened without at least one"}, "inside": {"type": "boolean", "default": False}}, "required": ["shape", "thickness", "faces"]},
+      arg_types={"thickness": float})
 def tool_make_thick_solid(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -740,6 +702,10 @@ def tool_make_thick_solid(executor, args: dict):
     }
 
 
+@tool("make_filling", category="swept",
+      description='A surface filling a set of boundary contour edges/wires.',
+      schema={"type": "object", "properties": {"contours": {"type": "array", "items": {"type": "string"}, "description": "edges/wires to fill"}}, "required": ["contours"]},
+      arg_types={})
 def tool_make_filling(executor, args: dict):
     geompy = executor.namespace["geompy"]
     contours = [executor.geom_bindings[c] for c in args["contours"]]
@@ -761,6 +727,10 @@ def tool_make_filling(executor, args: dict):
     }
 
 
+@tool("fuse", category="boolean",
+      description='Boolean union of two or more shapes into one.',
+      schema={"type": "object", "properties": {"shapes": {"type": "array", "items": {"type": "string"}, "description": "shapes to fuse (2 or more)"}}, "required": ["shapes"]},
+      arg_types={})
 def tool_fuse(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shapes = [executor.geom_bindings[s] for s in args["shapes"]]
@@ -794,6 +764,10 @@ def tool_fuse(executor, args: dict):
     }
 
 
+@tool("cut", category="boolean",
+      description='Boolean subtraction: `main` minus every shape in `tools`.',
+      schema={"type": "object", "properties": {"main": {"type": "string", "description": "main shape"}, "tools": {"type": "array", "items": {"type": "string"}, "description": "tool shapes (1 or more)"}}, "required": ["main", "tools"]},
+      arg_types={})
 def tool_cut(executor, args: dict):
     geompy = executor.namespace["geompy"]
     main = executor.geom_bindings[args["main"]]
@@ -827,6 +801,10 @@ def tool_cut(executor, args: dict):
     }
 
 
+@tool("common", category="boolean",
+      description='Boolean intersection of two or more shapes.',
+      schema={"type": "object", "properties": {"shapes": {"type": "array", "items": {"type": "string"}, "description": "shapes to intersect"}}, "required": ["shapes"]},
+      arg_types={})
 def tool_common(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shapes = [executor.geom_bindings[s] for s in args["shapes"]]
@@ -848,6 +826,10 @@ def tool_common(executor, args: dict):
     }
 
 
+@tool("partition", category="boolean",
+      description='Split `shapes` by each other (and optional `tools`), keeping all resulting pieces in one compound.',
+      schema={"type": "object", "properties": {"shapes": {"type": "array", "items": {"type": "string"}, "description": "shapes to partition"}, "tools": {"type": "array", "items": {"type": "string"}, "description": "optional tool shapes", "default": []}}, "required": ["shapes"]},
+      arg_types={})
 def tool_partition(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shapes = [executor.geom_bindings[s] for s in args["shapes"]]
@@ -872,6 +854,10 @@ def tool_partition(executor, args: dict):
     }
 
 
+@tool("translate", category="transform",
+      description='A COPY of `shape` moved by (dx, dy, dz); the source is unchanged -- refer to the new name afterwards.',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"}}, "required": ["shape", "dx", "dy", "dz"]},
+      arg_types={"dx": float, "dy": float, "dz": float})
 def tool_translate(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -896,6 +882,10 @@ def tool_translate(executor, args: dict):
     }
 
 
+@tool("rotate", category="transform",
+      description='A COPY of `shape` rotated about `axis` by angle_deg; the source is unchanged.',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "axis": {"description": "\"OX\"/\"OY\"/\"OZ\" or published vector name", "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]}, {"type": "string"}]}, "angle_deg": {"type": "number"}}, "required": ["shape", "axis", "angle_deg"]},
+      arg_types={"angle_deg": float})
 def tool_rotate(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -923,6 +913,10 @@ def tool_rotate(executor, args: dict):
     }
 
 
+@tool("mirror", category="transform",
+      description='A COPY of `shape` mirrored across a plane, axis or point (`by` picks which; `entity` names it or a shortcut).',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "by": {"type": "string", "enum": ["plane", "axis", "point"], "default": "plane"}, "entity": {"description": "plane/axis/point name, or XOY/YOZ/ZOX/OX/OY/OZ/O for shortcuts", "type": "string"}}, "required": ["shape", "entity"]},
+      arg_types={})
 def tool_mirror(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -964,6 +958,10 @@ def tool_mirror(executor, args: dict):
     }
 
 
+@tool("scale", category="transform",
+      description='A COPY of `shape` scaled about `center` -- uniform `factor`, or per-axis factor_x/y/z.',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "factor": {"type": "number", "description": "uniform scale factor"}, "factor_x": {"type": "number", "description": "X-axis scale factor"}, "factor_y": {"type": "number", "description": "Y-axis scale factor"}, "factor_z": {"type": "number", "description": "Z-axis scale factor"}, "center": {"type": "string", "description": "center point (O or point name)", "default": "O"}}, "required": ["shape"]},
+      arg_types={"factor": float, "factor_x": float, "factor_y": float, "factor_z": float})
 def tool_scale(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -1002,6 +1000,10 @@ def tool_scale(executor, args: dict):
     }
 
 
+@tool("multi_translate", category="transform",
+      description='A COPY of `shape` replicated `count` times along `vector` at spacing `step` (add vector2/step2/count2 for a 2D grid).',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "vector": {"description": "OX/OY/OZ or vector name", "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]}, {"type": "string"}]}, "step": {"type": "number"}, "count": {"type": "integer"}, "vector2": {"type": "string", "description": "optional second vector for 2D"}, "step2": {"type": "number", "description": "optional second step"}, "count2": {"type": "integer", "description": "optional second count"}}, "required": ["shape", "vector", "step", "count"]},
+      arg_types={"step": float, "count": int, "step2": float, "count2": int})
 def tool_multi_translate(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -1049,6 +1051,10 @@ def tool_multi_translate(executor, args: dict):
     }
 
 
+@tool("multi_rotate", category="transform",
+      description='A COPY of `shape` replicated `count` times about `axis` (angle_deg = step, default full circle).',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "axis": {"description": "OX/OY/OZ or axis name", "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]}, {"type": "string"}]}, "count": {"type": "integer", "description": "number of copies"}, "angle_deg": {"type": "number", "description": "optional angle step (degrees)"}}, "required": ["shape", "axis", "count"]},
+      arg_types={"count": int, "angle_deg": float})
 def tool_multi_rotate(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -1089,6 +1095,10 @@ def tool_multi_rotate(executor, args: dict):
     }
 
 
+@tool("offset_shape", category="transform",
+      description='A COPY of `shape` with every face offset outward (+) or inward (-) by `offset`.',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "offset": {"type": "number"}}, "required": ["shape", "offset"]},
+      arg_types={"offset": float})
 def tool_offset_shape(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -1111,6 +1121,10 @@ def tool_offset_shape(executor, args: dict):
     }
 
 
+@tool("position", category="transform",
+      description='A COPY of `shape` with its local frame placed at target `origin` with axes `x_dir`/`y_dir` -- use to assemble parts.',
+      schema={"type": "object", "properties": {"shape": {"type": "string", "description": "shape to place (a copy is made)"}, "origin": {"type": "array", "items": {"type": "number"}, "description": "target frame origin [x,y,z]; default [0,0,0]"}, "x_dir": {"type": "array", "items": {"type": "number"}, "description": "target frame X-axis direction; default [1,0,0]"}, "y_dir": {"type": "array", "items": {"type": "number"}, "description": "target frame Y-axis direction; default [0,1,0]"}}, "required": ["shape"]},
+      arg_types={})
 def tool_position(executor, args: dict):
     """Modify Location: place a shape so its local frame lands on the given
     target frame (origin + X/Y axis directions). Copy semantics -- the
@@ -1153,6 +1167,10 @@ def _extent(bbox: list, axis: str, anchor: str) -> float:
     return {"min": lo, "max": hi, "center": (lo + hi) / 2}[anchor]
 
 
+@tool("align", category="transform",
+      description="Move `shape` so chosen faces/centres line up with `to`. `match` is a list of {axis, my, target, gap}: `shape` is translated along that axis until its `my` (min|max|center) meets `to`'s `target` plus `gap` mm. Axes not listed stay put. Use for assembly -- placing a part against, on top of, flush with, or centred on another; the tool does the bounding-box arithmetic and emits a plain translation.",
+      schema={"type": "object", "properties": {"shape": {"type": "string", "description": "shape to move (a copy is made)"}, "to": {"type": "string", "description": "reference shape to align against"}, "match": {"type": "array", "description": "one alignment constraint per axis; axes not listed are unchanged", "items": {"type": "object", "properties": {"axis": {"type": "string", "enum": ["x", "y", "z"]}, "my": {"type": "string", "enum": ["min", "max", "center"], "description": "which extreme of `shape` on this axis"}, "target": {"type": "string", "enum": ["min", "max", "center"], "description": "which extreme of `to` on this axis"}, "gap": {"type": "number", "description": "signed offset in mm, default 0"}}, "required": ["axis", "my", "target"]}}}, "required": ["shape", "to", "match"]},
+      arg_types={})
 def tool_align(executor, args: dict):
     """Relative placement: translate `shape` so its chosen extremes meet
     `to`'s. The model states the spatial relationship; the tool reads both
@@ -1202,6 +1220,133 @@ def tool_align(executor, args: dict):
     }
 
 
+
+def _normalise_edge_ids(tool: str, edges, shape, geompy) -> list:
+    """Coerce the `edges` arg of fillet/chamfer into a list of int edge ids.
+
+    Accepts "all", an int, a list, or a string like "1,2,3" / "(1,2,3)" /
+    "[1, 2, 3]" (a real LLM has produced all of these). Anything else raises a
+    clear error rather than letting a bare string reach geompy, which returns
+    an opaque `CORBA.BAD_PARAM ... Expecting sequence, got <class 'str'>`.
+    """
+    if edges == "all":
+        return geompy.SubShapeAllIDs(shape, geompy.ShapeType["EDGE"])
+    if isinstance(edges, int):
+        edges = [edges]
+    if isinstance(edges, str):
+        edges = [p for p in edges.strip(" []()").replace(" ", "").split(",") if p]
+    if not isinstance(edges, (list, tuple)) or not edges:
+        raise ValueError(
+            f'{tool}: pass `edges` ("all" or a list of edge ids) or a `where` '
+            f'predicate, got edges={edges!r}')
+    try:
+        return [int(e) for e in edges]
+    except (TypeError, ValueError):
+        raise ValueError(f'{tool}: every entry in `edges` must be an integer, got {edges!r}')
+
+
+def _edge_ids_for(tool: str, executor, args: dict, shape):
+    """Edge ids for fillet/chamfer: a `where` predicate (inline get_subshapes)
+    if given, otherwise the `edges` arg via _normalise_edge_ids."""
+    geompy = executor.namespace["geompy"]
+    if "where" in args and args["where"] is not None:
+        try:
+            selected = _select_subshapes(
+                geompy, shape, int(geompy.ShapeType["EDGE"]), args["where"])
+        except ValueError as e:
+            raise ValueError(f"{tool}: {e}")
+        return [i for i, _ in selected]
+    return _normalise_edge_ids(tool, args.get("edges"), shape, geompy)
+
+
+@tool("fillet_edges", category="feature",
+      description='Round edges of `shape` with the given `radius`. Select edges with `edges` ("all" or a list of edge ids from get_subshapes/explode) or inline with a `where` predicate (same as get_subshapes). Fails if the radius is too large for the shape.',
+      schema={"type": "object", "properties": {"shape": {"type": "string", "description": "published name of the shape to fillet"}, "edges": {"description": "\"all\" or a list of edge subshape ids", "oneOf": [{"type": "string", "enum": ["all"]}, {"type": "array", "items": {"type": "integer"}}]}, "where": {"description": "instead of `edges`, select the edges inline: same predicate as get_subshapes -- {\"sorted_by\":\"z\",\"take\":\"max\",\"count\":4}, {\"by_size\":\"longest\",\"count\":N}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"}, "radius": {"type": "number"}}, "required": ["shape", "radius"]},
+      arg_types={"radius": float})
+def tool_fillet_edges(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    shape = executor.geom_bindings[args["shape"]]
+    try:
+        edge_ids = _edge_ids_for("fillet_edges", executor, args, shape)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    # geompy.ShapeType["EDGE"] evaluates to 6 (hardcoded literal for result.py)
+    edge_type = 6  # geompy.ShapeType["EDGE"]
+    try:
+        filleted = geompy.MakeFillet(shape, args["radius"], edge_type, edge_ids)
+    except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
+        return {"ok": False, "error": f"fillet_edges: MakeFillet failed ({e}); "
+                f"try a smaller radius or check the edge ids"}
+    # theReturnStatus=1 -> (isValid, description); the default (0) returns
+    # a bare bool, which broke unpacking here until caught in testing.
+    is_valid, msg = geompy.CheckShape(filleted, True, 1)
+    if not is_valid:
+        # Not published yet at this point, so there is nothing to clean
+        # up — the invariant decision 16 wants (no orphan survives a
+        # failed call) holds by construction rather than by an explicit
+        # delete step.
+        return {"ok": False, "error": f"fillet_edges: CheckShape failed on result ({msg})"}
+    name = _next_name(executor, "fillet")
+    _publish(executor, filleted, name)
+    return {
+        "ok": True,
+        "records": [{
+            "fn": "MakeFillet",
+            "args": [{"kind": "ref", "value": args["shape"]},
+                     {"kind": "literal", "value": args["radius"]},
+                     {"kind": "literal", "value": edge_type},
+                     {"kind": "literal", "value": edge_ids}],
+            "out_vars": [name],
+            "publish": [name],
+        }],
+        "sanity": {"ok": True},
+    }
+
+
+@tool("chamfer_edges", category="feature",
+      description='Bevel edges of `shape` by distances d1/d2. Select edges with `edges` ("all" or a list of edge ids) or inline with a `where` predicate (same as get_subshapes).',
+      schema={"type": "object", "properties": {"shape": {"type": "string", "description": "published name of the shape to chamfer"}, "d1": {"type": "number", "description": "first chamfer distance"}, "d2": {"type": "number", "description": "second chamfer distance (defaults to d1)"}, "edges": {"description": "\"all\" or a list of edge subshape ids", "oneOf": [{"type": "string", "enum": ["all"]}, {"type": "array", "items": {"type": "integer"}}]}, "where": {"description": "instead of `edges`, select the edges inline: same predicate as get_subshapes"}}, "required": ["shape", "d1"]},
+      arg_types={"d1": float, "d2": float})
+def tool_chamfer_edges(executor, args: dict):
+    geompy = executor.namespace["geompy"]
+    shape = executor.geom_bindings[args["shape"]]
+    d1 = args["d1"]
+    d2 = args.get("d2", d1)
+    try:
+        edge_ids = _edge_ids_for("chamfer_edges", executor, args, shape)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    # MakeChamferEdges(theShape, theD1, theD2, theEdges) -- no shape-type arg,
+    # unlike MakeFillet.
+    try:
+        chamfered = geompy.MakeChamferEdges(shape, d1, d2, edge_ids)
+    except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
+        return {"ok": False, "error": f"chamfer_edges: MakeChamferEdges failed ({e}); "
+                f"try smaller distances or check the edge ids"}
+    is_valid, msg = geompy.CheckShape(chamfered, True, 1)
+    if not is_valid:
+        return {"ok": False, "error": f"chamfer_edges: CheckShape failed on result ({msg})"}
+    name = _next_name(executor, "chamfer")
+    _publish(executor, chamfered, name)
+    return {
+        "ok": True,
+        "records": [{
+            "fn": "MakeChamferEdges",
+            "args": [{"kind": "ref", "value": args["shape"]},
+                     {"kind": "literal", "value": d1},
+                     {"kind": "literal", "value": d2},
+                     {"kind": "literal", "value": edge_ids}],
+            "out_vars": [name],
+            "publish": [name],
+        }],
+        "sanity": {"ok": True},
+    }
+
+
+@tool("set_color", category="display",
+      description='Set the display colour of `shape` (r/g/b 0-255). Apply once, last, on the final shape.',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "red": {"type": "integer", "minimum": 0, "maximum": 255}, "green": {"type": "integer", "minimum": 0, "maximum": 255}, "blue": {"type": "integer", "minimum": 0, "maximum": 255}}, "required": ["shape", "red", "green", "blue"]},
+      arg_types={"red": int, "green": int, "blue": int})
 def tool_set_color(executor, args: dict):
     # Live call for immediate GUI update
     shape = executor.geom_bindings[args["shape"]]
@@ -1228,6 +1373,10 @@ def tool_set_color(executor, args: dict):
     }
 
 
+@tool("set_transparency", category="display",
+      description='Set display transparency of `shape` (0 opaque .. 1 invisible).',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "transparency": {"type": "number", "minimum": 0.0, "maximum": 1.0}}, "required": ["shape", "transparency"]},
+      arg_types={"transparency": float})
 def tool_set_transparency(executor, args: dict):
     shape = executor.geom_bindings[args["shape"]]
     # Best-effort live GUI update. Headless (no GUI process),
@@ -1250,6 +1399,10 @@ def tool_set_transparency(executor, args: dict):
     }
 
 
+@tool("set_display_mode", category="display",
+      description='Set display mode of `shape` (0=wireframe, 1=shading, 2=shading+edges).',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "mode": {"type": "integer", "enum": [0, 1, 2], "description": "0=wireframe, 1=shading, 2=shading+edges"}}, "required": ["shape", "mode"]},
+      arg_types={"mode": int})
 def tool_set_display_mode(executor, args: dict):
     shape = executor.geom_bindings[args["shape"]]
     _gui_call(executor, shape, "setDisplayMode", args["mode"])
@@ -1269,6 +1422,10 @@ def tool_set_display_mode(executor, args: dict):
     }
 
 
+@tool("check_shape", category="query",
+      description='Report whether `shape` is a valid geometry, with a diagnostic message.',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}}, "required": ["shape"]},
+      arg_types={})
 def tool_check_shape(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -1276,11 +1433,19 @@ def tool_check_shape(executor, args: dict):
     return {"ok": bool(is_valid), "records": [], "sanity": {"ok": bool(is_valid), "message": msg}}
 
 
+@tool("list_study_objects", category="query",
+      description='List the names of every object currently published in the study.',
+      schema={"type": "object", "properties": {}},
+      arg_types={})
 def tool_list_study_objects(executor, args: dict):
     return {"ok": True, "records": [], "sanity": {"ok": True},
             "names": list(executor.geom_bindings.keys())}
 
 
+@tool("measure", category="query",
+      description='Report bbox/size/centre (mm) of one or more published shapes by name. Use it to check where a shape landed and to see upstream shapes you did not build.',
+      schema={"type": "object", "properties": {"names": {"type": "array", "items": {"type": "string"}, "description": "published shape names to measure"}}, "required": ["names"]},
+      arg_types={})
 def tool_measure(executor, args: dict):
     geompy = executor.namespace["geompy"]
     out = {}
@@ -1303,6 +1468,10 @@ def _state_enum(state: str):
             "onin": g.ST_ONIN, "onout": g.ST_ONOUT}[state]
 
 
+@tool("explode", category="feature",
+      description='Publish every subshape of the given sub_type (edge, face, ...) of `shape` as its own named object, sorted by centre for a deterministic order. Use get_subshapes instead if you only need ids.',
+      schema={"type": "object", "properties": {"shape": {"type": "string", "description": "name of the shape to decompose"}, "sub_type": {"type": "string", "enum": ["vertex", "edge", "wire", "face", "shell", "solid"]}}, "required": ["shape", "sub_type"]},
+      arg_types={})
 def tool_explode(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape_name = args["shape"]
@@ -1330,6 +1499,10 @@ def tool_explode(executor, args: dict):
     }
 
 
+@tool("get_subshape", category="feature",
+      description='Build one new named shape from a list of subshape ids of `shape` (e.g. a group of faces). Get the ids from get_subshapes or explode.',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "ids": {"type": "array", "items": {"type": "integer"}, "description": "subshape ids from explode or get_subshapes"}}, "required": ["shape", "ids"]},
+      arg_types={})
 def tool_get_subshape(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape_name = args["shape"]
@@ -1394,6 +1567,10 @@ def _select_subshapes(geompy, shape, type_code: int, where) -> list:
     raise ValueError(f"unknown where {where!r}")
 
 
+@tool("get_subshapes", category="query",
+      description='Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = "all", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state).',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "sub_type": {"type": "string", "enum": ["vertex", "edge", "wire", "face", "shell", "solid"]}, "where": {"description": "\"all\", or {\"sorted_by\":\"x|y|z\",\"take\":\"max|min\",\"count\":N}, or {\"by_size\":\"longest|shortest|largest|smallest\",\"count\":N}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"}}, "required": ["shape", "sub_type", "where"]},
+      arg_types={})
 def tool_get_subshapes(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -1411,6 +1588,10 @@ def tool_get_subshapes(executor, args: dict):
     }
 
 
+@tool("min_distance", category="query",
+      description='Report the shortest distance (mm) between two published shapes.',
+      schema={"type": "object", "properties": {"shape1": {"type": "string"}, "shape2": {"type": "string"}}, "required": ["shape1", "shape2"]},
+      arg_types={})
 def tool_min_distance(executor, args: dict):
     geompy = executor.namespace["geompy"]
     s1 = executor.geom_bindings[args["shape1"]]
@@ -1421,6 +1602,10 @@ def tool_min_distance(executor, args: dict):
     return {"ok": True, "records": [], "sanity": {"ok": True}, "distance": round(d, 4)}
 
 
+@tool("basic_properties", category="query",
+      description='Report [length, area, volume] of `shape` (mm): length for an edge/wire, area for a face/shell, volume for a solid; the others are 0.',
+      schema={"type": "object", "properties": {"shape": {"type": "string"}}, "required": ["shape"]},
+      arg_types={})
 def tool_basic_properties(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
@@ -1434,646 +1619,36 @@ def tool_basic_properties(executor, args: dict):
 # make_cylinder/boolean_*/chamfer_edges/finish_stage follow the same shape
 # as tool_make_box/tool_fillet_edges above and are added the same way —
 # not stubbed here, added incrementally as later stages need them.
-TOOLS: dict[str, Callable] = {
-    "make_box": tool_make_box,
-    "make_box_two_pnt": tool_make_box_two_pnt,
-    "make_cylinder": tool_make_cylinder,
-    "make_sphere": tool_make_sphere,
-    "make_cone": tool_make_cone,
-    "make_torus": tool_make_torus,
-    "make_face": tool_make_face,
-    "make_disk": tool_make_disk,
-    "make_point": tool_make_point,
-    "make_vector": tool_make_vector,
-    "make_line": tool_make_line,
-    "make_plane": tool_make_plane,
-    "make_circle": tool_make_circle,
-    "make_prism": tool_make_prism,
-    "make_revolution": tool_make_revolution,
-    "make_pipe": tool_make_pipe,
-    "make_thick_solid": tool_make_thick_solid,
-    "make_filling": tool_make_filling,
-    "fuse": tool_fuse,
-    "cut": tool_cut,
-    "common": tool_common,
-    "partition": tool_partition,
-    "translate": tool_translate,
-    "rotate": tool_rotate,
-    "mirror": tool_mirror,
-    "scale": tool_scale,
-    "multi_translate": tool_multi_translate,
-    "multi_rotate": tool_multi_rotate,
-    "offset_shape": tool_offset_shape,
-    "position": tool_position,
-    "align": tool_align,
-    "fillet_edges": tool_fillet_edges,
-    "chamfer_edges": tool_chamfer_edges,
-    "set_color": tool_set_color,
-    "set_transparency": tool_set_transparency,
-    "set_display_mode": tool_set_display_mode,
-    "check_shape": tool_check_shape,
-    "list_study_objects": tool_list_study_objects,
-    "measure": tool_measure,
-    "explode": tool_explode,
-    "get_subshape": tool_get_subshape,
-    "get_subshapes": tool_get_subshapes,
-    "min_distance": tool_min_distance,
-    "basic_properties": tool_basic_properties,
-}
+TOOLS = registry.handlers()
 
 # One category per tool, for the geom-specialist tool-retrieval mechanism
 # (salome_agent/specialists/tool_selection.py). Keep in sync with TOOLS —
 # tests/unit/test_geom_tools.py guards that every TOOLS key appears here.
-TOOL_CATEGORY: dict[str, str] = {
-    "make_box": "primitive",
-    "make_box_two_pnt": "primitive",
-    "make_cylinder": "primitive",
-    "make_sphere": "primitive",
-    "make_cone": "primitive",
-    "make_torus": "primitive",
-    "make_face": "sketch",
-    "make_disk": "sketch",
-    "make_point": "sketch",
-    "make_vector": "sketch",
-    "make_line": "sketch",
-    "make_plane": "sketch",
-    "make_circle": "sketch",
-    "make_prism": "swept",
-    "make_revolution": "swept",
-    "make_pipe": "swept",
-    "make_thick_solid": "swept",
-    "make_filling": "swept",
-    "fuse": "boolean",
-    "cut": "boolean",
-    "common": "boolean",
-    "partition": "boolean",
-    "translate": "transform",
-    "rotate": "transform",
-    "mirror": "transform",
-    "scale": "transform",
-    "multi_translate": "transform",
-    "multi_rotate": "transform",
-    "offset_shape": "transform",
-    "position": "transform",
-    "align": "transform",
-    "fillet_edges": "feature",
-    "chamfer_edges": "feature",
-    "set_color": "display",
-    "set_transparency": "display",
-    "set_display_mode": "display",
-    "check_shape": "query",
-    "list_study_objects": "query",
-    "measure": "query",
-    "explode": "feature",
-    "get_subshape": "feature",
-    "get_subshapes": "query",
-    "min_distance": "query",
-    "basic_properties": "query",
-}
+TOOL_CATEGORY = registry.categories()
 
 # Per-tool arg coercion: LLM tool-call args arrive JSON-typed (numbers can
 # come back as strings, e.g. {"height": "40"}), but geompy does not coerce —
 # a string arg is interpreted as a notebook variable-name reference and
 # fails with a misleading RuntimeError ("Variable with name '20' doesn't
 # exist!!!"). Add an entry here when a new tool takes numeric args.
-ARG_TYPES: dict[str, dict[str, Callable]] = {
-    "make_box": {"dx": float, "dy": float, "dz": float},
-    "make_box_two_pnt": {},
-    "make_cylinder": {"radius": float, "height": float},
-    "make_sphere": {"radius": float},
-    "make_cone": {"radius1": float, "radius2": float, "height": float},
-    "make_torus": {"radius_major": float, "radius_minor": float},
-    "make_face": {"height": float, "width": float, "orientation": int},
-    "make_disk": {"radius": float, "orientation": int},
-    "make_point": {"x": float, "y": float, "z": float},
-    "make_vector": {"dx": float, "dy": float, "dz": float},
-    "make_line": {},
-    "make_plane": {"trim_size": float},
-    "make_circle": {"radius": float},
-    "make_prism": {"dx": float, "dy": float, "dz": float},
-    "make_revolution": {"angle_deg": float},
-    "make_pipe": {},
-    "make_thick_solid": {"thickness": float},
-    "make_filling": {},
-    "fuse": {},
-    "cut": {},
-    "common": {},
-    "partition": {},
-    "translate": {"dx": float, "dy": float, "dz": float},
-    "rotate": {"angle_deg": float},
-    "mirror": {},
-    "scale": {"factor": float, "factor_x": float, "factor_y": float, "factor_z": float},
-    "multi_translate": {"step": float, "count": int, "step2": float, "count2": int},
-    "multi_rotate": {"count": int, "angle_deg": float},
-    "offset_shape": {"offset": float},
-    "fillet_edges": {"radius": float},
-    "chamfer_edges": {"d1": float, "d2": float},
-    "set_color": {"red": int, "green": int, "blue": int},
-    "set_transparency": {"transparency": float},
-    "set_display_mode": {"mode": int},
-    "explode": {},
-    "get_subshape": {},
-    "get_subshapes": {},
-    "min_distance": {},
-    "basic_properties": {},
-}
+ARG_TYPES = registry.arg_types()
 
 # JSON Schema per tool, sent to the LLM as each function's "parameters" so
 # it knows argument names/types/required-ness. Without this the LLM has to
 # guess shapes — real bug found live: it returned a numeric-looking string
 # for a param that needed to stay a list, and codegen silently mis-iterated
 # over the string's characters instead of erroring.
-TOOL_SCHEMAS: dict[str, dict] = {
-    "make_box": {
-        "type": "object",
-        "properties": {
-            "dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"},
-        },
-        "required": ["dx", "dy", "dz"],
-    },
-    "make_box_two_pnt": {
-        "type": "object",
-        "properties": {
-            "pnt1": {"type": "string", "description": 'first corner: a point name or "x,y,z"'},
-            "pnt2": {"type": "string", "description": 'opposite corner: a point name or "x,y,z"'},
-        },
-        "required": ["pnt1", "pnt2"],
-    },
-    "make_cylinder": {
-        "type": "object",
-        "properties": {
-            "radius": {"type": "number"},
-            "height": {"type": "number"},
-        },
-        "required": ["radius", "height"],
-    },
-    "make_sphere": {
-        "type": "object",
-        "properties": {
-            "radius": {"type": "number"},
-            "center": {"type": "string", "description": "optional center point"},
-        },
-        "required": ["radius"],
-    },
-    "make_cone": {
-        "type": "object",
-        "properties": {
-            "radius1": {"type": "number"},
-            "radius2": {"type": "number"},
-            "height": {"type": "number"},
-        },
-        "required": ["radius1", "radius2", "height"],
-    },
-    "make_torus": {
-        "type": "object",
-        "properties": {
-            "radius_major": {"type": "number"},
-            "radius_minor": {"type": "number"},
-        },
-        "required": ["radius_major", "radius_minor"],
-    },
-    "make_face": {
-        "type": "object",
-        "properties": {
-            "height": {"type": "number"},
-            "width": {"type": "number"},
-            "orientation": {"type": "integer", "enum": [1, 2, 3], "default": 1},
-        },
-        "required": ["height", "width"],
-    },
-    "make_disk": {
-        "type": "object",
-        "properties": {
-            "radius": {"type": "number"},
-            "orientation": {"type": "integer", "enum": [1, 2, 3], "default": 1},
-        },
-        "required": ["radius"],
-    },
-    "make_point": {
-        "type": "object",
-        "properties": {
-            "x": {"type": "number"},
-            "y": {"type": "number"},
-            "z": {"type": "number"},
-        },
-        "required": ["x", "y", "z"],
-    },
-    "make_vector": {
-        "type": "object",
-        "properties": {
-            "dx": {"type": "number"},
-            "dy": {"type": "number"},
-            "dz": {"type": "number"},
-        },
-        "required": ["dx", "dy", "dz"],
-    },
-    "make_line": {
-        "type": "object",
-        "properties": {
-            "pnt1": {"type": "string", "description": "first point"},
-            "pnt2": {"type": "string", "description": "second point"},
-        },
-        "required": ["pnt1", "pnt2"],
-    },
-    "make_plane": {
-        "type": "object",
-        "properties": {
-            "point": {"type": "string", "description": "point on plane"},
-            "normal": {"type": "string", "description": "normal vector"},
-            "trim_size": {"type": "number", "default": 2000},
-        },
-        "required": ["point", "normal"],
-    },
-    "make_circle": {
-        "type": "object",
-        "properties": {
-            "center": {"type": "string", "description": "center point"},
-            "normal": {"type": "string", "description": "normal vector"},
-            "radius": {"type": "number"},
-        },
-        "required": ["center", "normal", "radius"],
-    },
-    "make_prism": {
-        "type": "object",
-        "properties": {
-            "base": {"type": "string", "description": "face/wire/edge to extrude"},
-            "dx": {"type": "number"},
-            "dy": {"type": "number"},
-            "dz": {"type": "number"},
-        },
-        "required": ["base", "dx", "dy", "dz"],
-    },
-    "make_revolution": {
-        "type": "object",
-        "properties": {
-            "base": {"type": "string", "description": "face/wire/edge to revolve"},
-            "axis": {
-                "description": "\"OX\"/\"OY\"/\"OZ\" or published vector name",
-                "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]},
-                          {"type": "string"}],
-            },
-            "angle_deg": {"type": "number", "description": "rotation angle in degrees"},
-        },
-        "required": ["base", "axis", "angle_deg"],
-    },
-    "make_pipe": {
-        "type": "object",
-        "properties": {
-            "base": {"type": "string", "description": "cross-section to sweep"},
-            "path": {"type": "string", "description": "wire/edge to sweep along"},
-        },
-        "required": ["base", "path"],
-    },
-    "make_thick_solid": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string", "description": "shape to thicken"},
-            "thickness": {"type": "number"},
-            "faces": {"type": "array", "items": {"type": "integer"},
-                      "description": "face subshape IDs to remove (open) -- required; a closed solid cannot be thickened without at least one"},
-            "inside": {"type": "boolean", "default": False},
-        },
-        "required": ["shape", "thickness", "faces"],
-    },
-    "make_filling": {
-        "type": "object",
-        "properties": {
-            "contours": {"type": "array", "items": {"type": "string"}, "description": "edges/wires to fill"},
-        },
-        "required": ["contours"],
-    },
-    "fuse": {
-        "type": "object",
-        "properties": {
-            "shapes": {"type": "array", "items": {"type": "string"}, "description": "shapes to fuse (2 or more)"},
-        },
-        "required": ["shapes"],
-    },
-    "cut": {
-        "type": "object",
-        "properties": {
-            "main": {"type": "string", "description": "main shape"},
-            "tools": {"type": "array", "items": {"type": "string"}, "description": "tool shapes (1 or more)"},
-        },
-        "required": ["main", "tools"],
-    },
-    "common": {
-        "type": "object",
-        "properties": {
-            "shapes": {"type": "array", "items": {"type": "string"}, "description": "shapes to intersect"},
-        },
-        "required": ["shapes"],
-    },
-    "partition": {
-        "type": "object",
-        "properties": {
-            "shapes": {"type": "array", "items": {"type": "string"}, "description": "shapes to partition"},
-            "tools": {"type": "array", "items": {"type": "string"}, "description": "optional tool shapes", "default": []},
-        },
-        "required": ["shapes"],
-    },
-    "translate": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "dx": {"type": "number"},
-            "dy": {"type": "number"},
-            "dz": {"type": "number"},
-        },
-        "required": ["shape", "dx", "dy", "dz"],
-    },
-    "rotate": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "axis": {
-                "description": "\"OX\"/\"OY\"/\"OZ\" or published vector name",
-                "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]},
-                          {"type": "string"}],
-            },
-            "angle_deg": {"type": "number"},
-        },
-        "required": ["shape", "axis", "angle_deg"],
-    },
-    "mirror": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "by": {"type": "string", "enum": ["plane", "axis", "point"], "default": "plane"},
-            "entity": {
-                "description": "plane/axis/point name, or XOY/YOZ/ZOX/OX/OY/OZ/O for shortcuts",
-                "type": "string",
-            },
-        },
-        "required": ["shape", "entity"],
-    },
-    "scale": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "factor": {"type": "number", "description": "uniform scale factor"},
-            "factor_x": {"type": "number", "description": "X-axis scale factor"},
-            "factor_y": {"type": "number", "description": "Y-axis scale factor"},
-            "factor_z": {"type": "number", "description": "Z-axis scale factor"},
-            "center": {"type": "string", "description": "center point (O or point name)", "default": "O"},
-        },
-        "required": ["shape"],
-    },
-    "multi_translate": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "vector": {
-                "description": "OX/OY/OZ or vector name",
-                "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]},
-                          {"type": "string"}],
-            },
-            "step": {"type": "number"},
-            "count": {"type": "integer"},
-            "vector2": {"type": "string", "description": "optional second vector for 2D"},
-            "step2": {"type": "number", "description": "optional second step"},
-            "count2": {"type": "integer", "description": "optional second count"},
-        },
-        "required": ["shape", "vector", "step", "count"],
-    },
-    "multi_rotate": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "axis": {
-                "description": "OX/OY/OZ or axis name",
-                "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]},
-                          {"type": "string"}],
-            },
-            "count": {"type": "integer", "description": "number of copies"},
-            "angle_deg": {"type": "number", "description": "optional angle step (degrees)"},
-        },
-        "required": ["shape", "axis", "count"],
-    },
-    "offset_shape": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "offset": {"type": "number"},
-        },
-        "required": ["shape", "offset"],
-    },
-    "position": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string", "description": "shape to place (a copy is made)"},
-            "origin": {"type": "array", "items": {"type": "number"},
-                       "description": "target frame origin [x,y,z]; default [0,0,0]"},
-            "x_dir": {"type": "array", "items": {"type": "number"},
-                      "description": "target frame X-axis direction; default [1,0,0]"},
-            "y_dir": {"type": "array", "items": {"type": "number"},
-                      "description": "target frame Y-axis direction; default [0,1,0]"},
-        },
-        "required": ["shape"],
-    },
-    "align": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string", "description": "shape to move (a copy is made)"},
-            "to": {"type": "string", "description": "reference shape to align against"},
-            "match": {
-                "type": "array",
-                "description": "one alignment constraint per axis; axes not listed are unchanged",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "axis": {"type": "string", "enum": ["x", "y", "z"]},
-                        "my": {"type": "string", "enum": ["min", "max", "center"],
-                               "description": "which extreme of `shape` on this axis"},
-                        "target": {"type": "string", "enum": ["min", "max", "center"],
-                                   "description": "which extreme of `to` on this axis"},
-                        "gap": {"type": "number", "description": "signed offset in mm, default 0"},
-                    },
-                    "required": ["axis", "my", "target"],
-                },
-            },
-        },
-        "required": ["shape", "to", "match"],
-    },
-    "fillet_edges": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string", "description": "published name of the shape to fillet"},
-            "edges": {
-                "description": "\"all\" or a list of edge subshape ids",
-                "oneOf": [{"type": "string", "enum": ["all"]},
-                          {"type": "array", "items": {"type": "integer"}}],
-            },
-            "where": {"description": (
-                "instead of `edges`, select the edges inline: same predicate as "
-                'get_subshapes -- {"sorted_by":"z","take":"max","count":4}, '
-                '{"by_size":"longest","count":N}, or '
-                '{"on_plane":{"point":[x,y,z],"normal":[x,y,z]},"state":"on"}')},
-            "radius": {"type": "number"},
-        },
-        "required": ["shape", "radius"],
-    },
-    "chamfer_edges": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string", "description": "published name of the shape to chamfer"},
-            "d1": {"type": "number", "description": "first chamfer distance"},
-            "d2": {"type": "number", "description": "second chamfer distance (defaults to d1)"},
-            "edges": {
-                "description": "\"all\" or a list of edge subshape ids",
-                "oneOf": [{"type": "string", "enum": ["all"]},
-                          {"type": "array", "items": {"type": "integer"}}],
-            },
-            "where": {"description": (
-                "instead of `edges`, select the edges inline: same predicate as "
-                "get_subshapes")},
-        },
-        "required": ["shape", "d1"],
-    },
-    "set_color": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "red": {"type": "integer", "minimum": 0, "maximum": 255},
-            "green": {"type": "integer", "minimum": 0, "maximum": 255},
-            "blue": {"type": "integer", "minimum": 0, "maximum": 255},
-        },
-        "required": ["shape", "red", "green", "blue"],
-    },
-    "set_transparency": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "transparency": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        },
-        "required": ["shape", "transparency"],
-    },
-    "set_display_mode": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "mode": {"type": "integer", "enum": [0, 1, 2], "description": "0=wireframe, 1=shading, 2=shading+edges"},
-        },
-        "required": ["shape", "mode"],
-    },
-    "check_shape": {
-        "type": "object",
-        "properties": {"shape": {"type": "string"}},
-        "required": ["shape"],
-    },
-    "list_study_objects": {"type": "object", "properties": {}},
-    "measure": {
-        "type": "object",
-        "properties": {
-            "names": {"type": "array", "items": {"type": "string"},
-                      "description": "published shape names to measure"},
-        },
-        "required": ["names"],
-    },
-    "explode": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string", "description": "name of the shape to decompose"},
-            "sub_type": {"type": "string",
-                         "enum": ["vertex", "edge", "wire", "face", "shell", "solid"]},
-        },
-        "required": ["shape", "sub_type"],
-    },
-    "get_subshape": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "ids": {"type": "array", "items": {"type": "integer"},
-                    "description": "subshape ids from explode or get_subshapes"},
-        },
-        "required": ["shape", "ids"],
-    },
-    "get_subshapes": {
-        "type": "object",
-        "properties": {
-            "shape": {"type": "string"},
-            "sub_type": {"type": "string",
-                         "enum": ["vertex", "edge", "wire", "face", "shell", "solid"]},
-            "where": {"description": (
-                '"all", or {"sorted_by":"x|y|z","take":"max|min","count":N}, or '
-                '{"by_size":"longest|shortest|largest|smallest","count":N}, or '
-                '{"on_plane":{"point":[x,y,z],"normal":[x,y,z]},"state":"on"}')},
-        },
-        "required": ["shape", "sub_type", "where"],
-    },
-    "min_distance": {
-        "type": "object",
-        "properties": {"shape1": {"type": "string"}, "shape2": {"type": "string"}},
-        "required": ["shape1", "shape2"],
-    },
-    "basic_properties": {
-        "type": "object",
-        "properties": {"shape": {"type": "string"}},
-        "required": ["shape"],
-    },
-}
+TOOL_SCHEMAS = registry.schemas()
 
 # One line per tool: what it produces and the implicit placement/orientation
 # defaults that the JSON Schema alone does not convey. Sent to the LLM as each
 # function's "description". Keep every key in TOOLS listed here (guarded by a
 # unit test).
-TOOL_DESCRIPTIONS: dict[str, str] = {
-    "make_box": "Axis-aligned solid box with one corner at the origin, extending +X/+Y/+Z by dx/dy/dz.",
-    "make_box_two_pnt": "Axis-aligned solid box spanning two opposite corner points.",
-    "make_cylinder": "Solid cylinder, base centred at the origin, axis along +Z.",
-    "make_sphere": "Solid sphere centred at the origin (or at `center` if given).",
-    "make_cone": "Solid (truncated) cone, base radius1 at the origin, radius2 at height, axis along +Z. radius2=0 for a sharp tip.",
-    "make_torus": "Solid torus centred at the origin, axis along +Z; radius_major = ring centre-line, radius_minor = tube.",
-    "make_face": "Planar rectangular face height x width. orientation 1=XOY, 2=YOZ, 3=ZOX.",
-    "make_disk": "Planar circular face of the given radius. orientation 1=XOY, 2=YOZ, 3=ZOX.",
-    "make_point": "A vertex at (x, y, z).",
-    "make_vector": "A free vector with components (dx, dy, dz) from the origin.",
-    "make_line": "An infinite line through two points.",
-    "make_plane": "An unbounded plane through `point` with the given `normal` vector (trimmed for display at trim_size).",
-    "make_circle": "A circular edge (wire), centre point, `normal` axis, radius.",
-    "make_prism": "Linear extrusion of a face/wire/edge by the vector (dx, dy, dz).",
-    "make_revolution": "Revolve a face/wire/edge about `axis` by angle_deg. The profile must not touch the axis.",
-    "make_pipe": "Sweep a cross-section `base` along a `path` wire/edge.",
-    "make_thick_solid": "Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened).",
-    "make_filling": "A surface filling a set of boundary contour edges/wires.",
-    "fuse": "Boolean union of two or more shapes into one.",
-    "cut": "Boolean subtraction: `main` minus every shape in `tools`.",
-    "common": "Boolean intersection of two or more shapes.",
-    "partition": "Split `shapes` by each other (and optional `tools`), keeping all resulting pieces in one compound.",
-    "translate": "A COPY of `shape` moved by (dx, dy, dz); the source is unchanged -- refer to the new name afterwards.",
-    "rotate": "A COPY of `shape` rotated about `axis` by angle_deg; the source is unchanged.",
-    "mirror": "A COPY of `shape` mirrored across a plane, axis or point (`by` picks which; `entity` names it or a shortcut).",
-    "scale": "A COPY of `shape` scaled about `center` -- uniform `factor`, or per-axis factor_x/y/z.",
-    "multi_translate": "A COPY of `shape` replicated `count` times along `vector` at spacing `step` (add vector2/step2/count2 for a 2D grid).",
-    "multi_rotate": "A COPY of `shape` replicated `count` times about `axis` (angle_deg = step, default full circle).",
-    "offset_shape": "A COPY of `shape` with every face offset outward (+) or inward (-) by `offset`.",
-    "position": "A COPY of `shape` with its local frame placed at target `origin` with axes `x_dir`/`y_dir` -- use to assemble parts.",
-    "align": "Move `shape` so chosen faces/centres line up with `to`. `match` is a list of {axis, my, target, gap}: `shape` is translated along that axis until its `my` (min|max|center) meets `to`'s `target` plus `gap` mm. Axes not listed stay put. Use for assembly -- placing a part against, on top of, flush with, or centred on another; the tool does the bounding-box arithmetic and emits a plain translation.",
-    "fillet_edges": "Round edges of `shape` with the given `radius`. Select edges with `edges` (\"all\" or a list of edge ids from get_subshapes/explode) or inline with a `where` predicate (same as get_subshapes). Fails if the radius is too large for the shape.",
-    "chamfer_edges": "Bevel edges of `shape` by distances d1/d2. Select edges with `edges` (\"all\" or a list of edge ids) or inline with a `where` predicate (same as get_subshapes).",
-    "set_color": "Set the display colour of `shape` (r/g/b 0-255). Apply once, last, on the final shape.",
-    "set_transparency": "Set display transparency of `shape` (0 opaque .. 1 invisible).",
-    "set_display_mode": "Set display mode of `shape` (0=wireframe, 1=shading, 2=shading+edges).",
-    "check_shape": "Report whether `shape` is a valid geometry, with a diagnostic message.",
-    "list_study_objects": "List the names of every object currently published in the study.",
-    "measure": "Report bbox/size/centre (mm) of one or more published shapes by name. Use it to check where a shape landed and to see upstream shapes you did not build.",
-    "explode": "Publish every subshape of the given sub_type (edge, face, ...) of `shape` as its own named object, sorted by centre for a deterministic order. Use get_subshapes instead if you only need ids.",
-    "get_subshape": "Build one new named shape from a list of subshape ids of `shape` (e.g. a group of faces). Get the ids from get_subshapes or explode.",
-    "get_subshapes": "Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = \"all\", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state).",
-    "min_distance": "Report the shortest distance (mm) between two published shapes.",
-    "basic_properties": "Report [length, area, volume] of `shape` (mm): length for an edge/wire, area for a face/shell, volume for a solid; the others are 0.",
-}
+TOOL_DESCRIPTIONS = registry.descriptions()
 
 
 def _coerce_args(name: str, args: dict) -> dict:
-    types = ARG_TYPES.get(name)
-    if not types:
-        return args
-    coerced = dict(args)
-    for key, cast in types.items():
-        if key in coerced:
-            coerced[key] = cast(coerced[key])
-    return coerced
+    return registry.coerce_args(name, args)
 
 
 def _shape_info(geompy, shape) -> dict | None:
@@ -2249,8 +1824,4 @@ def call_tool(executor, name: str, args: dict) -> dict:
 
 
 def list_tools() -> list[dict]:
-    return [{"name": n,
-             "parameters": TOOL_SCHEMAS.get(n, {"type": "object", "properties": {}}),
-             "description": TOOL_DESCRIPTIONS.get(n, ""),
-             "category": TOOL_CATEGORY.get(n, "")}
-            for n in TOOLS]
+    return registry.list_tools()
