@@ -24,6 +24,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="-v: per-tool-call / per-retry detail; "
                              "-vv: also dump every LLM prompt, response and "
                              "reasoning to the terminal and <run_dir>/llm_trace.jsonl")
+    parser.add_argument("--chat", action="store_true",
+                        help="after the first result, keep talking to the agent in a "
+                             "REPL (needs a SALOME session)")
     return parser.parse_args(argv)
 
 
@@ -68,6 +71,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
     setup_logging(args.verbose)
 
+    if args.chat and args.batch:
+        log.error("--chat is interactive; it cannot be combined with --batch")
+        return 2
+    if args.chat and args.no_session:
+        log.error("--chat needs a SALOME session; drop --no-session")
+        return 2
+
     config = load_config(args.config or "config.json")
     if args.on_failure:
         config["policy"]["on_stage_failure"] = args.on_failure
@@ -98,11 +108,25 @@ def main(argv: list[str] | None = None) -> int:
             # always has both trace halves, or neither.
             record_path = (os.path.join(run_dir, "exec_trace.jsonl")
                            if args.verbose >= 2 else None)
-            client = server_conn.connect(run_id, record_path=record_path)
+            client = server_conn.connect(run_id, record_path=record_path, hold=args.chat)
         except server_conn.ServerUnavailable as e:
             log.error("%s", e)
             return 1
         log.info("session: connected to the %s agent server", client.mode)
+
+    if args.chat:
+        from salome_agent import chat
+        from salome_agent.conversation import Conversation
+
+        try:
+            conv = Conversation(config, client, run_id, verbose=args.verbose,
+                                request_timeout=args.timeout)
+            return chat.repl(conv, args.request)
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     from salome_agent import runner
     from salome_agent.interactive import terminal_gate
