@@ -149,3 +149,44 @@ def test_ok_turn_undo_and_rebuild_display_the_results(conv, monkeypatch):
     monkeypatch.setattr(conv_mod, "rebuild_all", lambda client, graph, extra_names=(): graph.copy())
     conv.rebuild()
     assert len(shown) == 3
+
+
+def test_redo_reapplies_what_undo_took_back(conv, monkeypatch):
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    _fake_drive(monkeypatch, {"build_graph": _graph_with(1).to_dict()})
+    conv.turn("one", on_event=lambda e: None, on_gate=None)
+    _fake_drive(monkeypatch, {"build_graph": _graph_with(2).to_dict()})
+    conv.turn("two", on_event=lambda e: None, on_gate=None)
+    hist = list(conv.history)
+    conv.undo()
+    assert list(conv.graph.nodes) == ["n1"] and conv.turn_idx == 1
+    r = conv.redo()
+    assert r.status == "ok"
+    assert list(conv.graph.nodes) == ["n1", "n2"] and conv.turn_idx == 2
+    assert conv.history == hist
+    assert conv.redo().status == "failed"          # nothing left to redo
+    conv.undo()                                     # and undo still works after a redo
+    assert list(conv.graph.nodes) == ["n1"]
+
+
+def test_a_new_turn_clears_redo(conv, monkeypatch):
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    _fake_drive(monkeypatch, {"build_graph": _graph_with(1).to_dict()})
+    conv.turn("one", on_event=lambda e: None, on_gate=None)
+    conv.undo()
+    _fake_drive(monkeypatch, {"build_graph": _graph_with(2).to_dict()})
+    conv.turn("other", on_event=lambda e: None, on_gate=None)
+    assert conv.redo().status == "failed"
+
+
+def test_redo_failure_degrades(conv, monkeypatch):
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    _fake_drive(monkeypatch, {"build_graph": _graph_with(1).to_dict()})
+    conv.turn("one", on_event=lambda e: None, on_gate=None)
+    conv.undo()
+
+    def boom(client, current, target):
+        raise conv_mod.ReplayFailed("n1", "x")
+
+    monkeypatch.setattr(conv_mod, "sync", boom)
+    assert conv.redo().status == "degraded" and conv.degraded

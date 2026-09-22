@@ -7,6 +7,7 @@ from salome_agent.interactive import terminal_gate
 
 _HELP = """commands:
   /undo      revert the last turn
+  /redo      re-apply the last undone turn
   /show      print the build graph
   /result    print result.py
   /rebuild   rebuild the whole study from the model (after a failed rollback)
@@ -79,6 +80,8 @@ def repl(conv, first_request, *, read=input, stream=sys.stderr, gate=terminal_ga
             stream.write(conv.graph.render() + "\n")
         elif cmd == "/undo":
             _say(stream, conv.undo())
+        elif cmd == "/redo":
+            _say(stream, conv.redo())
         elif cmd == "/rebuild":
             _say(stream, conv.rebuild())
         elif cmd == "/result":

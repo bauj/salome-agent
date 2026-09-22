@@ -38,6 +38,8 @@ class Conversation:
         self.degraded = False
         self.ended = False
         self._snapshots: list[tuple] = []
+        # what /undo took back, newest last: (graph, turn_idx, history)
+        self._redo: list[tuple] = []
         self._stray: set[str] = set()
 
     def _event(self, on_event, kind, **data):
@@ -97,6 +99,7 @@ class Conversation:
                                 "ran out of tool iterations")
             return self._rollback(after, before, message, final)
         self._snapshots.append((before, self.turn_idx, len(self.history)))
+        self._redo.clear()
         self.graph = after
         self.turn_idx += 1
         if outcome.get("question"):
@@ -123,17 +126,39 @@ class Conversation:
         if not self._snapshots:
             return TurnResult("failed", "nothing to undo", {})
         target, turn_idx, hist_len = self._snapshots.pop()
+        undone = (self.graph, self.turn_idx, list(self.history))
         try:
             self.graph = sync(self.client, current=self.graph, target=target)
         except ReplayFailed as e:
             self.degraded = True
             self.graph = target
             return TurnResult("degraded", f"undo failed: {e} — run /rebuild", {})
+        self._redo.append(undone)
         self.turn_idx = turn_idx
         self.history = self.history[:hist_len]
         self._write_outputs()
         show_results(self.client, self.graph.to_dict())
         return TurnResult("ok", f"undone back to turn {turn_idx}", {})
+
+    def redo(self) -> TurnResult:
+        if self.ended or self.degraded:
+            return self.turn("", on_event=lambda e: None, on_gate=None)
+        if not self._redo:
+            return TurnResult("failed", "nothing to redo", {})
+        target, turn_idx, history = self._redo.pop()
+        snapshot = (self.graph, self.turn_idx, len(self.history))
+        try:
+            self.graph = sync(self.client, current=self.graph, target=target)
+        except ReplayFailed as e:
+            self.degraded = True
+            self.graph = target
+            return TurnResult("degraded", f"redo failed: {e} — run /rebuild", {})
+        self._snapshots.append(snapshot)
+        self.turn_idx = turn_idx
+        self.history = history
+        self._write_outputs()
+        show_results(self.client, self.graph.to_dict())
+        return TurnResult("ok", f"redone up to turn {turn_idx}", {})
 
     def rebuild(self) -> TurnResult:
         if self.ended:
