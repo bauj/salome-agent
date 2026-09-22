@@ -4,7 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from typing import Protocol
 
-from executor import geom_tools
+from executor import geom
 
 
 def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
@@ -72,7 +72,7 @@ class HeadlessBackend:
         self._poisoned = False
 
     def begin_session(self, run_id: str | None) -> None:
-        geom_tools.reset_counters()
+        geom.reset_counters()
         self.geom_bindings.clear()
         self.accepted_scripts = []
 
@@ -87,7 +87,7 @@ class HeadlessBackend:
 
     def reset(self, scripts: list) -> dict:
         self.namespace = self._build(False)
-        geom_tools.reset_counters()
+        geom.reset_counters()
         self.geom_bindings.clear()
         for idx, s in enumerate(scripts):
             r = _run_with_timeout(s, self.namespace, 120)

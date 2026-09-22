@@ -1,4 +1,5 @@
-from typing import Annotated, Literal, Optional, TypedDict
+from typing import Annotated, Literal, Optional
+from typing_extensions import TypedDict, NotRequired
 import operator
 
 
@@ -6,7 +7,12 @@ class StagePlan(TypedDict):
     module: Literal["geom", "smesh", "paravis"]
     intent: str
     params: dict
+    # Plain-words description of what this stage needs, never object names
+    # (planner.py). paravis reads the MED file path from it.
     inputs: list[str]
+    # Optional planner hint: the geom tool names this stage expects to use
+    # (task 193). Absent on smesh/paravis stages.
+    tools: NotRequired[list[str]]
 
 
 class StageError(TypedDict):

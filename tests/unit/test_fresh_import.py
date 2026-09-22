@@ -39,9 +39,9 @@ def test_geom_tools_registers_all_tools_in_a_fresh_interpreter():
     expected_names = [t["name"] for t in json.loads(golden.read_text())]
     code = (
         "import json\n"
-        "from executor import geom_tools\n"
-        "assert len(geom_tools.TOOLS) == 44, len(geom_tools.TOOLS)\n"
-        "names = [t['name'] for t in geom_tools.list_tools()]\n"
+        "from executor import geom\n"
+        "assert len(geom.TOOLS) == 44, len(geom.TOOLS)\n"
+        "names = [t['name'] for t in geom.list_tools()]\n"
         "print(json.dumps(names))\n"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)

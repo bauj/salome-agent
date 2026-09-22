@@ -77,23 +77,17 @@ def route_after_verify_exec(state: dict, session_died: bool = False) -> str:
 
 
 def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
-    """Names of study objects to hand the specialist for this stage. Every
-    object published by a prior accepted stage is available; if the plan's
-    `inputs` name specific ones that actually exist, scope down to those
-    (keeps multi-stage prompts tight). Otherwise pass everything."""
+    """Names of study objects to hand the specialist for this stage: everything
+    published by a prior accepted stage.
+
+    `stage_plan["inputs"]` is deliberately not consulted — planner.py tells the
+    planner to put plain words there, never object names (it cannot know the
+    auto-generated ones), so the scoping branch this replaced never fired."""
     available: list[str] = []
     for j in range(idx):
         prior = stages.get(j)
         if prior and prior.get("status") == "ok":
             available += prior.get("result_names") or []
-    inputs = stage_plan.get("inputs") or []
-    declared = [n for n in inputs if n in available]
-    # Scope down only when EVERY declared name is a real published object.
-    # A partial match means the planner invented names (it cannot know the
-    # auto-generated ones) — hand over everything live rather than a wrong
-    # subset (GH #9).
-    if inputs and len(declared) == len(inputs):
-        return declared
     return available
 
 

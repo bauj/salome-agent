@@ -7,7 +7,7 @@ if SalomePyQt.usePySide():
 else:
     from PyQt5.QtCore import QObject, pyqtSignal as _Signal, Qt
 
-from executor import geom_tools
+from executor import geom
 
 
 class _Job:
@@ -79,7 +79,7 @@ class GuiBackend:
 
     def begin_session(self, run_id):
         self.name_prefix = f"sa_{run_id}_" if run_id else ""
-        geom_tools.reset_counters()
+        geom.reset_counters()
         self.geom_bindings.clear()
         self.accepted_scripts = []
 
