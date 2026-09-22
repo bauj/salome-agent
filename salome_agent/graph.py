@@ -61,6 +61,58 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
     return None
 
 
+def route_start(state: dict) -> str:
+    return "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
+
+
+def _graph_upstream(state: dict) -> list[str]:
+    from salome_agent.build_graph import BuildGraph
+
+    if not state.get("build_graph"):
+        return []
+    return BuildGraph.from_dict(state["build_graph"]).result_names()
+
+
+def _amend_node(state: dict, config: "RunnableConfig"):
+    from langgraph.types import Command
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.replay import RollbackFailed
+    from salome_agent.specialists import amend
+
+    llm = config["configurable"]["llm_client"]
+    client = config["configurable"].get("executor_client")
+    graph = BuildGraph.from_dict(state.get("build_graph"))
+    log.info("amend turn %d: %s", (state.get("turn_idx") or 0) + 1, state["user_request"])
+    try:
+        session, outcome = amend.run_amend(
+            state["user_request"], graph, llm, client, state.get("turn_idx") or 0,
+            state["config"]["policy"], history=state.get("history") or [],
+            selection=state.get("selection"))
+    except RollbackFailed as e:
+        log.error("  %s", e)
+        return Command(update={"fatal": f"rollback failed: {e}", "degraded": True,
+                               "build_graph": e.graph.to_dict()}, goto="assemble")
+    except Exception as e:  # noqa: BLE001
+        msg = _llm_endpoint_fatal(e)
+        if msg is None:
+            raise
+        log.error("  %s", msg)
+        return Command(update={"fatal": msg}, goto="assemble")
+    update = {"build_graph": session.graph.to_dict(), "turn_outcome": outcome,
+              "history": session.events}
+    if "fatal" in outcome:
+        update["fatal"] = outcome["fatal"]
+        return Command(update=update, goto="assemble")
+    if "replan" in outcome:
+        names = ", ".join(session.graph.result_names()) or "(nothing yet)"
+        update["replan_context"] = (
+            f"The study already contains: {names}. Build on those objects by name; "
+            f"do not rebuild them. ({outcome['replan']})")
+        log.info("  amend -> replan: %s", outcome["replan"])
+        return Command(update=update, goto="plan")
+    return Command(update=update, goto="assemble")
+
+
 def route_after_run_stage(state: dict) -> str:
     stage = state["stages"][state["stage_idx"]]
     if stage["module"] == "geom":
@@ -138,8 +190,11 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     log.info("planning... (plan_detail=%s)", detail)
     snap0 = _usage_snap(llm)
     t0 = time.monotonic()
+    request = state["user_request"]
+    if state.get("replan_context"):
+        request = f"{request}\n\n{state['replan_context']}"
     try:
-        stage_plans = plan(state["user_request"], llm, detail)
+        stage_plans = plan(request, llm, detail)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -188,7 +243,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                        goto="assemble")
 
     spec = spec_for(module)
-    upstream = select_upstream(stage_plan, state["stages"], idx)
+    upstream = _graph_upstream(state) + select_upstream(stage_plan, state["stages"], idx)
     blocks = []
     if spec.render_upstream is not None:
         block = spec.render_upstream(client, upstream)
@@ -351,6 +406,7 @@ def _assemble_node(state: dict):
 
 
 def _report_node(state: dict, config: "RunnableConfig"):
+    import json
     import os
 
     from langgraph.graph import END
@@ -364,8 +420,13 @@ def _report_node(state: dict, config: "RunnableConfig"):
     os.makedirs(run_dir, exist_ok=True)
     with open(os.path.join(run_dir, "result.py"), "w") as f:
         f.write(state.get("final_script") or "")
-    with open(os.path.join(run_dir, "report.md"), "w") as f:
-        f.write(report_text)
+    if state.get("build_graph") is not None:
+        with open(os.path.join(run_dir, "build_graph.json"), "w") as f:
+            json.dump(state["build_graph"], f, indent=1)
+    turn = state.get("turn_idx") or 0
+    mode = "a" if turn > 0 else "w"
+    with open(os.path.join(run_dir, "report.md"), mode) as f:
+        f.write(f"\n\n# Turn {turn + 1}\n\n{report_text}" if turn > 0 else report_text)
     return Command(update={"report": report_text}, goto=END)
 
 
@@ -377,6 +438,7 @@ def build_graph(batch: bool):
 
     g = StateGraph(RunState)
     g.add_node("plan", _plan_node)
+    g.add_node("amend", _amend_node)
     g.add_node("plan_gate", plan_gate)
     g.add_node("run_stage", _run_stage_node)
     g.add_node("verify_static", _verify_static_node)
@@ -386,5 +448,5 @@ def build_graph(batch: bool):
     g.add_node("skip", _skip_node)
     g.add_node("assemble", _assemble_node)
     g.add_node("report", _report_node)
-    g.add_edge(START, "plan")
+    g.add_conditional_edges(START, route_start, {"plan": "plan", "amend": "amend"})
     return g.compile(checkpointer=MemorySaver())

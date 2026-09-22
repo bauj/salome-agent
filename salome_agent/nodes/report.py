@@ -77,6 +77,11 @@ def write_report(state: dict, usage: dict | None = None) -> str:
     if usage and usage.get("calls"):
         lines += _usage_lines(usage)
     lines += _timing_lines(state)
+    outcome = state.get("turn_outcome") or {}
+    if outcome.get("summary") or outcome.get("question"):
+        lines += ["## Amend", "", outcome.get("summary") or "",
+                  *([f"Question for you: {outcome['question']}"] if outcome.get("question") else []),
+                  ""]
     lines.append("## Stages")
     total = len(state["stages"])
     for idx in sorted(state["stages"]):

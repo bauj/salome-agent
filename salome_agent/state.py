@@ -66,3 +66,10 @@ class RunState(TypedDict):
     fatal: Optional[str]
     aborted: Optional[bool]
     build_graph: Optional[dict]
+
+    # agentic chat (task 194) — absent in one-shot runs
+    turn_idx: int
+    selection: Optional[list]
+    turn_outcome: Optional[dict]
+    replan_context: Optional[str]
+    degraded: Optional[bool]
