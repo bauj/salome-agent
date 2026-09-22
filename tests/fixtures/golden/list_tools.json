@@ -250,7 +250,7 @@
         "pnt2"
       ]
     },
-    "description": "An infinite line through two points.",
+    "description": "A straight line segment between two points.",
     "category": "sketch"
   },
   {
@@ -303,6 +303,27 @@
       ]
     },
     "description": "A circular edge (wire), centre point, `normal` axis, radius.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_polygon_face",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 3,
+          "description": "corners in order: point names or \"x,y,z\""
+        }
+      },
+      "required": [
+        "points"
+      ]
+    },
+    "description": "Planar face bounded by a closed polygon through `points` (3 or more corners, in order; the last joins back to the first). Extrude it with make_prism for a gable roof, wedge or any prismatic profile.",
     "category": "sketch"
   },
   {

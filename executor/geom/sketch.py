@@ -103,7 +103,7 @@ def tool_make_vector(executor, args: dict):
 
 
 @tool("make_line", category="sketch",
-      description='An infinite line through two points.',
+      description='A straight line segment between two points.',
       schema={"type": "object", "properties": {"pnt1": {"type": "string", "description": "first point"}, "pnt2": {"type": "string", "description": "second point"}}, "required": ["pnt1", "pnt2"]},
       arg_types={})
 def tool_make_line(executor, args: dict):
@@ -167,6 +167,48 @@ def tool_make_circle(executor, args: dict):
         "args": [{"kind": "ref", "value": cn},
                  {"kind": "ref", "value": vn},
                  {"kind": "literal", "value": args["radius"]}],
+        "out_vars": [name],
+        "publish": [name],
+    })
+    return {"ok": True, "records": records, "sanity": {"ok": True}}
+
+
+@tool("make_polygon_face", category="sketch",
+      description=('Planar face bounded by a closed polygon through `points` (3 or more corners, '
+                   'in order; the last joins back to the first). Extrude it with make_prism for a '
+                   'gable roof, wedge or any prismatic profile.'),
+      schema={"type": "object", "properties": {"points": {"type": "array", "items": {"type": "string"}, "minItems": 3, "description": "corners in order: point names or \"x,y,z\""}}, "required": ["points"]},
+      arg_types={})
+def tool_make_polygon_face(executor, args: dict):
+    if len(args["points"]) < 3:
+        return {"ok": False, "error": "make_polygon_face: needs at least 3 points"}
+    geompy = executor.namespace["geompy"]
+    records: list = []
+    pts = [_resolve_point(executor, p, records) for p in args["points"]]
+    wire = geompy.MakePolyline([executor.geom_bindings[n] for n in pts], True)
+    wname = _next_name(executor, "wire")
+    executor.geom_bindings[wname] = wire
+    records.append({
+        "fn": "MakePolyline",
+        "args": [{"kind": "list", "value": [{"kind": "ref", "value": n} for n in pts]},
+                 {"kind": "literal", "value": True}],
+        "out_vars": [wname],
+        "publish": None,
+    })
+    try:
+        face = geompy.MakeFaceWires([wire], 1)
+    except Exception as e:
+        return {"ok": False, "error": (f"make_polygon_face: no planar face ({e}) — all points "
+                                       "must lie in the same plane")}
+    is_valid, msg = geompy.CheckShape(face, True, 1)
+    if not is_valid:
+        return {"ok": False, "error": f"make_polygon_face: CheckShape failed ({msg})"}
+    name = _next_name(executor, "face")
+    _publish(executor, face, name)
+    records.append({
+        "fn": "MakeFaceWires",
+        "args": [{"kind": "list", "value": [{"kind": "ref", "value": wname}]},
+                 {"kind": "literal", "value": 1}],
         "out_vars": [name],
         "publish": [name],
     })

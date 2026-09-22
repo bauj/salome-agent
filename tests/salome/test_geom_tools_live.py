@@ -71,6 +71,23 @@ class TestPrimitiveTools:
         result = agent_client.call_tool("make_disk", {"radius": 5.0})
         assert result["ok"] is True
 
+    def test_make_polygon_face_gable_extrudes_to_a_roof(self, agent_client):
+        """Triangle in the YOZ plane at x=0, extruded 200 along X (GH #45)."""
+        face = agent_client.call_tool("make_polygon_face",
+                                      {"points": ["0,0,80", "0,120,80", "0,60,120"]})
+        assert face["ok"] is True, face.get("error")
+        name = face["records"][-1]["out_vars"][0]
+        roof = agent_client.call_tool("make_prism", {"base": name, "dx": 200, "dy": 0, "dz": 0})
+        assert roof["ok"] is True, roof.get("error")
+        bbox = roof["shape_info"]["bbox"]
+        assert [round(v) for v in bbox] == [0, 200, 0, 120, 80, 120]
+
+    def test_make_polygon_face_non_planar_is_a_clear_error(self, agent_client):
+        r = agent_client.call_tool("make_polygon_face",
+                                   {"points": ["0,0,0", "10,0,0", "10,10,0", "0,10,5"]})
+        assert r["ok"] is False
+        assert "same plane" in r["error"]
+
 
 class TestBasicObjectTools:
     """Test basic geometry objects."""

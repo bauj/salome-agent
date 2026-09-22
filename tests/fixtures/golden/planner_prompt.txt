@@ -52,9 +52,10 @@ geom tools available to a single geom stage:
   make_disk -- Planar circular face of the given radius. orientation 1=XOY, 2=YOZ, 3=ZOX.
   make_point -- A vertex at (x, y, z).
   make_vector -- A free vector with components (dx, dy, dz) from the origin.
-  make_line -- An infinite line through two points.
+  make_line -- A straight line segment between two points.
   make_plane -- An unbounded plane through `point` with the given `normal` vector (trimmed for display at trim_size).
   make_circle -- A circular edge (wire), centre point, `normal` axis, radius.
+  make_polygon_face -- Planar face bounded by a closed polygon through `points` (3 or more corners, in order; the last joins back to the first). Extrude it with make_prism for a gable roof, wedge or any prismatic profile.
   make_prism -- Linear extrusion of a face/wire/edge by the vector (dx, dy, dz).
   make_revolution -- Revolve a face/wire/edge about `axis` by angle_deg. The profile must not touch the axis.
   make_pipe -- Sweep a cross-section `base` along a `path` wire/edge.
