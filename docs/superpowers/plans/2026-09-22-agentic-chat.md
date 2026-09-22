@@ -2126,8 +2126,8 @@ def _spec(session: AmendSession) -> ModuleSpec:
 
 
 def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
-              history=(), selection=None):
-    session = AmendSession(graph, client, turn)
+              history=(), selection=None, session=None):
+    session = session or AmendSession(graph, client, turn)
     blocks = ["Build graph:\n" + graph.render()]
     snap = _snapshot(client, graph)
     if snap:
@@ -2318,12 +2318,16 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     llm = config["configurable"]["llm_client"]
     client = config["configurable"].get("executor_client")
     graph = BuildGraph.from_dict(state.get("build_graph"))
-    log.info("amend turn %d: %s", (state.get("turn_idx") or 0) + 1, state["user_request"])
+    turn = state.get("turn_idx") or 0
+    log.info("amend turn %d: %s", turn + 1, state["user_request"])
+    # Created here, not in run_amend: edits already applied to the study must
+    # still reach the conversation's rollback when the LLM call fails mid-loop.
+    session = amend.AmendSession(graph, client, turn)
     try:
         session, outcome = amend.run_amend(
-            state["user_request"], graph, llm, client, state.get("turn_idx") or 0,
+            state["user_request"], graph, llm, client, turn,
             state["config"]["policy"], history=state.get("history") or [],
-            selection=state.get("selection"))
+            selection=state.get("selection"), session=session)
     except RollbackFailed as e:
         log.error("  %s", e)
         return Command(update={"fatal": f"rollback failed: {e}", "degraded": True,
@@ -2333,7 +2337,8 @@ def _amend_node(state: dict, config: "RunnableConfig"):
         if msg is None:
             raise
         log.error("  %s", msg)
-        return Command(update={"fatal": msg}, goto="assemble")
+        return Command(update={"fatal": msg, "build_graph": session.graph.to_dict()},
+                       goto="assemble")
     update = {"build_graph": session.graph.to_dict(), "turn_outcome": outcome,
               "history": session.events}
     if "fatal" in outcome:
