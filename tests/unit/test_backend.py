@@ -6,7 +6,7 @@ def _fake_ns():
 
 
 def test_begin_session_headless_has_empty_prefix_and_resets_counters():
-    # Use the alias to keep assertions unedited (task 7 cleanup).
+    # Alias keeps the assertions below unedited after the geom_tools -> geom package move.
     from executor import geom as geom_tools
     b = HeadlessBackend(build_namespace=lambda live: _fake_ns())
     geom_tools._counters["box"] = 7

@@ -232,6 +232,23 @@ def test_run_stage_node_turns_endpoint_error_into_a_clean_fatal(monkeypatch):
     assert "fatal" in cmd.update
 
 
+def test_unknown_planner_module_becomes_a_fatal_not_a_crash(tmp_path):
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.return_value = {
+        "stages": [{"module": "mesh", "intent": "mesh it", "params": {}, "inputs": []}]}
+    llm.usage = None
+    built = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": "t1", "llm_client": llm, "executor_client": None}}
+    state = _initial_state(tmp_path)
+    state["config"]["batch"] = True
+
+    final = built.invoke(state, config=cfg)
+    assert final["fatal"] == "planner produced unknown module 'mesh'"
+    assert final["report"]
+
+
 def test_endpoint_fatal_run_produces_report_and_exit_code(tmp_path, monkeypatch):
     llm = MagicMock()
     llm.chat.side_effect = _http_error(502)

@@ -60,7 +60,7 @@ class ToolSpecialist:
         parts = [str(stage_plan)] + [b for b in blocks if b]
         if retry and spec.render_retry:
             rendered = spec.render_retry(retry)
-            if rendered:
+            if rendered is not None:
                 parts.append(rendered)
         messages = [{"role": "system", "content": spec.prompt(verify_cadence)},
                     {"role": "user", "content": "\n\n".join(parts)}]

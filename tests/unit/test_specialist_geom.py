@@ -236,6 +236,22 @@ def test_retry_context_is_injected_into_the_opening_prompt():
     assert "centre [5, 5, 5]" in sent
 
 
+def test_empty_retry_block_still_appends_trailing_blank_line():
+    # An empty retry (no last_error, no hint, nothing built) renders "" rather
+    # than None, so the join still appends "\n\n" — matches main byte-for-byte.
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    run_geom_specialist(
+        {"module": "geom", "intent": "box", "params": {}, "inputs": []},
+        llm, client, iteration_cap=3,
+        retry={"last_error": None, "hint": None, "built": [], "call_log": []},
+    )
+    sent = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert sent.endswith("\n\n")
+
+
 def test_no_retry_leaves_the_prompt_unchanged():
     llm = MagicMock()
     llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))

@@ -68,14 +68,15 @@ def assemble(state: dict) -> str:
     body = "\n\n".join(bodies)
 
     preamble = _KERNEL_INIT
-    # Module-driven preamble from specs
+    # geom's init always comes first — matches main's fixed preamble order.
+    if "geom" in modules or "geompy" in body:
+        preamble += _GEOM_INIT
+    # Module-driven preamble from specs (smesh/paravis)
     for name in sorted(modules):
         spec = spec_for(name)
         if spec.preamble and spec.preamble not in preamble:
             preamble += spec.preamble
     # Body-sniffing heuristics for backward compatibility
-    if "geompy" in body and _GEOM_INIT not in preamble:
-        preamble += _GEOM_INIT
     if "smesh" in body and _SMESH_INIT not in preamble:
         preamble += _SMESH_INIT
     if "SALOMEDS.Color(" in body:

@@ -482,8 +482,8 @@ class LLMClient:
                 return {"tool_call": None, "args": None, "tool_call_id": None,
                         "tool_calls": [], "content": content, "raw_message": message}
             # tool_calls: every call the model emitted this turn (tool_choice=
-            # "auto" allows several). The singular keys mirror the first call —
-            # kept for callers that only ever expect one (specialists/base.py).
+            # "auto" allows several). The singular keys mirror the first call,
+            # kept for backward compatibility with callers that expect only one.
             first = parsed[0]
             return {"tool_call": first["name"], "args": first["args"],
                     "tool_call_id": first["id"], "tool_calls": parsed,
