@@ -70,3 +70,19 @@ def test_connect_poisoned_raises(_home):
     with pytest.raises((server_conn.ServerUnavailable, SessionPoisoned)):
         server_conn.connect("run1")
     t.join()
+
+
+def test_connect_passes_hold(monkeypatch):
+    from salome_agent import server_conn
+
+    got = {}
+    monkeypatch.setattr(server_conn, "read_handshake",
+                        lambda: {"host": "h", "port": 1, "token": "t"})
+
+    class FakeClient:
+        def __init__(self, host, port, token, run_id, record_path=None, hold=False):
+            got["hold"] = hold
+
+    monkeypatch.setattr(server_conn, "ExecutorClient", FakeClient)
+    server_conn.connect("r1", hold=True)
+    assert got["hold"] is True

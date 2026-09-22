@@ -16,6 +16,7 @@ class Server:
         self._stop = threading.Event()
         self._conn_lock = threading.Lock()
         self._active = False
+        self._held = False
         self._last_activity = 0.0
 
     def bind(self) -> int:
@@ -70,11 +71,13 @@ class Server:
             except OSError:
                 pass
 
-    def _claim(self) -> bool:
+    def _claim(self, hold: bool) -> bool:
         with self._conn_lock:
-            if self._active and (time.monotonic() - self._last_activity) < self.BUSY_IDLE_S:
+            if self._active and (self._held or
+                                 (time.monotonic() - self._last_activity) < self.BUSY_IDLE_S):
                 return False
             self._active = True
+            self._held = hold
             self._last_activity = time.monotonic()
             return True
 
@@ -89,7 +92,7 @@ class Server:
             req = json.loads(first)
             if not hmac.compare_digest(str(req.get("token", "")), self.token):
                 return                       # drop, no response
-            if not self._claim():
+            if not self._claim(bool(req.get("hold"))):
                 f.write(b'{"ready": false, "error": "busy"}\n')
                 f.flush()
                 return
@@ -111,6 +114,7 @@ class Server:
             if claimed:
                 with self._conn_lock:
                     self._active = False
+                    self._held = False
             try:
                 conn.close()
             except OSError:
