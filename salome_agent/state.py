@@ -65,3 +65,4 @@ class RunState(TypedDict):
     report: Optional[str]
     fatal: Optional[str]
     aborted: Optional[bool]
+    build_graph: Optional[dict]
