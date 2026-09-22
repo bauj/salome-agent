@@ -1,7 +1,7 @@
 # tests/unit/test_forget.py
 from types import SimpleNamespace
 
-from agent_server.backend import HeadlessBackend, forget_names
+from agent_server.backend import HeadlessBackend, display_names, forget_names
 from agent_server.core import Core
 
 
@@ -86,3 +86,23 @@ def test_a_failing_erase_does_not_stop_the_forget():
 
     r = forget_names(_ns(study), {}, ["box_1"], erase=boom)
     assert r["removed"] == ["box_1"] and "box_1" not in study.objs
+
+
+def test_display_shows_each_found_study_object():
+    study = FakeStudy(["fuse_1"])
+    shown = []
+    r = display_names(_ns(study), ["fuse_1", "nope_1"], shown.append)
+    assert r == {"ok": True, "shown": ["fuse_1"]}
+    assert shown == ["0:1:fuse_1"]
+
+
+def test_headless_display_is_a_no_op():
+    b = HeadlessBackend(build_namespace=lambda live: _ns(FakeStudy(["box_1"])))
+    assert b.display(["box_1"]) == {"ok": True, "shown": []}
+
+
+def test_core_display_command():
+    backend = SimpleNamespace(poisoned=lambda: False,
+                              display=lambda names: {"ok": True, "shown": list(names)})
+    assert Core(backend).handle({"id": 5, "cmd": "display", "names": ["a"]}) == {
+        "id": 5, "ok": True, "shown": ["a"]}

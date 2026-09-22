@@ -61,6 +61,16 @@ def forget_names(namespace: dict, geom_bindings: dict, names: list, erase=None) 
     return {"ok": True, "removed": removed}
 
 
+def display_names(namespace: dict, names: list, show) -> dict:
+    study = namespace["salome"].myStudy
+    shown = []
+    for name in names:
+        for sobj in study.FindObjectByName(name, "GEOM"):
+            show(sobj.GetID())
+            shown.append(name)
+    return {"ok": True, "shown": shown}
+
+
 class Backend(Protocol):
     name_prefix: str
     namespace: dict
@@ -73,6 +83,7 @@ class Backend(Protocol):
     def reset(self, scripts: list) -> dict: ...
     def refresh(self, module: str | None) -> None: ...
     def forget(self, names: list) -> dict: ...
+    def display(self, names: list) -> dict: ...
     def find_object(self, name: str): ...
     def poisoned(self) -> bool: ...
 
@@ -121,6 +132,9 @@ class HeadlessBackend:
 
     def forget(self, names: list) -> dict:
         return forget_names(self.namespace, self.geom_bindings, names)
+
+    def display(self, names: list) -> dict:
+        return {"ok": True, "shown": []}
 
     def find_object(self, name: str):
         return self.namespace["find_object"](name)

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from salome_agent.build_graph import BuildGraph
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.replay import ReplayFailed, rebuild_all, sync
-from salome_agent.runner import EventMapper, drive, initial_state
+from salome_agent.runner import EventMapper, drive, initial_state, show_results
 
 
 @dataclass
@@ -72,6 +72,8 @@ class Conversation:
         final = drive(build_graph(batch=self.batch), inp, cfg,
                       EventMapper(self.run_id, self.run_dir), self.llm, on_event, on_gate, cancel)
         result = self._settle(final, before)
+        if not self.ended:
+            show_results(self.client, self.graph.to_dict())
         outcome = final.get("turn_outcome") or {}
         self.history.append({"event": "turn", "turn": n, "text": text,
                              "status": result.status, "summary": outcome.get("summary")})
@@ -130,6 +132,7 @@ class Conversation:
         self.turn_idx = turn_idx
         self.history = self.history[:hist_len]
         self._write_outputs()
+        show_results(self.client, self.graph.to_dict())
         return TurnResult("ok", f"undone back to turn {turn_idx}", {})
 
     def rebuild(self) -> TurnResult:
@@ -142,4 +145,5 @@ class Conversation:
         self.degraded = False
         self._stray.clear()
         self._write_outputs()
+        show_results(self.client, self.graph.to_dict())
         return TurnResult("ok", f"rebuilt {len(self.graph.nodes)} node(s)", {})

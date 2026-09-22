@@ -226,3 +226,36 @@ def test_amend_history_events_become_ui_events():
         {"event": "retry_hint", "hint": "x"}]})
     assert [e["kind"] for e in evs] == ["graph_edit", "replay"]
     assert evs[1]["data"] == {"nodes": ["n1", "n3"]}
+
+
+def test_show_results_displays_the_graph_result_names():
+    from unittest.mock import MagicMock
+
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.runner import show_results
+
+    g = BuildGraph()
+    b = g.add_block(0, "stage 1/1: geom", "geom", ["fuse_1"])
+    g.append(b, "fuse", {}, [{"fn": "F", "args": [], "out_vars": ["fuse_1"],
+                              "publish": ["fuse_1"]}], 0)
+    client = MagicMock()
+    show_results(client, g.to_dict())
+    client.display.assert_called_once_with(["fuse_1"])
+
+
+def test_show_results_is_best_effort():
+    from unittest.mock import MagicMock
+
+    from salome_agent.runner import show_results
+
+    client = MagicMock()
+    client.display.side_effect = RuntimeError("no viewer")
+    show_results(client, {"nodes": [], "blocks": []})    # nothing to show: no call
+    client.display.assert_not_called()
+    show_results(None, {"nodes": [], "blocks": []})
+    from salome_agent.build_graph import BuildGraph
+    g = BuildGraph()
+    b = g.add_block(0, "s", "geom", [])
+    g.append(b, "make_box", {}, [{"fn": "F", "args": [], "out_vars": ["box_1"],
+                                  "publish": ["box_1"]}], 0)
+    show_results(client, g.to_dict())                     # raises inside: swallowed

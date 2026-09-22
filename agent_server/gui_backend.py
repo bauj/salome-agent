@@ -7,7 +7,7 @@ if SalomePyQt.usePySide():
 else:
     from PyQt5.QtCore import QObject, pyqtSignal as _Signal, Qt
 
-from agent_server.backend import forget_names
+from agent_server.backend import display_names, forget_names
 from executor import geom
 
 
@@ -144,6 +144,15 @@ class GuiBackend:
                 sg.UpdateView()
             except Exception:
                 pass
+            return r
+        return self._invoker.run_on_main(_do, timeout=30)
+
+    def display(self, names):
+        def _do():
+            import libSALOME_Swig
+            sg = libSALOME_Swig.SALOMEGUI_Swig()
+            r = display_names(self.namespace, names, sg.Display)
+            sg.UpdateView()
             return r
         return self._invoker.run_on_main(_do, timeout=30)
 
