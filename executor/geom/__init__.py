@@ -1,7 +1,7 @@
 """The geom tool package. Importing it registers every tool."""
 from executor.geom.helpers import (  # noqa: F401
     ArgRef, CallRecord, _counters, _gui_call, _next_name, _parse_coords,
-    _publish, _resolve, _resolve_axis, _resolve_plane, _resolve_point,
+    _pinned, _publish, _resolve, _resolve_axis, _resolve_plane, _resolve_point,
     registry, reset_counters,
 )
 from executor.geom.results import (  # noqa: F401
@@ -61,10 +61,11 @@ def list_tools() -> list[dict]:
     return registry.list_tools()
 
 
-def call_tool(executor, name: str, args: dict) -> dict:
+def call_tool(executor, name: str, args: dict, pin: list | None = None) -> dict:
     handler = TOOLS.get(name)
     if handler is None:
         return {"ok": False, "error": f"unknown tool {name!r}"}
+    _pinned[:] = list(pin or [])
     try:
         args = _coerce_args(name, args)
         result = handler(executor, args)
@@ -79,3 +80,5 @@ def call_tool(executor, name: str, args: dict) -> dict:
         return result
     except Exception as e:
         return {"ok": False, "error": str(e)}
+    finally:
+        _pinned.clear()

@@ -67,8 +67,11 @@ class ReplayExecutorClient:
     def list_tools(self):
         return self._next("list_tools", {})
 
-    def call_tool(self, name, args):
-        return self._next("call_tool", {"name": name, "args": args})
+    def call_tool(self, name, args, pin=None):
+        payload = {"name": name, "args": args}
+        if pin is not None:
+            payload["pin"] = pin
+        return self._next("call_tool", payload)
 
     def introspect(self, names):
         return self._next("introspect", {"names": names})

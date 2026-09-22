@@ -25,6 +25,9 @@ class CallRecord(TypedDict):
 
 
 _counters: dict[str, int] = {}
+# Names a replayed tool call must reuse, in allocation order (Task 1 of the
+# agentic-chat plan). call_tool fills it for one call and clears it after.
+_pinned: list[str] = []
 
 
 def reset_counters() -> None:
@@ -32,8 +35,15 @@ def reset_counters() -> None:
 
 
 def _next_name(executor, prefix: str) -> str:
+    stem = f"{executor.name_prefix}{prefix}_"
+    for i, name in enumerate(_pinned):
+        suffix = name[len(stem):]
+        if name.startswith(stem) and suffix.isdigit():
+            del _pinned[i]
+            _counters[prefix] = max(_counters.get(prefix, 0), int(suffix))
+            return name
     _counters[prefix] = _counters.get(prefix, 0) + 1
-    return f"{executor.name_prefix}{prefix}_{_counters[prefix]}"
+    return f"{stem}{_counters[prefix]}"
 
 
 def _resolve(executor, arg: ArgRef):
