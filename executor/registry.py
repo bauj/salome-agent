@@ -54,15 +54,14 @@ class ToolRegistry:
                 for n, e in self._entries.items()]
 
     def coerce_args(self, name: str, args: dict) -> dict:
-        types = self._entries.get(name, {}).get("arg_types") or {}
-        out = dict(args)
-        for key, caster in types.items():
-            if key in out and out[key] is not None:
-                try:
-                    out[key] = caster(out[key])
-                except (TypeError, ValueError):
-                    pass
-        return out
+        types = self._entries.get(name, {}).get("arg_types")
+        if not types:
+            return args
+        coerced = dict(args)
+        for key, cast in types.items():
+            if key in coerced:
+                coerced[key] = cast(coerced[key])
+        return coerced
 
     def call(self, executor, name: str, args: dict) -> dict:
         entry = self._entries.get(name)

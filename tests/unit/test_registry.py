@@ -78,3 +78,25 @@ def test_a_duplicate_name_is_rejected():
     r = _reg()
     with pytest.raises(ValueError, match="already registered"):
         r.tool("make_thing", category="query", description="d", schema={})(lambda e, a: None)
+
+
+def test_coerce_args_raises_on_a_failed_cast():
+    """A cast that fails raises ValueError, not swallowed."""
+    r = _reg()
+    with pytest.raises(ValueError):
+        r.coerce_args("make_thing", {"n": "not_a_number"})
+
+
+def test_coerce_args_raises_on_a_none_value():
+    """A None value raises TypeError when casting, not skipped."""
+    r = _reg()
+    with pytest.raises(TypeError):
+        r.coerce_args("make_thing", {"n": None})
+
+
+def test_coerce_args_leaves_missing_key_absent():
+    """A key not in args is not added to the result."""
+    r = _reg()
+    result = r.coerce_args("make_thing", {})
+    assert "n" not in result
+    assert result == {}
