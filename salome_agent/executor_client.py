@@ -89,8 +89,10 @@ class ExecutorClient:
     def list_tools(self):
         return self._call("list_tools")
 
-    def call_tool(self, name, args):
-        return self._call("call_tool", name=name, args=args)
+    def call_tool(self, name, args, pin=None):
+        if pin is None:
+            return self._call("call_tool", name=name, args=args)
+        return self._call("call_tool", name=name, args=args, pin=pin)
 
     def shutdown(self):
         return self._call("shutdown")

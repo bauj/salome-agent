@@ -50,7 +50,7 @@ class Core:
         if cmd == "list_tools":
             return {"id": rid, "tools": geom.list_tools()}
         if cmd == "call_tool":
-            r = geom.call_tool(b, req["name"], req["args"])
+            r = geom.call_tool(b, req["name"], req["args"], pin=req.get("pin"))
             if r.get("ok"):
                 b.refresh("GEOM")
             return {"id": rid, **r}
