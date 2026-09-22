@@ -188,8 +188,8 @@ def _spec(session: AmendSession) -> ModuleSpec:
 
 
 def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
-              history=(), selection=None):
-    session = AmendSession(graph, client, turn)
+              history=(), selection=None, session=None):
+    session = session or AmendSession(graph, client, turn)
     blocks = ["Build graph:\n" + graph.render()]
     snap = _snapshot(client, graph)
     if snap:
