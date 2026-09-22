@@ -216,3 +216,13 @@ def test_client_supplies_the_session_handle(tmp_path, monkeypatch):
                       on_gate=lambda p: {"action": "abort"}, run_id="r1")
     assert res.final_state["session"]["mode"] == "gui"
     assert res.final_state["session"]["name_prefix"] == "p_"
+
+
+def test_amend_history_events_become_ui_events():
+    m = EventMapper("r1", "/w/r1")
+    evs = m.events("amend", {"history": [
+        {"event": "graph_edit", "op": "edit", "node": "n1", "param": "dz", "old": 1, "new": 2},
+        {"event": "replay", "nodes": ["n1", "n3"]},
+        {"event": "retry_hint", "hint": "x"}]})
+    assert [e["kind"] for e in evs] == ["graph_edit", "replay"]
+    assert evs[1]["data"] == {"nodes": ["n1", "n3"]}

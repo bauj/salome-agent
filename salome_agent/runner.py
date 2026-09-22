@@ -30,6 +30,11 @@ class EventMapper:
     def events(self, node: str, update: dict | None) -> list[dict]:
         update = update or {}
         out = []
+        if node == "amend":
+            for e in update.get("history") or []:
+                if e.get("event") in ("graph_edit", "replay"):
+                    out.append(self.event(e["event"],
+                                          **{k: v for k, v in e.items() if k != "event"}))
         if node in ("plan", "plan_gate") and "plan" in update:
             self.plan = update["plan"]
             self.idx = 0
@@ -77,36 +82,20 @@ def _session_handle(client) -> dict:
             "name_prefix": client.name_prefix}
 
 
-def run_request(request: str, config: dict, *, client, on_event, on_gate,
-                cancel: threading.Event | None = None, batch: bool = False,
-                verbose: int = 0, run_id: str | None = None,
-                request_timeout: float | None = None) -> RunResult:
-    from langgraph.types import Command
-
-    from salome_agent import cli
-    from salome_agent.graph import build_graph
-    from salome_agent.logs import log
-
-    run_id = run_id or uuid.uuid4().hex[:12]
-    work_dir = os.path.expanduser(config.get("work_dir") or ".")
-    run_dir = os.path.abspath(os.path.join(work_dir, run_id))
-    # exec_trace.jsonl (salome_agent/cli.py) is recorded under this same
-    # verbose >= 2 condition — a recorded run always has both halves or neither.
-    trace_path = os.path.join(run_dir, "llm_trace.jsonl") if verbose >= 2 else None
-    if trace_path:
-        log.info("LLM trace: %s", trace_path)
-    llm = cli.build_llm(config, request_timeout, trace_path, run_id)
-    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": llm,
-                            "executor_client": client}}
-    graph = build_graph(batch=batch)
-    mapper = EventMapper(run_id, run_dir)
-    inp = {
+def initial_state(request: str, config: dict, client, run_id: str, batch: bool) -> dict:
+    return {
         "user_request": request, "config": {**config, "batch": batch},
         "session": _session_handle(client), "plan": [], "plan_approved": False,
         "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
         "study_ns": "salome_agent_run", "final_script": None, "report": None,
         "fatal": None, "aborted": False, "run_id": run_id,
+        "build_graph": None, "turn_idx": 0, "selection": None, "turn_outcome": None,
+        "replan_context": None, "degraded": None,
     }
+
+
+def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
+    from langgraph.types import Command
 
     def cancelled() -> bool:
         return cancel is not None and cancel.is_set()
@@ -114,7 +103,7 @@ def run_request(request: str, config: dict, *, client, on_event, on_gate,
     stopped = False
     while True:
         pending = None
-        for chunk in graph.stream(inp, config=cfg, stream_mode="updates"):
+        for chunk in app.stream(inp, config=cfg, stream_mode="updates"):
             for node, update in chunk.items():
                 if node == "__interrupt__":
                     pending = update[0].value
@@ -134,9 +123,36 @@ def run_request(request: str, config: dict, *, client, on_event, on_gate,
             break
         inp = Command(resume=decision)
 
-    final = dict(graph.get_state(cfg).values)
+    final = dict(app.get_state(cfg).values)
     if stopped and not final.get("aborted"):
         final["aborted"] = True
         on_event(mapper.event("aborted"))
+    return final
+
+
+def run_request(request: str, config: dict, *, client, on_event, on_gate,
+                cancel: threading.Event | None = None, batch: bool = False,
+                verbose: int = 0, run_id: str | None = None,
+                request_timeout: float | None = None) -> RunResult:
+    from salome_agent import cli
+    from salome_agent.graph import build_graph
+    from salome_agent.logs import log
+
+    run_id = run_id or uuid.uuid4().hex[:12]
+    work_dir = os.path.expanduser(config.get("work_dir") or ".")
+    run_dir = os.path.abspath(os.path.join(work_dir, run_id))
+    # exec_trace.jsonl (salome_agent/cli.py) is recorded under this same
+    # verbose >= 2 condition — a recorded run always has both halves or neither.
+    trace_path = os.path.join(run_dir, "llm_trace.jsonl") if verbose >= 2 else None
+    if trace_path:
+        log.info("LLM trace: %s", trace_path)
+    llm = cli.build_llm(config, request_timeout, trace_path, run_id)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": llm,
+                            "executor_client": client}}
+    graph = build_graph(batch=batch)
+    mapper = EventMapper(run_id, run_dir)
+    inp = initial_state(request, config, client, run_id, batch)
+
+    final = drive(graph, inp, cfg, mapper, llm, on_event, on_gate, cancel)
     exit_code = 1 if (final.get("fatal") or final.get("aborted")) else 0
     return RunResult(run_id=run_id, run_dir=run_dir, final_state=final, exit_code=exit_code)
