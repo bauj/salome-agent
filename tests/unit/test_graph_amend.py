@@ -41,7 +41,8 @@ def test_route_start():
 def test_amend_turn_rewrites_result_and_graph_json(tmp_path, monkeypatch):
     from salome_agent.specialists import amend as amend_mod
 
-    def fake_run_amend(text, graph, llm, client, turn, policy, *, history=(), selection=None):
+    def fake_run_amend(text, graph, llm, client, turn, policy, *, history=(), selection=None,
+                       session=None):
         session = amend_mod.AmendSession(graph, client, turn)
         session.graph = graph.copy()
         session.graph.nodes["n1"].tool_args["dz"] = 3
@@ -82,3 +83,21 @@ def test_replan_goes_to_the_planner_with_context(tmp_path, monkeypatch):
     app.invoke(_state(tmp_path, _graph(), "add a wing"), config=cfg)
     assert seen["request"].startswith("add a wing")
     assert "box_1" in seen["request"]
+
+
+def test_llm_failure_mid_amend_keeps_the_edits_already_applied(tmp_path, monkeypatch):
+    from salome_agent.specialists import amend as amend_mod
+
+    def fake_run_amend(text, graph, llm, client, turn, policy, *, history=(), selection=None,
+                       session=None):
+        session.graph = graph.copy()
+        session.graph.nodes["n1"].tool_args["dz"] = 3
+        raise RuntimeError("endpoint died")
+
+    monkeypatch.setattr(amend_mod, "run_amend", fake_run_amend)
+    app = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    out = app.invoke(_state(tmp_path, _graph(), "make it taller"), config=cfg)
+    assert out["fatal"].startswith("LLM endpoint error")
+    assert out["build_graph"]["nodes"][0]["tool_args"]["dz"] == 3
