@@ -42,6 +42,18 @@ def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
     return result
 
 
+def forget_names(namespace: dict, geom_bindings: dict, names: list) -> dict:
+    study = namespace["salome"].myStudy
+    builder = study.NewBuilder()
+    removed = []
+    for name in names:
+        geom_bindings.pop(name, None)
+        for sobj in study.FindObjectByName(name, "GEOM"):
+            builder.RemoveObjectWithChildren(sobj)
+            removed.append(name)
+    return {"ok": True, "removed": removed}
+
+
 class Backend(Protocol):
     name_prefix: str
     namespace: dict
@@ -53,6 +65,7 @@ class Backend(Protocol):
     def run_code(self, code: str, timeout: float, module: str | None = None) -> dict: ...
     def reset(self, scripts: list) -> dict: ...
     def refresh(self, module: str | None) -> None: ...
+    def forget(self, names: list) -> dict: ...
     def find_object(self, name: str): ...
     def poisoned(self) -> bool: ...
 
@@ -98,6 +111,9 @@ class HeadlessBackend:
 
     def refresh(self, module: str | None) -> None:
         pass
+
+    def forget(self, names: list) -> dict:
+        return forget_names(self.namespace, self.geom_bindings, names)
 
     def find_object(self, name: str):
         return self.namespace["find_object"](name)

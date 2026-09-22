@@ -73,6 +73,9 @@ class ReplayExecutorClient:
             payload["pin"] = pin
         return self._next("call_tool", payload)
 
+    def forget(self, names):
+        return self._next("forget", {"names": names})
+
     def introspect(self, names):
         return self._next("introspect", {"names": names})
 

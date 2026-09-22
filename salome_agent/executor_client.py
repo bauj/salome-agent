@@ -94,6 +94,9 @@ class ExecutorClient:
             return self._call("call_tool", name=name, args=args)
         return self._call("call_tool", name=name, args=args, pin=pin)
 
+    def forget(self, names):
+        return self._call("forget", names=names)
+
     def shutdown(self):
         return self._call("shutdown")
 
