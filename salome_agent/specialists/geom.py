@@ -1,6 +1,6 @@
 import json
 
-from executor.geom_tools import TOOL_DESCRIPTIONS
+from executor.geom import TOOL_DESCRIPTIONS
 from salome_agent.codegen import _refs_in
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec, Terminator, register

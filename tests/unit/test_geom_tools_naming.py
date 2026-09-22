@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
-from executor import geom_tools
+# Use the alias to avoid rewriting test assertions (task 7 cleanup).
+from executor import geom as geom_tools
 
 
 def test_next_name_applies_prefix_and_increments():

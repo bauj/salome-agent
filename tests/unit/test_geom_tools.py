@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from executor import geom_tools
+# Use the alias to avoid rewriting ~1800 lines of assertions (task 7 cleanup).
+from executor import geom as geom_tools
 
 _VALID_CATEGORIES = {
     "primitive", "sketch", "swept", "boolean",
@@ -1874,7 +1875,7 @@ class TestDeltaNote:
 
 
 def test_every_registered_geom_tool_is_complete():
-    from executor.geom_tools import registry
+    from executor.geom import registry
 
     for name in registry.names:
         assert registry.descriptions()[name], f"no description for {name}"

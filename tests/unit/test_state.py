@@ -28,3 +28,10 @@ def test_history_reducer_is_additive():
 
 def test_runstate_has_fatal_key():
     assert "fatal" in RunState.__annotations__
+
+
+def test_stage_plan_declares_the_planner_tools_hint():
+    from salome_agent.state import StagePlan
+
+    assert "tools" in StagePlan.__optional_keys__
+    assert "inputs" in StagePlan.__required_keys__  # paravis reads the MED path from it

@@ -62,11 +62,6 @@ def test_retry_context_measure_failure_is_best_effort():
     assert ctx["built_info"] is None
 
 
-def test_select_upstream_scopes_to_declared_inputs_when_they_resolve():
-    stages = {0: {"status": "ok", "result_names": ["box_1", "cyl_1"]}}
-    assert select_upstream({"inputs": ["cyl_1"]}, stages, 1) == ["cyl_1"]
-
-
 def test_select_upstream_falls_back_when_inputs_do_not_resolve():
     stages = {0: {"status": "ok", "result_names": ["box_1"]}}
     assert select_upstream({"inputs": ["cube"]}, stages, 1) == ["box_1"]
@@ -362,3 +357,14 @@ def test_run_stage_node_skips_timing_without_a_real_usage_dict(monkeypatch):
     cmd = graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
                                                          "executor_client": None}})
     assert "timing" not in cmd.update["stages"][0]
+
+
+def test_select_upstream_always_returns_every_available_name():
+    from salome_agent.graph import select_upstream
+
+    stages = {0: {"status": "ok", "result_names": ["box_1", "cyl_1"]}}
+    # `inputs` holds plain words by design (planner.py), never object names —
+    # a full match used to scope down and never fires in practice.
+    assert select_upstream({"inputs": ["the box"]}, stages, 1) == ["box_1", "cyl_1"]
+    assert select_upstream({"inputs": ["box_1"]}, stages, 1) == ["box_1", "cyl_1"]
+    assert select_upstream({"inputs": []}, stages, 1) == ["box_1", "cyl_1"]

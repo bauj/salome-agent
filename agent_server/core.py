@@ -1,4 +1,4 @@
-from executor import geom_tools  # top-level — salome_init mutates sys.path later
+from executor import geom  # top-level — salome_init mutates sys.path later
 from agent_server import handshake
 
 _FATAL = {"ok": False, "fatal": True,
@@ -48,9 +48,9 @@ class Core:
         if cmd == "sanity":
             return {"id": rid, "ok": True, "warnings": [], "failures": []}
         if cmd == "list_tools":
-            return {"id": rid, "tools": geom_tools.list_tools()}
+            return {"id": rid, "tools": geom.list_tools()}
         if cmd == "call_tool":
-            r = geom_tools.call_tool(b, req["name"], req["args"])
+            r = geom.call_tool(b, req["name"], req["args"])
             if r.get("ok"):
                 b.refresh("GEOM")
             return {"id": rid, **r}
