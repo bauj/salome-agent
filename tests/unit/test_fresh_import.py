@@ -1,5 +1,7 @@
+import json
 import subprocess
 import sys
+from pathlib import Path
 
 
 def test_planner_prompt_builds_in_a_fresh_interpreter():
@@ -25,3 +27,24 @@ def test_cli_path_loads_planner_in_fresh_interpreter():
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, f"CLI path failed:\nstdout: {r.stdout}\nstderr: {r.stderr}"
+
+
+def test_geom_tools_registers_all_tools_in_a_fresh_interpreter():
+    """executor.geom.__init__ registers every tool as an import side effect
+    spread over 9 submodules; a shared-interpreter suite once passed green
+    while a fresh process crashed (session 43). Also guards that the split
+    reproduces the pre-split registration order exactly.
+    """
+    golden = Path(__file__).parent.parent / "fixtures" / "golden" / "list_tools.json"
+    expected_names = [t["name"] for t in json.loads(golden.read_text())]
+    code = (
+        "import json\n"
+        "from executor import geom_tools\n"
+        "assert len(geom_tools.TOOLS) == 44, len(geom_tools.TOOLS)\n"
+        "names = [t['name'] for t in geom_tools.list_tools()]\n"
+        "print(json.dumps(names))\n"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, f"Fresh import failed:\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    names = json.loads(r.stdout.strip().splitlines()[-1])
+    assert names == expected_names
