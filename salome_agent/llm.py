@@ -284,6 +284,9 @@ class LLMClient:
         # "read exactly amt bytes" semantics and blocks until the buffer fills
         # or the stream ends — a slow token trickle then stalls. None yields
         # whatever is on the socket as it arrives.
+        # SSE is UTF-8 by spec; with no charset in the Content-Type, requests
+        # falls back to ISO-8859-1 for text/* and garbles every non-ASCII char.
+        resp.encoding = "utf-8"
         for raw in resp.iter_lines(chunk_size=None, decode_unicode=True):
             if time.monotonic() > deadline:
                 raise StreamBudgetExceeded(

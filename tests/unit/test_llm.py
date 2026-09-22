@@ -876,3 +876,31 @@ def test_trace_records_ttft(monkeypatch, tmp_path):
         messages=[{"role": "user", "content": "hi"}])
     entry = json.loads(trace.read_text().splitlines()[0])
     assert "ttft_s" in entry["response"]
+
+
+def test_streamed_non_ascii_survives_decoding(monkeypatch):
+    """An SSE body with no charset makes requests assume ISO-8859-1 (its text/*
+    default); UTF-8 "×" then came back as "Ã\x97" and, echoed into later
+    prompts, compounded (PR #44)."""
+    import io
+
+    # raw UTF-8 on the wire, as real providers send it — not \uXXXX escapes
+    frame = json.dumps({"choices": [{"delta": {"role": "assistant",
+                                               "content": "200×120 mm — 45°"},
+                                     "finish_reason": "stop"}]}, ensure_ascii=False)
+    body = f"data: {frame}\n\ndata: [DONE]\n\n".encode("utf-8")
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        resp = requests.Response()
+        resp.status_code = 200
+        resp.headers["Content-Type"] = "text/event-stream"
+        # what HTTPAdapter.build_response does
+        resp.encoding = requests.utils.get_encoding_from_headers(resp.headers)
+        resp.raw = io.BytesIO(body)
+        return resp
+
+    monkeypatch.setattr(requests, "post", post)
+    out = LLMClient(base_url="http://x", api_key="k", model="m").chat(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"name": "t", "parameters": {"type": "object", "properties": {}}}])
+    assert out["content"] == "200×120 mm — 45°"
