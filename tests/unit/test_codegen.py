@@ -238,3 +238,20 @@ def test_call_prefix_defaults_to_geompy():
     call_log = [{"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 1}],
                  "out_vars": ["box_1"], "publish": None}]
     assert generate(call_log, ["box_1"]).startswith("box_1 = geompy.")
+
+
+def test_generate_with_keep_uses_that_set():
+    from salome_agent.codegen import generate
+    log = [{"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 1}] * 3,
+            "out_vars": ["box_1"], "publish": ["box_1"]},
+           {"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 2}] * 3,
+            "out_vars": ["box_2"], "publish": ["box_2"]}]
+    out = generate(log, ["box_2"], keep={"box_1", "box_2"})
+    assert "box_1 = " in out and "box_2 = " in out
+
+
+def test_roots_for_falls_back_to_published():
+    from salome_agent.codegen import roots_for
+    log = [{"fn": "F", "args": [], "out_vars": ["a"], "publish": ["a"]}]
+    assert roots_for(log, ["nope"]) == ["a"]
+    assert roots_for(log, ["a"]) == ["a"]

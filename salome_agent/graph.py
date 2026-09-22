@@ -341,10 +341,13 @@ def _skip_node(state: dict):
 
 def _assemble_node(state: dict):
     from langgraph.types import Command
-    from salome_agent.nodes.assembler import assemble
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.nodes.assembler import commit_stages, render_script
 
     log.info("assembling result.py")
-    return Command(update={"final_script": assemble(state)}, goto="report")
+    graph = commit_stages(BuildGraph.from_dict(state.get("build_graph")), state)
+    return Command(update={"final_script": render_script(graph, state["run_id"]),
+                           "build_graph": graph.to_dict()}, goto="report")
 
 
 def _report_node(state: dict, config: "RunnableConfig"):
