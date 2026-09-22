@@ -599,24 +599,19 @@ pytestmark = [
 ]
 
 
-def _names(client):
-    return {o["name"] for o in client.list_study()["objects"]}
-
-
 def test_forget_then_pinned_rebuild_reuses_the_name(agent_client):
     r = agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
     name = r["records"][0]["out_vars"][0]
-    assert name in _names(agent_client)
 
     f = agent_client.forget([name])
     assert f["ok"] and f["removed"] == [name]
-    assert name not in _names(agent_client)
+    assert agent_client.forget([name])["removed"] == []      # gone from the study
 
     r2 = agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 30}, pin=[name])
     assert r2["ok"], r2.get("error")
     assert r2["records"][0]["out_vars"] == [name]
     assert r2["shape_info"]["size"][2] == pytest.approx(30)
-    assert sorted(n for n in _names(agent_client) if n == name) == [name]
+    assert agent_client.forget([name])["removed"] == [name]  # exactly one study object
 
     r3 = agent_client.call_tool("make_box", {"dx": 1, "dy": 1, "dz": 1})
     assert r3["records"][0]["out_vars"][0] != name
