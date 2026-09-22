@@ -245,6 +245,7 @@ Commands:
 | Command | Meaning |
 |---------|---------|
 | `/undo` | revert the last turn |
+| `/redo` | re-apply the last undone turn (cleared by any new turn) |
 | `/show` | print the build graph |
 | `/result` | print `result.py` |
 | `/rebuild` | rebuild the whole study from the model (after a failed rollback) |

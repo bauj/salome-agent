@@ -18,6 +18,10 @@ class FakeConv:
         self.undone += 1
         return TurnResult("ok", "undone", {})
 
+    def redo(self):
+        self.redone = getattr(self, "redone", 0) + 1
+        return TurnResult("ok", "redone", {})
+
     def rebuild(self):
         self.rebuilt += 1
         return TurnResult("ok", "rebuilt 1 node(s)", {})
@@ -80,3 +84,8 @@ def test_ended_conversation_exits_1():
     code = repl(conv, "a house", read=lambda p: "/quit", stream=io.StringIO(),
                 run_turn=run_turn)
     assert code == 1
+
+
+def test_redo_command():
+    conv, out, _ = _run(["/redo"])
+    assert conv.redone == 1 and "/redo" in out
