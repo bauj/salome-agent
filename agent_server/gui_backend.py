@@ -136,8 +136,16 @@ class GuiBackend:
             pass
 
     def forget(self, names):
-        return self._invoker.run_on_main(
-            lambda: forget_names(self.namespace, self.geom_bindings, names), timeout=30)
+        def _do():
+            import libSALOME_Swig
+            sg = libSALOME_Swig.SALOMEGUI_Swig()
+            r = forget_names(self.namespace, self.geom_bindings, names, erase=sg.Erase)
+            try:
+                sg.UpdateView()
+            except Exception:
+                pass
+            return r
+        return self._invoker.run_on_main(_do, timeout=30)
 
     def find_object(self, name):
         def _do():

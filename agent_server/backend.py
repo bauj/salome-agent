@@ -42,13 +42,20 @@ def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
     return result
 
 
-def forget_names(namespace: dict, geom_bindings: dict, names: list) -> dict:
+def forget_names(namespace: dict, geom_bindings: dict, names: list, erase=None) -> dict:
+    """erase(entry), when given, takes the object out of the viewer first —
+    removing the study object alone leaves its presentation on screen."""
     study = namespace["salome"].myStudy
     builder = study.NewBuilder()
     removed = []
     for name in names:
         geom_bindings.pop(name, None)
         for sobj in study.FindObjectByName(name, "GEOM"):
+            if erase is not None:
+                try:
+                    erase(sobj.GetID())
+                except Exception:
+                    pass
             builder.RemoveObjectWithChildren(sobj)
             removed.append(name)
     return {"ok": True, "removed": removed}
