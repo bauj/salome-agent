@@ -177,6 +177,7 @@ Run the result on its own, with no agent involved:
 | `--tools {hints,all}` | Geom tool retrieval. `hints` (default): the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the full geom registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
 | `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`. |
+| `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch` or `--no-session`. |
 
 ### GUI plugin setup
 
@@ -224,6 +225,38 @@ use `--batch` for unattended runs.
 
 Aborting at either gate stops immediately with exit 1 and writes nothing — no
 `result.py`, no `report.md`, no run directory.
+
+### Chat mode
+
+```bash
+salome-agent "a small house" --chat
+```
+
+`--chat` keeps the session open after the first result, so you can keep talking:
+
+```
+chat> make the roof taller
+chat> add a chimney
+chat> /undo
+```
+
+Commands:
+
+| Command | Meaning |
+|---------|---------|
+| `/undo` | revert the last turn |
+| `/show` | print the build graph |
+| `/result` | print `result.py` |
+| `/rebuild` | rebuild the whole study from the model (after a failed rollback) |
+| `/quit` | leave (Ctrl-D too) |
+
+One executor connection and one LLM session serve the whole conversation. An edit
+replays only the affected object and everything downstream of it, reusing the same
+object names, rather than starting the study over. `/undo` reverts the last turn;
+`/rebuild` forgets every name and replays the whole graph from scratch, for when a
+rollback itself fails. Ctrl-C cancels the turn in progress and returns to `chat>`.
+`--chat` is interactive and needs a live session, so it cannot be combined with
+`--batch` or `--no-session`.
 
 ---
 
