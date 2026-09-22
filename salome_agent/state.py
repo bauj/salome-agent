@@ -27,6 +27,9 @@ class StageRecord(TypedDict, total=False):
     status: Literal["pending", "ok", "failed", "skipped"]
     script: Optional[str]
     call_log: Optional[list[dict]]
+    # Task 5's per-call trace: [{tool, tool_args, records}] — what a build
+    # node is made from. None for script modules.
+    calls: Optional[list[dict]]
     static_retries: int
     exec_retries: int
     # {wall, llm_s, core_s, exec_s, turns, in_tok, out_tok} — accumulated

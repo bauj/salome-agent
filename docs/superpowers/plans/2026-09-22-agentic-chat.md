@@ -802,7 +802,7 @@ git commit -m "feat: specialist loop records a per-call trace and takes extra te
 - Modify: `salome_agent/state.py` (`StageRecord.calls`)
 - Modify: `salome_agent/graph.py` (`retry_context`, `_run_stage_node`)
 - Modify: `salome_agent/specialists/geom.py:160-174` (`run_geom_specialist` passes `seed_calls`)
-- Test: `tests/unit/test_graph.py` (update the two fake `run` signatures at lines ~141 and ~274, append tests)
+- Test: `tests/unit/test_graph.py` (update the fake `run` signatures — there are five, not two, all matching `seed_call_log=None):` — append tests)
 
 **Interfaces:**
 - Consumes: Task 5 `calls`.
@@ -810,7 +810,7 @@ git commit -m "feat: specialist loop records a per-call trace and takes extra te
 
 - [ ] **Step 1: Write the failing tests**
 
-In both fake `run` definitions in `tests/unit/test_graph.py`, add `seed_calls=None` after `seed_call_log=None`. Append:
+In every fake `run` definition in `tests/unit/test_graph.py` (five of them, each monkeypatched onto `ToolSpecialist.run` and reached through `graph._run_stage_node`, which now always passes `seed_calls=` — a fake missing the kwarg raises `TypeError`), add `seed_calls=None` after `seed_call_log=None`. Append:
 
 ```python
 def test_retry_context_carries_the_failed_attempts_calls():
