@@ -162,7 +162,8 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         tool_selection: str = "hints",
                         verify_cadence: str = "final",
                         retry: dict | None = None,
-                        seed_call_log: list[dict] | None = None) -> dict:
+                        seed_call_log: list[dict] | None = None,
+                        seed_calls: list[dict] | None = None) -> dict:
     """Kept as the geom entry point for the existing tests and callers; the
     loop itself is generic now."""
     blocks = []
@@ -171,7 +172,7 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
     return ToolSpecialist(GEOM_SPEC).run(
         stage_plan, llm, client, iteration_cap, blocks=tuple(blocks),
         tool_selection=tool_selection, verify_cadence=verify_cadence,
-        retry=retry, seed_call_log=seed_call_log)
+        retry=retry, seed_call_log=seed_call_log, seed_calls=seed_calls)
 
 
 def _retry_block(retry: dict) -> str:

@@ -120,7 +120,7 @@ def retry_context(state: dict, idx: int, client) -> dict | None:
         except Exception as e:  # noqa: BLE001 — best-effort, must not abort the retry
             log.warning("  measure(retry built) errored: %s", e)
     return {"last_error": state.get("last_error"), "hint": hint, "built": built,
-            "built_info": built_info, "call_log": call_log}
+            "built_info": built_info, "call_log": call_log, "calls": stage.get("calls") or []}
 
 
 # llm_client/executor_client are live, non-serializable objects — they live
@@ -197,16 +197,18 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     if module == "geom":
         retry = retry_context(state, idx, client)
         seed = (retry or {}).get("call_log")
+        seed_calls = (retry or {}).get("calls")
     else:
         retry = {"last_error": state.get("last_error")}
         seed = None
+        seed_calls = None
     policy = state["config"]["policy"]
     try:
         result = ToolSpecialist(spec).run(
             stage_plan, llm, client, cap, blocks=tuple(blocks),
             tool_selection=policy.get("tool_selection", "hints"),
             verify_cadence=policy.get("verify_cadence", "final"),
-            retry=retry, seed_call_log=seed)
+            retry=retry, seed_call_log=seed, seed_calls=seed_calls)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -224,6 +226,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                  len(result["script"] or ""))
     else:
         stage["call_log"] = result.get("call_log")
+        stage["calls"] = result.get("calls")
         if "result_names" in result:
             stage["status"] = "ok"
             stage["result_names"] = result["result_names"]
