@@ -101,3 +101,40 @@ def test_serve_forever_once_returns_after_one_client():
     s.close()
     t.join(timeout=2)
     assert not t.is_alive()
+
+
+def test_held_connection_is_not_handed_over_when_idle(server):
+    srv, port = server
+    s1, f1 = _client(port)
+    f1.write(b'{"cmd":"hello","token":"secret","id":1,"hold":true}\n'); f1.flush()
+    f1.readline()
+    srv._last_activity -= Server.BUSY_IDLE_S + 1
+    s2, f2 = _client(port)
+    f2.write(b'{"cmd":"hello","token":"secret","id":1}\n'); f2.flush()
+    assert json.loads(f2.readline())["error"] == "busy"
+    s1.close(); s2.close()
+
+
+def test_unheld_idle_connection_is_still_handed_over(server):
+    srv, port = server
+    s1, f1 = _client(port)
+    f1.write(b'{"cmd":"hello","token":"secret","id":1}\n'); f1.flush()
+    f1.readline()
+    srv._last_activity -= Server.BUSY_IDLE_S + 1
+    s2, f2 = _client(port)
+    f2.write(b'{"cmd":"hello","token":"secret","id":1}\n'); f2.flush()
+    assert json.loads(f2.readline())["ready"] is True
+    s1.close(); s2.close()
+
+
+def test_hold_is_released_when_the_holder_disconnects(server):
+    _, port = server
+    s1, f1 = _client(port)
+    f1.write(b'{"cmd":"hello","token":"secret","id":1,"hold":true}\n'); f1.flush()
+    f1.readline()
+    s1.close()
+    time.sleep(0.3)
+    s2, f2 = _client(port)
+    f2.write(b'{"cmd":"hello","token":"secret","id":1}\n'); f2.flush()
+    assert json.loads(f2.readline())["ready"] is True
+    s2.close()

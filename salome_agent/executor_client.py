@@ -16,14 +16,15 @@ class ServerBusy(Exception):
 
 class ExecutorClient:
     def __init__(self, host: str, port: int, token: str, run_id: str,
-                 record_path: str | None = None):
+                 record_path: str | None = None, hold: bool = False):
         self.record_path = record_path
         self._sock = socket.create_connection((host, port), timeout=10)
         self._f = self._sock.makefile("rwb")
         self._next_id = 1
-        self._f.write((json.dumps(
-            {"id": 0, "cmd": "hello", "token": token, "run_id": run_id}) + "\n"
-        ).encode())
+        hello = {"id": 0, "cmd": "hello", "token": token, "run_id": run_id}
+        if hold:
+            hello["hold"] = True
+        self._f.write((json.dumps(hello) + "\n").encode())
         self._f.flush()
         ready = self._recv()
         if ready.get("fatal"):
