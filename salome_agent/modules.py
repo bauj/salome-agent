@@ -52,6 +52,8 @@ class ModuleSpec:
     preamble: str = ""
     # Empty means the planner never offers this module as a stage.
     catalogue: str = ""
+    # Tools that also end the loop, each with its own handle (amend's replan).
+    extra_terminators: tuple = ()
 
 
 MODULES: dict[str, ModuleSpec] = {}

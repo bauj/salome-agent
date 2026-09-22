@@ -751,7 +751,7 @@ Expected: FAIL (`KeyError: 'calls'`, `TypeError ... seed_calls`, `... extra_term
                      + ([load_def] if load_def is not None else []))
 ```
 
-4. `if name == spec.terminator.name:` becomes `if name in terms:` with `finish_call = (call_id, args, terms[name])` (the skipped-message text stays byte-identical).
+4. `if name == spec.terminator.name:` becomes `if name in terms:` with `finish_call = (call_id, args, terms[name])` (the skipped-message text stays byte-identical). The new outer `calls` accumulator (step 2) collides with the existing per-turn local `calls = response["tool_calls"]` — rename that local (and every use in the turn's loop: the debug log, the `not calls` check, the `id` backfill loop, `assistant_tool_turn(calls, ...)`, the `for k, c in enumerate(calls)` loop and `calls[k + 1:]`) to `tool_calls`.
 5. In the ok branch after `call_log.extend(...)`:
 
 ```python

@@ -30,7 +30,7 @@ def test_terminator_name_and_handle_come_from_the_spec():
     llm = MagicMock()
     llm.chat.side_effect = [_resp(("done", {"x": 1}))]
     result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=3)
-    assert result == {"out": {"x": 1}, "call_log": []}
+    assert result == {"out": {"x": 1}, "call_log": [], "calls": []}
 
 
 def test_execute_comes_from_the_spec():
@@ -126,3 +126,49 @@ def test_session_died_becomes_a_fatal_result():
     result = ToolSpecialist(_spec(execute=execute)).run(
         {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
     assert result["fatal"].startswith("SALOME agent server unavailable")
+
+
+def test_calls_trace_pairs_tool_and_args_with_records():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1}), ("work", {"a": 2})), _resp(("done", {}))]
+    rec = {"fn": "F", "args": [], "out_vars": ["v"], "publish": ["v"]}
+
+    def execute(client, name, args):
+        return {"ok": True, "records": [rec] if args["a"] == 1 else []}
+
+    result = ToolSpecialist(_spec(execute=execute)).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert result["calls"] == [{"tool": "work", "tool_args": {"a": 1}, "records": [rec]}]
+
+
+def test_seed_calls_come_first():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {}))]
+    seed = [{"tool": "old", "tool_args": {}, "records": []}]
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(),
+                                         iteration_cap=3, seed_calls=seed)
+    assert result["calls"] == seed
+
+
+def test_exhausted_result_carries_calls_when_it_carries_call_log():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1}))] * 2
+    spec = _spec(execute=lambda c, n, a: {"ok": True, "records": [{"fn": "F", "args": [],
+                                                                      "out_vars": [], "publish": None}]},
+                 on_exhausted=lambda call_log, last_error: {"call_log": call_log})
+    result = ToolSpecialist(spec).run({"module": "toy"}, llm, MagicMock(), iteration_cap=2)
+    assert len(result["calls"]) == 2
+
+
+def test_extra_terminator_ends_the_loop_with_its_own_handle():
+    from salome_agent.modules import Terminator
+
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("bail", {"why": "big"}))]
+    bail = Terminator(name="bail", schema={"type": "object", "properties": {}},
+                      description="b", handle=lambda args, call_log: {"bailed": args["why"]})
+    result = ToolSpecialist(_spec(extra_terminators=(bail,))).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert result == {"bailed": "big"}
+    names = [t["name"] for t in llm.chat.call_args.kwargs["tools"]]
+    assert names == ["work", "done", "bail"]
