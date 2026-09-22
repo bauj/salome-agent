@@ -173,6 +173,29 @@ def tool_make_circle(executor, args: dict):
     return {"ok": True, "records": records, "sanity": {"ok": True}}
 
 
+def _not_a_plane(coords) -> str | None:
+    """Why these corners cannot bound one planar face, or None if they can."""
+    o = coords[0]
+    vecs = [tuple(c[i] - o[i] for i in range(3)) for c in coords[1:]]
+    scale = max((abs(v) for vec in vecs for v in vec), default=0.0) or 1.0
+    normal = None
+    for a in vecs:
+        for b in vecs:
+            n = (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+            if max(abs(x) for x in n) > 1e-9 * scale * scale:
+                normal = n
+                break
+        if normal:
+            break
+    if normal is None:
+        return "the points are collinear, they span no plane"
+    length = sum(x * x for x in normal) ** 0.5
+    for vec in vecs:
+        if abs(sum(vec[i] * normal[i] for i in range(3))) / length > 1e-6 * scale:
+            return "the points do not all lie in the same plane"
+    return None
+
+
 @tool("make_polygon_face", category="sketch",
       description=('Planar face bounded by a closed polygon through `points` (3 or more corners, '
                    'in order; the last joins back to the first). Extrude it with make_prism for a '
@@ -185,6 +208,11 @@ def tool_make_polygon_face(executor, args: dict):
     geompy = executor.namespace["geompy"]
     records: list = []
     pts = [_resolve_point(executor, p, records) for p in args["points"]]
+    # MakeFaceWires(..., isPlanarWanted=1) does not refuse a non-planar wire —
+    # seen live, it quietly builds a curved face — so check the corners here.
+    problem = _not_a_plane([geompy.PointCoordinates(executor.geom_bindings[n]) for n in pts])
+    if problem:
+        return {"ok": False, "error": f"make_polygon_face: {problem}"}
     wire = geompy.MakePolyline([executor.geom_bindings[n] for n in pts], True)
     wname = _next_name(executor, "wire")
     executor.geom_bindings[wname] = wire

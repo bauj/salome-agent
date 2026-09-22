@@ -564,6 +564,7 @@ class TestBasicObjectTools:
         geom_tools.reset_counters()
         geompy = MagicMock()
         geompy.MakeVertex.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+        geompy.PointCoordinates.side_effect = [(0, 0, 80), (0, 120, 80), (0, 60, 120)]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy}, geom_bindings={})
 
@@ -586,6 +587,7 @@ class TestBasicObjectTools:
     def test_make_polygon_face_accepts_point_names(self):
         geom_tools.reset_counters()
         geompy = MagicMock()
+        geompy.PointCoordinates.side_effect = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
                              geom_bindings={"a": 1, "b": 2, "c": 3})
@@ -605,17 +607,28 @@ class TestBasicObjectTools:
     def test_make_polygon_face_non_planar_says_so(self):
         geom_tools.reset_counters()
         geompy = MagicMock()
-        geompy.MakeFaceWires.side_effect = RuntimeError("MakeFaceWires : Face creation failed")
+        geompy.PointCoordinates.side_effect = [(0, 0, 0), (10, 0, 0), (10, 10, 0), (0, 10, 5)]
         ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
                              geom_bindings={"a": 1, "b": 2, "c": 3, "d": 4})
         result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c", "d"]})
         assert result["ok"] is False
         assert "same plane" in result["error"]
+        geompy.MakePolyline.assert_not_called()
+
+    def test_make_polygon_face_collinear_says_so(self):
+        geompy = MagicMock()
+        geompy.PointCoordinates.side_effect = [(0, 0, 0), (1, 1, 1), (2, 2, 2)]
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
+                             geom_bindings={"a": 1, "b": 2, "c": 3})
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c"]})
+        assert result["ok"] is False
+        assert "collinear" in result["error"]
 
     def test_make_polygon_face_codegen(self):
         from salome_agent.codegen import generate
         geom_tools.reset_counters()
         geompy = MagicMock()
+        geompy.PointCoordinates.side_effect = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
                              geom_bindings={"a": 1, "b": 2, "c": 3})

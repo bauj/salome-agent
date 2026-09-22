@@ -110,7 +110,6 @@ def agent_client(running_server):
     yield client
     # Do NOT shutdown() -- the server is shared across the module. Just drop
     # the connection.
-    try:
-        client._sock.close()
-    except Exception:
-        pass
+    # close() drops the makefile too; closing only _sock leaves the fd open,
+    # the server never sees EOF and the next test's hello gets "busy".
+    client.close()
