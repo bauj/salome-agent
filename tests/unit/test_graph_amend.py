@@ -101,3 +101,56 @@ def test_llm_failure_mid_amend_keeps_the_edits_already_applied(tmp_path, monkeyp
     out = app.invoke(_state(tmp_path, _graph(), "make it taller"), config=cfg)
     assert out["fatal"].startswith("LLM endpoint error")
     assert out["build_graph"]["nodes"][0]["tool_args"]["dz"] == 3
+
+
+def _replan_seen(tmp_path, monkeypatch, history):
+    from salome_agent.specialists import amend as amend_mod
+    from salome_agent.nodes import planner as planner_mod
+
+    monkeypatch.setattr(amend_mod, "run_amend",
+                        lambda *a, **k: (amend_mod.AmendSession(a[1], a[3], a[4]),
+                                         {"replan": "start over"}))
+    seen = {}
+
+    def fake_plan(request, llm, detail="balanced"):
+        seen["request"] = request
+        raise RuntimeError("stop after planning")
+
+    monkeypatch.setattr(planner_mod, "plan", fake_plan)
+    state = _state(tmp_path, BuildGraph(), "retry", turn=2)
+    state["history"] = history
+    app = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    app.invoke(state, config=cfg)
+    return seen["request"]
+
+
+def test_replan_tells_the_planner_the_earlier_requests(tmp_path, monkeypatch):
+    request = _replan_seen(tmp_path, monkeypatch, [
+        {"event": "turn", "turn": 0, "text": "A small car with 4 torus wheels",
+         "status": "failed", "summary": None},
+        {"event": "graph_edit", "op": "edit"},
+        {"event": "turn", "turn": 1, "text": "make it red", "status": "ok", "summary": "red"}])
+    assert request.startswith("retry")
+    assert "A small car with 4 torus wheels" in request and "make it red" in request
+    assert request.index("A small car") < request.index("make it red")
+    assert "did not finish" in request
+
+
+def test_replan_without_earlier_turns_adds_no_request_list(tmp_path, monkeypatch):
+    assert "Earlier requests" not in _replan_seen(tmp_path, monkeypatch, [])
+
+
+def test_an_empty_plan_becomes_a_question_not_a_gate(tmp_path, monkeypatch):
+    from salome_agent.nodes import planner as planner_mod
+
+    monkeypatch.setattr(planner_mod, "plan", lambda request, llm, detail="balanced": [])
+    state = _state(tmp_path, BuildGraph(), "retry", turn=0)
+    app = build_graph(batch=False)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    out = app.invoke(state, config=cfg)
+    assert "__interrupt__" not in out
+    assert out["turn_outcome"]["question"]
+    assert out["plan"] == []
