@@ -205,3 +205,42 @@ def test_cancel_already_set_skips_the_llm():
                                          iteration_cap=5, cancel=cancel)
     assert llm.chat.call_count == 0
     assert result["exhausted"] is True
+
+
+def _in_place(recv):
+    return {"ok": True, "records": [{"fn": "SetColor", "args": [], "out_vars": [],
+                                     "publish": None, "emit": "method_call", "recv": recv}]}
+
+
+def _tool_messages(llm):
+    return [m["content"] for m in llm.chat.call_args.kwargs["messages"] if m["role"] == "tool"]
+
+
+def test_in_place_change_to_an_upstream_shape_is_flagged():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("done", {}))]
+    ToolSpecialist(_spec(execute=lambda c, n, a: _in_place("beam_1"))).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3, upstream=("beam_1",))
+    [content] = _tool_messages(llm)
+    assert "beam_1 was built in an earlier stage" in content
+
+
+def test_in_place_change_to_this_stages_own_shape_is_silent():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("done", {}))]
+    ToolSpecialist(_spec(execute=lambda c, n, a: _in_place("walls_1"))).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3, upstream=("beam_1",))
+    [content] = _tool_messages(llm)
+    assert "earlier stage" not in content
+
+
+def test_copy_that_reads_an_upstream_shape_is_silent():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("done", {}))]
+    copy = {"ok": True, "records": [{"fn": "MakeFuse",
+                                     "args": [{"kind": "ref", "value": "beam_1"}],
+                                     "out_vars": ["fuse_1"], "publish": ["fuse_1"]}]}
+    ToolSpecialist(_spec(execute=lambda c, n, a: copy)).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3, upstream=("beam_1",))
+    [content] = _tool_messages(llm)
+    assert "earlier stage" not in content

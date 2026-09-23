@@ -47,17 +47,17 @@ class ToolSpecialist:
 
     def run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
             tool_selection="hints", verify_cadence="final", retry=None,
-            seed_call_log=None, seed_calls=None, cancel=None) -> dict:
+            seed_call_log=None, seed_calls=None, cancel=None, upstream=()) -> dict:
         try:
             return self._run(stage_plan, llm, client, iteration_cap, blocks,
                              tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
-                             cancel)
+                             cancel, frozenset(upstream))
         except (SessionDied, SessionPoisoned) as e:
             return {"fatal": f"SALOME agent server unavailable: {e}"}
 
     def _run(self, stage_plan, llm, client, iteration_cap, blocks,
              tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
-             cancel) -> dict:
+             cancel, upstream) -> dict:
         spec = self.spec
         parts = [str(stage_plan)] + [b for b in blocks if b]
         if retry and spec.render_retry:
@@ -203,8 +203,11 @@ class ToolSpecialist:
                     batch_error = {"phase": "exec", "message": result["error"],
                                    "offending_line": None, "traceback": None}
                     log.debug("    tool %s failed: %s", name, result["error"])
+                content = spec.render_result(result)
+                if result["ok"]:
+                    content += _upstream_change_note(result.get("records"), upstream)
                 messages.append({"role": "tool", "tool_call_id": call_id,
-                                 "content": spec.render_result(result)})
+                                 "content": content})
             # A later ok call in the same batch must not mask an earlier failure —
             # settle last_error once per turn from the batch outcome.
             last_error = batch_error
@@ -234,6 +237,23 @@ class ToolSpecialist:
                     "their placement before continuing."})
                 risky_since_measure = 0
         return _with_calls(spec.on_exhausted(call_log, last_error), calls)
+
+
+def _upstream_change_note(records, upstream: frozenset) -> str:
+    """One sentence when a call changed an earlier stage's shape in place (a
+    record with a receiver and no new shape, e.g. set_color). Copies that only
+    read an upstream shape are the normal geom->geom handoff and stay silent.
+    Reported, never blocked: the prompt already says "don't", this lands at the
+    moment it happens (seen live: a beam from stage 1 painted with stage 3's
+    walls — task 216)."""
+    hit = sorted({r["recv"] for r in records or ()
+                  if not r.get("out_vars") and r.get("recv") in upstream})
+    if not hit:
+        return ""
+    names = ", ".join(hit)
+    log.info("  cross-stage change: %s", names)
+    return (f"\nnote: {names} was built in an earlier stage and you just changed it "
+            "in place — do that only if this stage's own task asks for it.")
 
 
 def _with_calls(result: dict, calls: list) -> dict:
