@@ -91,7 +91,8 @@ def _amend_node(state: dict, config: "RunnableConfig"):
         session, outcome = amend.run_amend(
             state["user_request"], graph, llm, client, turn,
             state["config"]["policy"], history=state.get("history") or [],
-            selection=state.get("selection"), session=session)
+            selection=state.get("selection"), session=session,
+            cancel=config["configurable"].get("cancel"))
     except RollbackFailed as e:
         log.error("  %s", e)
         return Command(update={"fatal": f"rollback failed: {e}", "degraded": True,
@@ -268,7 +269,8 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             stage_plan, llm, client, cap, blocks=tuple(blocks),
             tool_selection=policy.get("tool_selection", "hints"),
             verify_cadence=policy.get("verify_cadence", "final"),
-            retry=retry, seed_call_log=seed, seed_calls=seed_calls)
+            retry=retry, seed_call_log=seed, seed_calls=seed_calls,
+            cancel=config["configurable"].get("cancel"))
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:

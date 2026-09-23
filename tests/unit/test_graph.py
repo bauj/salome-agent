@@ -138,7 +138,7 @@ def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
 
     def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
                 tool_selection="hints", verify_cadence="final", retry=None,
-                seed_call_log=None, seed_calls=None):
+                seed_call_log=None, seed_calls=None, cancel=None):
         captured["blocks"] = blocks
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["walls_1"]}
@@ -271,7 +271,7 @@ def test_first_geom_stage_does_not_call_measure(monkeypatch):
 
     def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
                 tool_selection="hints", verify_cadence="final", retry=None,
-                seed_call_log=None, seed_calls=None):
+                seed_call_log=None, seed_calls=None, cancel=None):
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["box_1"]}
 
@@ -322,7 +322,7 @@ def test_run_stage_node_records_per_stage_timing(monkeypatch):
 
     def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
                 tool_selection="hints", verify_cadence="final", retry=None,
-                seed_call_log=None, seed_calls=None):
+                seed_call_log=None, seed_calls=None, cancel=None):
         llm.burn(calls=4, in_tok=12000, out_tok=1500, seconds=20.0)
         return {"call_log": [], "result_names": ["box_1"]}
 
@@ -344,7 +344,7 @@ def test_run_stage_node_timing_accumulates_across_a_retry(monkeypatch):
 
     def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
                 tool_selection="hints", verify_cadence="final", retry=None,
-                seed_call_log=None, seed_calls=None):
+                seed_call_log=None, seed_calls=None, cancel=None):
         llm.burn(calls=3, in_tok=5000, out_tok=600, seconds=10.0)
         return {"call_log": [], "result_names": ["box_1"]}
 
@@ -366,7 +366,7 @@ def test_run_stage_node_skips_timing_without_a_real_usage_dict(monkeypatch):
 
     def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
                 tool_selection="hints", verify_cadence="final", retry=None,
-                seed_call_log=None, seed_calls=None):
+                seed_call_log=None, seed_calls=None, cancel=None):
         return {"call_log": [], "result_names": ["box_1"]}
 
     monkeypatch.setattr(ToolSpecialist, "run", fake_run)
@@ -410,7 +410,7 @@ def test_run_stage_keeps_the_call_trace(monkeypatch):
 
     def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
                  tool_selection="hints", verify_cadence="final", retry=None,
-                 seed_call_log=None, seed_calls=None):
+                 seed_call_log=None, seed_calls=None, cancel=None):
         return {"call_log": [], "calls": calls, "result_names": ["box_1"]}
 
     monkeypatch.setattr(ToolSpecialist, "run", fake_run)
@@ -428,7 +428,7 @@ def test_retry_seeds_the_failed_attempts_calls(monkeypatch):
 
     def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
                  tool_selection="hints", verify_cadence="final", retry=None,
-                 seed_call_log=None, seed_calls=None):
+                 seed_call_log=None, seed_calls=None, cancel=None):
         seen["seed_calls"] = seed_calls
         return {"call_log": [], "calls": old, "result_names": ["box_1"]}
 

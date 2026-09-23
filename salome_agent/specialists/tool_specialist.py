@@ -47,15 +47,17 @@ class ToolSpecialist:
 
     def run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
             tool_selection="hints", verify_cadence="final", retry=None,
-            seed_call_log=None, seed_calls=None) -> dict:
+            seed_call_log=None, seed_calls=None, cancel=None) -> dict:
         try:
             return self._run(stage_plan, llm, client, iteration_cap, blocks,
-                             tool_selection, verify_cadence, retry, seed_call_log, seed_calls)
+                             tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
+                             cancel)
         except (SessionDied, SessionPoisoned) as e:
             return {"fatal": f"SALOME agent server unavailable: {e}"}
 
     def _run(self, stage_plan, llm, client, iteration_cap, blocks,
-             tool_selection, verify_cadence, retry, seed_call_log, seed_calls) -> dict:
+             tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
+             cancel) -> dict:
         spec = self.spec
         parts = [str(stage_plan)] + [b for b in blocks if b]
         if retry and spec.render_retry:
@@ -101,7 +103,18 @@ class ToolSpecialist:
             offered = initial_offered(stage_plan, set(all_defs))
         log.info("  %s stage: offered %d/%d tools (%s)", spec.name,
                  len(offered), len(all_defs), ", ".join(sorted(offered)))
+        # Cancel is checked here, not only between graph nodes (task 256): the
+        # stage ends like an exhausted one, carrying the calls already made, so
+        # the caller's rollback can undo them.
+        def cancelled() -> bool:
+            if cancel is not None and cancel.is_set():
+                log.info("  %s stage: cancelled", spec.name)
+                return True
+            return False
+
         for i in range(iteration_cap):
+            if cancelled():
+                return _with_calls(spec.on_exhausted(call_log, last_error), calls)
             log.debug("    %s iter %d/%d: asking LLM...", spec.name, i + 1, iteration_cap)
             tools = ([all_defs[n] for n in sorted(offered) if n in all_defs]
                      + [finish_def] + extra_defs
@@ -139,6 +152,8 @@ class ToolSpecialist:
             batch_error = None
             finish_call = None
             for k, c in enumerate(tool_calls):
+                if cancelled():
+                    return _with_calls(spec.on_exhausted(call_log, batch_error), calls)
                 name, args, call_id = c["name"], c["args"], c["id"]
                 if name in terms:
                     finish_call = (call_id, args, terms[name])

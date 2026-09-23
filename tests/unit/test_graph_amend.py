@@ -42,7 +42,7 @@ def test_amend_turn_rewrites_result_and_graph_json(tmp_path, monkeypatch):
     from salome_agent.specialists import amend as amend_mod
 
     def fake_run_amend(text, graph, llm, client, turn, policy, *, history=(), selection=None,
-                       session=None):
+                       session=None, cancel=None):
         session = amend_mod.AmendSession(graph, client, turn)
         session.graph = graph.copy()
         session.graph.nodes["n1"].tool_args["dz"] = 3
@@ -89,7 +89,7 @@ def test_llm_failure_mid_amend_keeps_the_edits_already_applied(tmp_path, monkeyp
     from salome_agent.specialists import amend as amend_mod
 
     def fake_run_amend(text, graph, llm, client, turn, policy, *, history=(), selection=None,
-                       session=None):
+                       session=None, cancel=None):
         session.graph = graph.copy()
         session.graph.nodes["n1"].tool_args["dz"] = 3
         raise RuntimeError("endpoint died")
