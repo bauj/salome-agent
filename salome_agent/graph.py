@@ -73,6 +73,16 @@ def _graph_upstream(state: dict) -> list[str]:
     return BuildGraph.from_dict(state["build_graph"]).result_names()
 
 
+def _earlier_requests(state: dict, last: int = 5) -> str:
+    """A follow-up such as "retry" means nothing to the planner on its own."""
+    turns = [h for h in state.get("history") or [] if h.get("event") == "turn"][-last:]
+    if not turns:
+        return ""
+    lines = [f"- {t.get('text', '')}" + ("" if t.get("status") == "ok" else " (did not finish)")
+             for t in turns]
+    return "\n\nEarlier requests in this conversation, oldest first:\n" + "\n".join(lines)
+
+
 def _amend_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
     from salome_agent.build_graph import BuildGraph
@@ -113,7 +123,7 @@ def _amend_node(state: dict, config: "RunnableConfig"):
         names = ", ".join(session.graph.result_names()) or "(nothing yet)"
         update["replan_context"] = (
             f"The study already contains: {names}. Build on those objects by name; "
-            f"do not rebuild them. ({outcome['replan']})")
+            f"do not rebuild them. ({outcome['replan']})" + _earlier_requests(state))
         log.info("  amend -> replan: %s", outcome["replan"])
         return Command(update=update, goto="plan")
     return Command(update=update, goto="assemble")
@@ -208,6 +218,12 @@ def _plan_node(state: dict, config: "RunnableConfig"):
         log.error("%s", msg)
         return Command(update={"fatal": msg}, goto="assemble")
     log.info("plan: %d stage(s)", len(stage_plans))
+    if not stage_plans:
+        question = ("I could not work out what to build from that. "
+                    "What should I make?")
+        return Command(update={"plan": [], "stages": {}, "stage_idx": 0,
+                               "turn_outcome": {"question": question, "summary": None}},
+                       goto="assemble")
     for i, p in enumerate(stage_plans):
         log.info("  stage %d/%d [%s] %s", i + 1, len(stage_plans), p["module"],
                  p.get("intent", ""))
