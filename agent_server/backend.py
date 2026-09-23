@@ -71,6 +71,34 @@ def display_names(namespace: dict, names: list, show) -> dict:
     return {"ok": True, "shown": shown}
 
 
+_AGENT_COMPONENTS = ("GEOM", "SMESH")
+
+
+def study_objects(namespace: dict) -> list:
+    study = namespace["salome"].myStudy
+    out = []
+    for comp_name in _AGENT_COMPONENTS:
+        comp = study.FindComponent(comp_name)
+        if comp is None:
+            continue
+        it = study.NewChildIterator(comp)
+        while it.More():
+            sobj = it.Value()
+            # a removed object leaves its label behind, emptied of attributes
+            if sobj.GetAllAttributes():
+                out.append(sobj)
+            it.Next()
+    return out
+
+
+def clear_study(namespace: dict) -> int:
+    objs = study_objects(namespace)
+    builder = namespace["salome"].myStudy.NewBuilder()
+    for sobj in objs:
+        builder.RemoveObjectWithChildren(sobj)
+    return len(objs)
+
+
 class Backend(Protocol):
     name_prefix: str
     namespace: dict
@@ -85,6 +113,8 @@ class Backend(Protocol):
     def forget(self, names: list) -> dict: ...
     def display(self, names: list) -> dict: ...
     def find_object(self, name: str): ...
+    def leftovers(self) -> int: ...
+    def clear_study(self) -> dict: ...
     def poisoned(self) -> bool: ...
 
 
@@ -103,6 +133,9 @@ class HeadlessBackend:
         self._poisoned = False
 
     def begin_session(self, run_id: str | None) -> None:
+        # The study outlives the run on a --serve-forever server, so name by
+        # run as GuiBackend does: forget-by-name must not reach another run's objects.
+        self.name_prefix = f"sa_{run_id}_" if run_id else ""
         geom.reset_counters()
         self.geom_bindings.clear()
         self.accepted_scripts = []
@@ -137,7 +170,17 @@ class HeadlessBackend:
         return {"ok": True, "shown": []}
 
     def find_object(self, name: str):
-        return self.namespace["find_object"](name)
+        fo = self.namespace["find_object"]
+        try:
+            return fo(self.name_prefix + name)
+        except LookupError:
+            return fo(name)
+
+    def leftovers(self) -> int:
+        return len(study_objects(self.namespace))
+
+    def clear_study(self) -> dict:
+        return {"ok": True, "removed": clear_study(self.namespace)}
 
     def poisoned(self) -> bool:
         return self._poisoned

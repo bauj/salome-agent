@@ -1,5 +1,6 @@
 import ast
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,29 +29,31 @@ def test_cube_and_mesh_produces_runnable_result(tmp_path, running_server):
         "work_dir": str(tmp_path),
     }))
 
+    # Headless names are per-run (sa_<run_id>_); pin the run id so the
+    # scripted model can name its box.
+    box = "sa_e2e000000000_box_1"
     fake_llm = MagicMock()
     fake_llm.usage = None  # real LLMClient exposes a usage dict; report.py reads it
     fake_llm.chat.side_effect = [
         {"stages": [
             {"module": "geom", "intent": "20mm cube", "params": {"size": 20}, "inputs": []},
-            {"module": "smesh", "intent": "mesh 5mm tets", "params": {"max_size": 5}, "inputs": ["box_1"]},
+            {"module": "smesh", "intent": "mesh 5mm tets", "params": {"max_size": 5}, "inputs": [box]},
         ]},
-        # geom specialist reads the tool_calls list (a turn may batch several);
-        # smesh/paravis still take the singular tool_call.
         {"tool_calls": [{"name": "make_box", "args": {"dx": 20, "dy": 20, "dz": 20}}]},
-        {"tool_calls": [{"name": "finish_stage", "args": {"result_names": ["box_1"]}}]},
-        {"tool_call": "emit_script", "args": {"code": (
+        {"tool_calls": [{"name": "finish_stage", "args": {"result_names": [box]}}]},
+        {"tool_calls": [{"name": "emit_script", "args": {"code": (
             # smesh.NETGEN_1D2D3D does not exist — the constant lives on
             # the smeshBuilder *module*, not the smeshBuilder.New() instance
             # bound to "smesh" (confirmed live).
             "from salome.smesh import smeshBuilder\n"
-            "shape = find_object('box_1')\n"
+            f"shape = find_object('{box}')\n"
             "m = smesh.Mesh(shape)\n"
             "m.Tetrahedron(algo=smeshBuilder.NETGEN_1D2D3D).SetMaxSize(5)\n"
             "m.Compute()\n"
-        )}},
+        )}}]},
     ]
-    with patch("salome_agent.cli.build_llm", return_value=fake_llm):
+    with patch("salome_agent.cli.build_llm", return_value=fake_llm), \
+            patch("uuid.uuid4", return_value=SimpleNamespace(hex="e2e000000000" * 3)):
         from salome_agent.cli import main
         rc = main(["make a 20mm cube and mesh it with 5mm tetrahedra", "--batch",
                    "--work-dir", str(tmp_path), "--config", str(config_path)])

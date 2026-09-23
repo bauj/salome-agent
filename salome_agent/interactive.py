@@ -99,3 +99,24 @@ def terminal_gate(payload, read=input, stream=sys.stderr, edit_fn=_edit_plan_in_
         log.warning("no input available - aborting run")
         return {"action": "abort"}
     raise RuntimeError(f"unknown interrupt payload: {payload}")
+
+
+def offer_fresh_study(client, read=input, stream=sys.stderr) -> bool:
+    """A headless server keeps its study across runs; offer to start clean."""
+    n = getattr(client, "leftovers", 0)
+    if client.mode != "headless" or not n:
+        return False
+    stream.write(f"\nThe headless study still holds {n} object(s) from earlier runs.\n")
+    stream.flush()
+    try:
+        ans = read("clear the study and start fresh? [y/N]: ").strip().lower()
+    except EOFError:
+        return False
+    if ans not in ("y", "yes"):
+        return False
+    r = client.clear_study()
+    if not r.get("ok"):
+        log.warning("could not clear the study: %s", r.get("error"))
+        return False
+    log.info("cleared %s object(s) from the study", r.get("removed"))
+    return True

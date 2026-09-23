@@ -106,7 +106,7 @@ def agent_client(running_server):
     from salome_agent.executor_client import ExecutorClient
 
     data = json.loads(open(_HS).read())
-    client = ExecutorClient(data["host"], data["port"], data["token"], "test")
+    client = ExecutorClient(data["host"], data["port"], data["token"], "")  # "" = unprefixed names
     yield client
     # Do NOT shutdown() -- the server is shared across the module. Just drop
     # the connection.

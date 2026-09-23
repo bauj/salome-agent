@@ -121,3 +121,39 @@ def test_terminal_gate_unknown_payload_raises():
         terminal_gate({"other": 1}, read=_reader([]), stream=io.StringIO())
 
 
+
+
+class _Client:
+    def __init__(self, mode="headless", leftovers=3):
+        self.mode, self.leftovers, self.cleared = mode, leftovers, 0
+
+    def clear_study(self):
+        self.cleared += 1
+        return {"ok": True, "removed": self.leftovers}
+
+
+def test_offer_fresh_study_clears_on_yes():
+    c = _Client()
+    assert interactive.offer_fresh_study(c, read=lambda _: "y", stream=io.StringIO()) is True
+    assert c.cleared == 1
+
+
+def test_offer_fresh_study_keeps_on_default():
+    c = _Client()
+    assert interactive.offer_fresh_study(c, read=lambda _: "", stream=io.StringIO()) is False
+    assert c.cleared == 0
+
+
+def test_offer_fresh_study_does_not_ask_without_leftovers_or_in_gui():
+    def boom(_):
+        raise AssertionError("asked")
+    for c in (_Client(leftovers=0), _Client(mode="gui")):
+        assert interactive.offer_fresh_study(c, read=boom, stream=io.StringIO()) is False
+        assert c.cleared == 0
+
+
+def test_offer_fresh_study_eof_keeps():
+    def eof(_):
+        raise EOFError
+    c = _Client()
+    assert interactive.offer_fresh_study(c, read=eof, stream=io.StringIO()) is False

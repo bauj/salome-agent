@@ -22,7 +22,8 @@ class Core:
         if cmd == "hello":
             b.begin_session(req.get("run_id"))
             return {"id": rid, "ready": True, "proto": handshake.PROTO,
-                    "mode": b.mode, "name_prefix": b.name_prefix}
+                    "mode": b.mode, "name_prefix": b.name_prefix,
+                    "leftovers": b.leftovers()}
         if cmd == "run":
             r = b.run_code(req["code"], req["timeout"], req.get("module"))
             if r["ok"]:
@@ -56,6 +57,10 @@ class Core:
             return {"id": rid, **r}
         if cmd == "forget":
             r = b.forget(req["names"])
+            b.refresh("GEOM")
+            return {"id": rid, **r}
+        if cmd == "clear_study":
+            r = b.clear_study()
             b.refresh("GEOM")
             return {"id": rid, **r}
         if cmd == "display":
