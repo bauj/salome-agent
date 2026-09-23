@@ -104,7 +104,9 @@ class Conversation:
         outcome = final.get("turn_outcome") or {}
         self.history.append({"event": "turn", "turn": n, "text": text,
                              "status": result.status, "summary": outcome.get("summary")})
-        self._event(on_event, "turn_done", turn=n, status=result.status, message=result.message)
+        usage = getattr(self.llm, "usage", None)
+        self._event(on_event, "turn_done", turn=n, status=result.status, message=result.message,
+                    usage=dict(usage) if usage else None)
         return result
 
     def _viewer(self, action: str, names: list) -> None:

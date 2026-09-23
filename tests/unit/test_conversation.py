@@ -273,3 +273,16 @@ def test_a_failing_stage_display_does_not_fail_the_turn(conv, monkeypatch):
     _drive_with_stages(monkeypatch, {"build_graph": _graph_with(1).to_dict()},
                        [["box_1", "tool_1"]])
     assert conv.turn("x", on_event=lambda e: None, on_gate=None).status == "ok"
+
+
+def test_turn_done_carries_the_usage_totals_even_when_cancelled(conv, monkeypatch):
+    conv.llm.usage = {"calls": 7, "prompt_tokens": 900}
+    _fake_drive(monkeypatch, {"aborted": True})
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    events = []
+    conv.turn("x", on_event=events.append, on_gate=None)
+    done = [e for e in events if e["kind"] == "turn_done"][-1]
+    assert done["data"]["status"] == "failed"
+    assert done["data"]["usage"] == {"calls": 7, "prompt_tokens": 900}
+    conv.llm.usage["calls"] = 99
+    assert done["data"]["usage"]["calls"] == 7          # a snapshot, not the live counter
