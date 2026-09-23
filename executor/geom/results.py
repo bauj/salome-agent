@@ -149,10 +149,12 @@ def _delta_note(executor, name: str, args: dict, result: dict) -> str | None:
         if src_v and src_v > 0 and _reldiff(out_v, src_v) > 0.01:
             return (f"{name}: volume changed {src_v:.4g} -> {out_v:.4g} under a "
                     "rigid move, which should not happen")
+        # Whole bbox, not just the centre: a rotation about an axis through the
+        # centre keeps the centre but turns the box (torus 28x28x8 -> 28x8x28).
         si = _shape_info(geompy, src)
         oi = result.get("shape_info")
-        if si and oi and all(abs(oi["centre"][k] - si["centre"][k]) < 1e-6
-                             for k in range(3)):
+        if si and oi and len(oi["bbox"]) == 6 and all(
+                abs(oi["bbox"][k] - si["bbox"][k]) < 1e-6 for k in range(6)):
             return (f"{name}: the new shape sits exactly where the source is — "
                     "the move had no effect")
         return None
