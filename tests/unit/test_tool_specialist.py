@@ -172,3 +172,36 @@ def test_extra_terminator_ends_the_loop_with_its_own_handle():
     assert result == {"bailed": "big"}
     names = [t["name"] for t in llm.chat.call_args.kwargs["tools"]]
     assert names == ["work", "done", "bail"]
+
+
+def test_cancel_stops_the_loop_before_the_next_tool_call():
+    import threading
+    cancel = threading.Event()
+    seen = []
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1}), ("work", {"a": 2})), _resp(("done", {}))]
+
+    def execute(client, name, args):
+        seen.append(args["a"])
+        cancel.set()
+        return {"ok": True, "records": [{"fn": "F", "args": [], "out_vars": ["v"], "publish": ["v"]}]}
+
+    spec = _spec(execute=execute,
+                 on_exhausted=lambda call_log, last_error: {"call_log": call_log})
+    result = ToolSpecialist(spec).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=5, cancel=cancel)
+    assert seen == [1]
+    assert llm.chat.call_count == 1
+    assert len(result["call_log"]) == 1
+    assert [c["tool_args"] for c in result["calls"]] == [{"a": 1}]
+
+
+def test_cancel_already_set_skips_the_llm():
+    import threading
+    cancel = threading.Event()
+    cancel.set()
+    llm = MagicMock()
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(),
+                                         iteration_cap=5, cancel=cancel)
+    assert llm.chat.call_count == 0
+    assert result["exhausted"] is True

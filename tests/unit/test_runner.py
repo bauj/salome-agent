@@ -191,6 +191,30 @@ def test_cancel_before_the_gate_answers_ends_aborted_without_resuming(tmp_path, 
     assert llm.chat.call_count == 1          # planner only, no specialist turn
 
 
+def test_cancel_during_a_stage_stops_its_tool_loop(tmp_path, monkeypatch):
+    cancel = threading.Event()
+    llm = MagicMock()
+    llm.usage = None
+
+    def chat(**kw):
+        if llm.chat.call_count == 1:
+            return ONE_STAGE
+        cancel.set()
+        return {"tool_calls": [{"name": "make_box", "args": {"dx": 1}, "id": None}],
+                "content": None, "raw_message": None}
+
+    llm.chat.side_effect = chat
+    _fake_llm(monkeypatch, llm)
+    client = MagicMock(mode="headless", name_prefix="")
+    client.list_tools.return_value = {"tools": []}
+    res = run_request("x", _config(tmp_path), client=client, on_event=lambda e: None,
+                      on_gate=lambda p: {"action": "approve"}, batch=True,
+                      cancel=cancel, run_id="r1")
+    assert res.final_state["aborted"] is True
+    assert llm.chat.call_count == 2          # planner + one specialist turn
+    client.call_tool.assert_not_called()
+
+
 def test_run_dir_is_absolute_even_with_a_relative_work_dir(tmp_path, monkeypatch):
     llm = MagicMock()
     llm.chat.return_value = ONE_STAGE

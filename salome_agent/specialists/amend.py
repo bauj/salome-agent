@@ -188,7 +188,7 @@ def _spec(session: AmendSession) -> ModuleSpec:
 
 
 def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
-              history=(), selection=None, session=None):
+              history=(), selection=None, session=None, cancel=None):
     session = session or AmendSession(graph, client, turn)
     blocks = ["Build graph:\n" + graph.render()]
     snap = _snapshot(client, graph)
@@ -205,5 +205,5 @@ def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
     outcome = ToolSpecialist(_spec(session)).run(
         stage_plan, llm, client, policy["tool_iteration_cap"], blocks=tuple(blocks),
         tool_selection=policy.get("tool_selection", "hints"),
-        verify_cadence=policy.get("verify_cadence", "final"))
+        verify_cadence=policy.get("verify_cadence", "final"), cancel=cancel)
     return session, outcome

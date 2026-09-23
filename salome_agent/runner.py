@@ -117,6 +117,9 @@ def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
     def cancelled() -> bool:
         return cancel is not None and cancel.is_set()
 
+    # nodes read it too, so a long tool loop stops mid-node (task 256)
+    cfg = {**cfg, "configurable": {**cfg["configurable"], "cancel": cancel}}
+
     stopped = False
     while True:
         pending = None
