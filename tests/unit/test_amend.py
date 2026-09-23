@@ -120,3 +120,10 @@ def test_render_transcript_keeps_the_last_ten_turns():
             for i in range(15)] + [{"event": "retry_hint", "hint": "x"}]
     text = render_transcript(hist)
     assert "t4" not in text and "t5" in text and "t14" in text
+
+
+def test_amend_prompt_only_deletes_on_request_and_adds_new_objects_alongside():
+    from salome_agent.specialists.amend import AMEND_SYSTEM_PROMPT as p
+    assert "Never call delete_node unless the user asked to remove or replace" in p
+    assert "added alongside" in p
+    assert "add or replace" in p
