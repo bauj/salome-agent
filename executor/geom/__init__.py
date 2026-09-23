@@ -4,6 +4,7 @@ from executor.geom.helpers import (  # noqa: F401
     _pinned, _publish, _resolve, _resolve_axis, _resolve_plane, _resolve_point,
     registry, reset_counters,
 )
+from executor.geom.hints import key_error_message, with_hint
 from executor.geom.results import (  # noqa: F401
     _attach_shape_info, _delta_note, _select_subshapes,
 )
@@ -77,8 +78,12 @@ def call_tool(executor, name: str, args: dict, pin: list | None = None) -> dict:
                 note = None
             if note:
                 result["delta"] = note
+        if not result.get("ok") and result.get("error"):
+            result["error"] = with_hint(result["error"])
         return result
+    except KeyError as e:
+        return {"ok": False, "error": key_error_message(executor, name, args, e.args[0])}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": with_hint(str(e))}
     finally:
         _pinned.clear()

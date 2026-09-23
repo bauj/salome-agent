@@ -803,6 +803,7 @@ class TestComplexObjectTools:
         geompy = MagicMock()
         thick = MagicMock()
         geompy.MakeThickSolid.return_value = thick
+        geompy.SubShapeAllIDs.return_value = [3, 13, 23]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(
             name_prefix="sa_",
@@ -829,6 +830,7 @@ class TestComplexObjectTools:
         geompy = MagicMock()
         thick = MagicMock()
         geompy.MakeThickSolid.return_value = thick
+        geompy.SubShapeAllIDs.return_value = [3, 13, 23]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(
             name_prefix="sa_",
@@ -1334,6 +1336,7 @@ class TestLocalOpsTools:
         shape = MagicMock()
         filleted = MagicMock()
         geompy.MakeFillet.return_value = filleted
+        geompy.SubShapeAllIDs.return_value = [1, 3, 5, 7]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(
             name_prefix="sa_",
@@ -1379,6 +1382,7 @@ class TestLocalOpsTools:
     def _fillet_executor(self):
         geompy = MagicMock()
         geompy.MakeFillet.return_value = MagicMock()
+        geompy.SubShapeAllIDs.return_value = [2, 3, 4, 6]
         geompy.CheckShape.return_value = (True, "")
         return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
                                geom_bindings={"shape": MagicMock()})
@@ -1415,7 +1419,7 @@ class TestLocalOpsTools:
             "MakeFilletEdges : Fillet can't be computed on the given shape with the given radius")
         result = geom_tools.tool_fillet_edges(ex, {"shape": "shape", "radius": 999.0, "edges": "all"})
         assert result["ok"] is False
-        assert "smaller radius" in result["error"]
+        assert "radius below" in result["error"]
 
     def test_chamfer_edges_wraps_a_geompy_failure(self):
         geompy = MagicMock()
@@ -1433,6 +1437,7 @@ class TestLocalOpsTools:
         shape = MagicMock()
         chamfered = MagicMock()
         geompy.MakeChamferEdges.return_value = chamfered
+        geompy.SubShapeAllIDs.return_value = [1, 2]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(
             name_prefix="sa_",
@@ -1965,3 +1970,80 @@ def test_every_registered_geom_tool_is_complete():
         assert registry.schemas()[name].get("type") == "object", f"bad schema for {name}"
         assert name in registry.arg_types(), f"no arg_types entry for {name}"
         assert registry.categories()[name] in _VALID_CATEGORIES, f"bad category for {name}"
+
+
+class TestRecoveryHints:
+    """Task 218: failures carry what to do next, not just OCC's message."""
+
+    def _executor(self, **bindings):
+        geompy = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                               geom_bindings=bindings or {"shape": MagicMock()})
+
+    def test_guessed_face_id_is_rejected_with_the_real_ids(self):
+        ex = self._executor()
+        ex.namespace["geompy"].SubShapeAllIDs.return_value = [3, 13, 23]
+        result = geom_tools.call_tool(ex, "make_thick_solid",
+                                      {"shape": "shape", "thickness": 3, "faces": [0]})
+        assert result["ok"] is False
+        assert "[0] are not face ids of shape" in result["error"]
+        assert "[3, 13, 23]" in result["error"]
+        ex.namespace["geompy"].MakeThickSolid.assert_not_called()
+
+    def test_guessed_edge_id_is_rejected_before_occ(self):
+        ex = self._executor()
+        ex.namespace["geompy"].SubShapeAllIDs.return_value = [5, 7]
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 1, "edges": [0, 1]})
+        assert "[0, 1] are not edge ids of shape" in result["error"]
+        ex.namespace["geompy"].MakeFillet.assert_not_called()
+
+    def test_fillet_radius_failure_gives_a_measured_ceiling(self):
+        ex = self._executor()
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [5, 7]
+        geompy.MakeFillet.side_effect = RuntimeError(
+            "MakeFilletEdges : Fillet can't be computed on the given shape with the given radius")
+        geompy.GetSubShape.side_effect = lambda s, ids: ids[0]
+        geompy.BasicProperties.side_effect = lambda e: {5: (10.0, 0, 0), 7: (4.0, 0, 0)}[e]
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 5, "edges": [5, 7]})
+        assert "shortest selected edge is 4 mm" in result["error"]
+        assert "radius below 2" in result["error"]
+
+    def test_known_occ_message_gets_a_hint(self):
+        ex = self._executor()
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [3]
+        geompy.MakeThickSolid.side_effect = RuntimeError("MakeThickSolid : Offset driver failed")
+        geompy.GetSubShape.side_effect = lambda s, ids: ids[0]
+        geompy.KindOfShape.side_effect = lambda f: ["POLYGON"]
+        result = geom_tools.call_tool(ex, "make_thick_solid",
+                                      {"shape": "shape", "thickness": 30, "faces": [3]})
+        assert result["error"].startswith("MakeThickSolid : Offset driver failed — hint:")
+        assert "open a flat face" in result["error"]
+
+    def test_opening_a_curved_face_names_the_flat_ones(self):
+        ex = self._executor()
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [3, 10, 12]
+        geompy.MakeThickSolid.side_effect = RuntimeError("MakeThickSolid : Offset driver failed")
+        geompy.GetSubShape.side_effect = lambda s, ids: ids[0]
+        geompy.KindOfShape.side_effect = lambda f: [{3: "CONE2D"}.get(f, "DISK_CIRCLE")]
+        result = geom_tools.call_tool(ex, "make_thick_solid",
+                                      {"shape": "shape", "thickness": 3, "faces": [3]})
+        assert result["error"] == ("MakeThickSolid : Offset driver failed — hint: face [3] is "
+                                   "curved; the open face must be flat, e.g. one of [10, 12]")
+
+    def test_unknown_object_name_suggests_close_ones(self):
+        ex = self._executor(sa_x_cut_2=MagicMock(), sa_x_box_1=MagicMock())
+        result = geom_tools.call_tool(ex, "fuse", {"shapes": ["sa_x_cut_1", "sa_x_box_1"]})
+        assert result["ok"] is False
+        assert "no object named 'sa_x_cut_1'" in result["error"]
+        assert "did you mean sa_x_cut_2" in result["error"]
+
+    def test_missing_argument_is_named(self):
+        ex = self._executor()
+        result = geom_tools.call_tool(ex, "make_thick_solid", {"shape": "shape", "thickness": 3})
+        assert result["error"] == "make_thick_solid: missing argument 'faces'"

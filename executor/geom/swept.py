@@ -1,6 +1,6 @@
 import math
 
-from executor.geom.helpers import tool, _next_name, _publish, _resolve_axis
+from executor.geom.helpers import tool, _check_sub_ids, _next_name, _publish, _resolve_axis
 
 
 @tool("make_prism", category="swept",
@@ -89,6 +89,32 @@ def tool_make_pipe(executor, args: dict):
     }
 
 
+_FLAT_FACE_KINDS = {"PLANE", "PLANAR", "POLYGON", "DISK_CIRCLE", "DISK_ELLIPSE"}
+
+
+def _face_kind(geompy, shape, fid) -> str | None:
+    try:
+        return str(geompy.KindOfShape(geompy.GetSubShape(shape, [fid]))[0])
+    except Exception:  # noqa: BLE001 — best-effort hint only
+        return None
+
+
+def _curved_open_face_note(geompy, shape, faces) -> str:
+    """Opening a curved face (a cylinder's or cone's side) is what makes
+    MakeThickSolid fail with "Offset driver failed" at any thickness — checked
+    live. Name the curved ones and the flat faces to open instead."""
+    curved = [f for f in faces if (k := _face_kind(geompy, shape, f)) and k not in _FLAT_FACE_KINDS]
+    if not curved:
+        return ""
+    try:
+        flat = [f for f in geompy.SubShapeAllIDs(shape, geompy.ShapeType["FACE"])
+                if _face_kind(geompy, shape, f) in _FLAT_FACE_KINDS]
+    except Exception:  # noqa: BLE001
+        flat = []
+    note = f" — hint: face {curved} is curved; the open face must be flat"
+    return note + (f", e.g. one of {flat}" if flat else "")
+
+
 @tool("make_thick_solid", category="swept",
       description='Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened).',
       schema={"type": "object", "properties": {"shape": {"type": "string", "description": "shape to thicken"}, "thickness": {"type": "number"}, "faces": {"type": "array", "items": {"type": "integer"}, "description": "face subshape IDs to remove (open) -- required; a closed solid cannot be thickened without at least one"}, "inside": {"type": "boolean", "default": False}}, "required": ["shape", "thickness", "faces"]},
@@ -102,7 +128,14 @@ def tool_make_thick_solid(executor, args: dict):
     # required. Callers pass explicit face subshape IDs (nicer selection
     # comes with task 176b).
     faces = args["faces"]
-    thick = geompy.MakeThickSolid(shape, args["thickness"], faces, inside)
+    try:
+        _check_sub_ids("make_thick_solid", geompy, shape, args["shape"], faces, "FACE")
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    try:
+        thick = geompy.MakeThickSolid(shape, args["thickness"], faces, inside)
+    except Exception as e:  # noqa: BLE001 — OCC names the algorithm, not the fix
+        return {"ok": False, "error": f"{e}{_curved_open_face_note(geompy, shape, faces)}"}
     is_valid, msg = geompy.CheckShape(thick, True, 1)
     if not is_valid:
         return {"ok": False, "error": f"make_thick_solid: CheckShape failed ({msg})"}

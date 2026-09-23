@@ -1,4 +1,4 @@
-from executor.geom.helpers import tool, _next_name, _publish
+from executor.geom.helpers import tool, _check_sub_ids, _next_name, _publish
 from executor.geom.results import _select_subshapes
 
 
@@ -37,7 +37,21 @@ def _edge_ids_for(tool: str, executor, args: dict, shape):
         except ValueError as e:
             raise ValueError(f"{tool}: {e}")
         return [i for i, _ in selected]
-    return _normalise_edge_ids(tool, args.get("edges"), shape, geompy)
+    ids = _normalise_edge_ids(tool, args.get("edges"), shape, geompy)
+    if args.get("edges") != "all":
+        _check_sub_ids(tool, geompy, shape, args["shape"], ids, "EDGE")
+    return ids
+
+
+def _shortest_edge(geompy, shape, ids) -> float | None:
+    """Length of the shortest of the given edges, measured — never found by
+    trying fillet radii: a pathological MakeFillet hangs OCC and wedges the
+    server instead of raising."""
+    try:
+        return min(float(geompy.BasicProperties(geompy.GetSubShape(shape, [i]))[0])
+                   for i in ids)
+    except Exception:  # noqa: BLE001 — best-effort hint only
+        return None
 
 
 @tool("fillet_edges", category="feature",
@@ -56,8 +70,13 @@ def tool_fillet_edges(executor, args: dict):
     try:
         filleted = geompy.MakeFillet(shape, args["radius"], edge_type, edge_ids)
     except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
-        return {"ok": False, "error": f"fillet_edges: MakeFillet failed ({e}); "
-                f"try a smaller radius or check the edge ids"}
+        shortest = _shortest_edge(geompy, shape, edge_ids) if "radius" in str(e) else None
+        if shortest:
+            advice = (f"the radius is too large — the shortest selected edge is "
+                      f"{shortest:.4g} mm, so try a radius below {shortest / 2:.4g}")
+        else:
+            advice = "try a smaller radius or check the edge ids"
+        return {"ok": False, "error": f"fillet_edges: MakeFillet failed ({e}); {advice}"}
     # theReturnStatus=1 -> (isValid, description); the default (0) returns
     # a bare bool, which broke unpacking here until caught in testing.
     is_valid, msg = geompy.CheckShape(filleted, True, 1)
