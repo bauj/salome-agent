@@ -222,3 +222,54 @@ def test_ok_turn_does_not_forget_stage_objects(conv, monkeypatch):
                               "stages": _stage_calls("box_1", status="ok")})
     conv.turn("one", on_event=lambda e: None, on_gate=None)
     conv.client.forget.assert_not_called()
+
+
+def _drive_with_stages(monkeypatch, final_update, stages):
+    """stages: list of name lists, each sent as a stage_done event."""
+    def fake(app, inp, cfg, mapper, llm, on_event, on_gate, cancel):
+        for i, names in enumerate(stages):
+            on_event({"kind": "stage_done", "run_id": "r1", "data": {"index": i, "names": names}})
+        return {**inp, **final_update}
+    monkeypatch.setattr(conv_mod, "drive", fake)
+
+
+def test_each_finished_stage_is_shown_in_the_viewer_at_once(conv, monkeypatch):
+    monkeypatch.setattr(conv_mod, "show_results", lambda client, g: None)
+    order = []
+    conv.client.display.side_effect = lambda names: order.append(("display", names))
+    events = []
+
+    def on_event(e):
+        events.append(e)
+        order.append(("event", e["kind"]))
+
+    _drive_with_stages(monkeypatch, {"build_graph": _graph_with(2).to_dict()},
+                       [["box_1"], [], ["box_2"]])
+    conv.turn("two boxes", on_event=on_event, on_gate=None)
+    assert [o for o in order if o[0] == "display"] == [("display", ["box_1"]),
+                                                        ("display", ["box_2"])]
+    assert order.index(("display", ["box_1"])) < order.index(("event", "turn_done"))
+
+
+def test_stage_objects_that_are_not_results_are_hidden_at_turn_end(conv, monkeypatch):
+    monkeypatch.setattr(conv_mod, "show_results", lambda client, g: None)
+    _drive_with_stages(monkeypatch, {"build_graph": _graph_with(1).to_dict()},
+                       [["box_1", "tool_1"], ["cut_1"]])
+    conv.turn("x", on_event=lambda e: None, on_gate=None)
+    conv.client.hide.assert_called_once_with(["tool_1", "cut_1"])
+
+
+def test_nothing_to_hide_sends_no_hide(conv, monkeypatch):
+    monkeypatch.setattr(conv_mod, "show_results", lambda client, g: None)
+    _drive_with_stages(monkeypatch, {"build_graph": _graph_with(1).to_dict()}, [["box_1"]])
+    conv.turn("x", on_event=lambda e: None, on_gate=None)
+    conv.client.hide.assert_not_called()
+
+
+def test_a_failing_stage_display_does_not_fail_the_turn(conv, monkeypatch):
+    monkeypatch.setattr(conv_mod, "show_results", lambda client, g: None)
+    conv.client.display.side_effect = RuntimeError("viewer gone")
+    conv.client.hide.side_effect = RuntimeError("viewer gone")
+    _drive_with_stages(monkeypatch, {"build_graph": _graph_with(1).to_dict()},
+                       [["box_1", "tool_1"]])
+    assert conv.turn("x", on_event=lambda e: None, on_gate=None).status == "ok"

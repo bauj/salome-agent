@@ -6,6 +6,7 @@ from salome_agent.build_graph import BuildGraph
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.replay import ReplayFailed, _forget, rebuild_all, sync
 from salome_agent.runner import EventMapper, drive, initial_state, show_results
+from salome_agent.logs import log
 
 
 def _stage_vars(final: dict, *graphs: BuildGraph) -> list[str]:
@@ -81,16 +82,39 @@ class Conversation:
                    history=list(self.history))
         cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": self.llm,
                                 "executor_client": self.client}}
+        shown: list[str] = []
+
+        def on_stage_event(ev: dict) -> None:
+            on_event(ev)
+            names = (ev.get("data") or {}).get("names") if ev.get("kind") == "stage_done" else None
+            if names:
+                shown.extend(names)
+                self._viewer("display", names)
+
         final = drive(build_graph(batch=self.batch), inp, cfg,
-                      EventMapper(self.run_id, self.run_dir), self.llm, on_event, on_gate, cancel)
+                      EventMapper(self.run_id, self.run_dir), self.llm, on_stage_event, on_gate,
+                      cancel)
         result = self._settle(final, before)
         if not self.ended:
+            results = set(self.graph.result_names())
+            consumed = [n for n in shown if n not in results]
+            if consumed:
+                self._viewer("hide", consumed)
             show_results(self.client, self.graph.to_dict())
         outcome = final.get("turn_outcome") or {}
         self.history.append({"event": "turn", "turn": n, "text": text,
                              "status": result.status, "summary": outcome.get("summary")})
         self._event(on_event, "turn_done", turn=n, status=result.status, message=result.message)
         return result
+
+    def _viewer(self, action: str, names: list) -> None:
+        """Best-effort: a viewer problem must never fail a turn."""
+        if self.client is None:
+            return
+        try:
+            getattr(self.client, action)(names)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not %s %s in the viewer: %s", action, names, e)
 
     def _settle(self, final: dict, before: BuildGraph) -> TurnResult:
         after = BuildGraph.from_dict(final.get("build_graph")) if final.get("build_graph") else before

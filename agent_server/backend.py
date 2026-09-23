@@ -71,6 +71,17 @@ def display_names(namespace: dict, names: list, show) -> dict:
     return {"ok": True, "shown": shown}
 
 
+def hide_names(namespace: dict, names: list, erase) -> dict:
+    """Takes objects out of the viewer; they stay in the study."""
+    study = namespace["salome"].myStudy
+    hidden = []
+    for name in names:
+        for sobj in study.FindObjectByName(name, "GEOM"):
+            erase(sobj.GetID())
+            hidden.append(name)
+    return {"ok": True, "hidden": hidden}
+
+
 _AGENT_COMPONENTS = ("GEOM", "SMESH")
 
 
@@ -112,6 +123,7 @@ class Backend(Protocol):
     def refresh(self, module: str | None) -> None: ...
     def forget(self, names: list) -> dict: ...
     def display(self, names: list) -> dict: ...
+    def hide(self, names: list) -> dict: ...
     def find_object(self, name: str): ...
     def leftovers(self) -> int: ...
     def clear_study(self) -> dict: ...
@@ -168,6 +180,9 @@ class HeadlessBackend:
 
     def display(self, names: list) -> dict:
         return {"ok": True, "shown": []}
+
+    def hide(self, names: list) -> dict:
+        return {"ok": True, "hidden": []}
 
     def find_object(self, name: str):
         fo = self.namespace["find_object"]
