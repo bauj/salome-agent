@@ -41,7 +41,7 @@ class TestToolDescriptions:
 class TestMeasureTool:
     def _executor(self, bbox_by_shape):
         geompy = MagicMock()
-        geompy.BoundingBox.side_effect = lambda s: bbox_by_shape[s]
+        geompy.BoundingBox.side_effect = lambda s, *_: bbox_by_shape[s]
         return SimpleNamespace(namespace={"geompy": geompy},
                                geom_bindings={n: n for n in bbox_by_shape})
 
@@ -1291,7 +1291,7 @@ class TestLocalOpsTools:
         geompy.ShapeType = {"EDGE": 6}
         geompy.SubShapeAllSortedCentres.return_value = ["a", "b", "c"]
         geompy.SubShapeAllSortedCentresIDs.return_value = [10, 11, 12]
-        geompy.BoundingBox.side_effect = lambda s: {
+        geompy.BoundingBox.side_effect = lambda s, *_: {
             "a": [0, 0, 0, 0, 0, 0], "b": [0, 0, 0, 0, 9, 9],
             "c": [0, 0, 0, 0, 5, 5]}[s]
         geompy.MakeFillet.return_value = MagicMock()
@@ -1575,6 +1575,19 @@ class TestShapeInfoFeedback:
             "centre": [5.0, 10.0, 6.5],
         }
 
+    def test_shape_info_asks_for_the_precise_bounding_box(self):
+        # The default box encloses a fillet's control poles: seen live, a
+        # filleted 40-radius cone measured +-42.73 (precise: +-39.48).
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeBoxDXDYDZ.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        geompy.BoundingBox.return_value = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0]
+
+        geom_tools.call_tool(self._ex(geompy), "make_box", {"dx": 1, "dy": 1, "dz": 1})
+
+        assert all(c.args[1:] == (True,) for c in geompy.BoundingBox.call_args_list)
+
     def test_no_shape_info_for_display_tools(self, monkeypatch):
         geom_tools.reset_counters()
         geompy = MagicMock()
@@ -1656,7 +1669,7 @@ class TestGetSubshapesQuery:
         geompy.ShapeType = {"EDGE": 6, "FACE": 4}
         geompy.SubShapeAllSortedCentres.return_value = subs
         geompy.SubShapeAllSortedCentresIDs.return_value = ids
-        geompy.BoundingBox.side_effect = lambda s: bboxes[s]
+        geompy.BoundingBox.side_effect = lambda s, *_: bboxes[s]
         if props is not None:
             geompy.BasicProperties.side_effect = lambda s: props[s]
         return SimpleNamespace(namespace={"geompy": geompy},
@@ -1746,7 +1759,7 @@ class TestAlignTool:
     def _executor(self, bbox_by_shape):
         geompy = MagicMock()
         objs = {n: f"<{n}>" for n in bbox_by_shape}
-        geompy.BoundingBox.side_effect = lambda s: bbox_by_shape[
+        geompy.BoundingBox.side_effect = lambda s, *_: bbox_by_shape[
             next(n for n, o in objs.items() if o == s)]
         geompy.MakeTranslation.return_value = "<moved>"
         geompy.CheckShape.return_value = (True, "")
@@ -1825,7 +1838,7 @@ class TestDeltaNote:
 
     def _bboxes(self, geompy, mapping):
         # mapping: shape -> [xmin, xmax, ymin, ymax, zmin, zmax]
-        geompy.BoundingBox.side_effect = lambda s: mapping[s]
+        geompy.BoundingBox.side_effect = lambda s, *_: mapping[s]
 
     def test_fuse_of_bbox_disjoint_parts_is_flagged(self):
         geompy = MagicMock()
