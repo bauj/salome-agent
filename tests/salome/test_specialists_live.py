@@ -53,7 +53,7 @@ def client():
         pytest.skip("set SALOME_ROOT or salome.root in config.json")
     proc = _start_server(_repo_root())
     data = json.loads(open(_HS).read())
-    conn = ExecutorClient(data["host"], data["port"], data["token"], "test")
+    conn = ExecutorClient(data["host"], data["port"], data["token"], "")  # "" = unprefixed names
     try:
         yield conn
     finally:

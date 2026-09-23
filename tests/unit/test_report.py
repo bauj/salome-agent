@@ -19,8 +19,9 @@ def test_report_renders_fatal():
 
 
 def test_report_headless_line():
-    out = write_report(_state(session={"mode": "headless"}))
-    assert "isolated study" in out
+    out = write_report(_state(session={"mode": "headless", "name_prefix": "sa_r1_"}))
+    assert "isolated study" not in out
+    assert "`sa_r1_`" in out
 
 
 def test_report_includes_llm_usage():

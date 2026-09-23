@@ -165,5 +165,12 @@ class GuiBackend:
                 return fo(name)
         return self._invoker.run_on_main(_do, timeout=30)
 
+    def leftovers(self):
+        # the live study is the user's own; never offer to wipe it
+        return 0
+
+    def clear_study(self):
+        return {"ok": False, "error": "will not clear a live GUI study"}
+
     def poisoned(self):
         return self._poisoned

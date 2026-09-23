@@ -34,6 +34,7 @@ class ExecutorClient:
         assert ready.get("ready") is True
         self.mode = ready.get("mode")
         self.name_prefix = ready.get("name_prefix", "")
+        self.leftovers = ready.get("leftovers", 0)
 
     def _recv(self) -> dict:
         try:
@@ -97,6 +98,9 @@ class ExecutorClient:
 
     def forget(self, names):
         return self._call("forget", names=names)
+
+    def clear_study(self):
+        return self._call("clear_study")
 
     def display(self, names):
         return self._call("display", names=names)

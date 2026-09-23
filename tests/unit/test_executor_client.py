@@ -118,3 +118,26 @@ def test_record_path_appends_one_json_line_per_call(tmp_path):
     assert lines[-1]["cmd"] == "call_tool"
     assert lines[-1]["payload"] == {"name": "make_box", "args": {"dx": 1, "dy": 2, "dz": 3}}
     assert lines[-1]["response"]["ok"] is True
+
+
+def test_hello_leftovers_and_clear_study():
+    box = []
+    t = threading.Thread(target=_fake_server,
+                         args=(box, [{"id": 1, "ok": True, "removed": 3}]),
+                         kwargs={"hello": {"ready": True, "proto": 1, "mode": "headless",
+                                           "name_prefix": "sa_run1_", "leftovers": 3}})
+    t.start()
+    client = _connect(box)
+    assert client.leftovers == 3
+    assert client.clear_study() == {"id": 1, "ok": True, "removed": 3}
+    t.join()
+
+
+def test_hello_without_leftovers_defaults_to_zero():
+    box = []
+    t = threading.Thread(target=_fake_server, args=(box, []))
+    t.start()
+    client = _connect(box)
+    assert client.leftovers == 0
+    client.close()
+    t.join()

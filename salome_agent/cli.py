@@ -113,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
             log.error("%s", e)
             return 1
         log.info("session: connected to the %s agent server", client.mode)
+        if not args.batch:
+            from salome_agent.interactive import offer_fresh_study
+            offer_fresh_study(client)
 
     if args.chat:
         from salome_agent import chat
