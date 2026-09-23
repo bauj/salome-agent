@@ -190,3 +190,35 @@ def test_redo_failure_degrades(conv, monkeypatch):
 
     monkeypatch.setattr(conv_mod, "sync", boom)
     assert conv.redo().status == "degraded" and conv.degraded
+
+
+def _stage_calls(*names, status="failed"):
+    return {0: {"module": "geom", "status": status, "call_log": [
+        {"fn": "F", "args": [], "out_vars": [n], "publish": [n]} for n in names]}}
+
+
+def test_cancelled_turn_forgets_objects_its_stages_built(conv, monkeypatch):
+    # a fresh-plan turn cancelled mid-stage never reaches assemble, so its
+    # objects are only in the stage's call_log, not in build_graph (task 259)
+    conv.graph = _graph_with(1); conv.turn_idx = 1
+    conv.client.forget.return_value = {"ok": True}
+    _fake_drive(monkeypatch, {"aborted": True, "stages": _stage_calls("box_1", "box_2", "vec_1")})
+    r = conv.turn("more", on_event=lambda e: None, on_gate=None)
+    assert r.status == "failed"
+    conv.client.forget.assert_called_once_with(["box_2", "vec_1"])
+    assert list(conv.graph.nodes) == ["n1"]
+
+
+def test_failed_stage_objects_join_the_stray_set_when_their_forget_fails(conv, monkeypatch):
+    conv.client.forget.return_value = {"ok": False, "error": "boom"}
+    _fake_drive(monkeypatch, {"fatal": "stage 1 failed", "stages": _stage_calls("box_9")})
+    r = conv.turn("x", on_event=lambda e: None, on_gate=None)
+    assert r.status == "degraded"
+    assert "box_9" in conv._stray
+
+
+def test_ok_turn_does_not_forget_stage_objects(conv, monkeypatch):
+    _fake_drive(monkeypatch, {"build_graph": _graph_with(1).to_dict(),
+                              "stages": _stage_calls("box_1", status="ok")})
+    conv.turn("one", on_event=lambda e: None, on_gate=None)
+    conv.client.forget.assert_not_called()
