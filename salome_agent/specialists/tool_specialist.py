@@ -4,7 +4,9 @@ from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.llm import assistant_tool_turn, continuity_fields
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec
-from salome_agent.specialists.tool_selection import initial_offered, resolve_load
+from salome_agent.specialists.tool_selection import (
+    initial_offered, resolve_load, suggest_tool_names,
+)
 
 # strict: nudge once every N risky ops with no intervening measure.
 _STRICT_NUDGE_EVERY = 3
@@ -18,6 +20,23 @@ _LOAD_TOOLS_DESCRIPTION = (
 
 def _call_key(name: str, args: dict) -> tuple:
     return (name, json.dumps(args, sort_keys=True, default=str))
+
+
+def _unknown_names_note(names, all_defs: dict, categories) -> str:
+    """One line per load_tools name that is not a real tool, so a wrong guess
+    reads as a typo to fix instead of "this tool does not exist"."""
+    lines = []
+    for n in names or []:
+        if n in all_defs:
+            continue
+        close = suggest_tool_names(n, all_defs)
+        if close:
+            hint = "did you mean " + ", ".join(
+                f"{c} ({all_defs[c].get('category')})" for c in close) + "?"
+        else:
+            hint = "no close match; categories: " + ", ".join(categories)
+        lines.append(f"\nunknown tool name {n} — {hint}")
+    return "".join(lines)
 
 
 class ToolSpecialist:
@@ -168,11 +187,15 @@ class ToolSpecialist:
                                          "content": "skipped — finish_stage was called"})
                     break
                 if name == "load_tools" and load_def is not None:
-                    added = resolve_load(args.get("names"), args.get("categories"), all_defs)
+                    names = args.get("names")
+                    if isinstance(names, str):
+                        names = [names]
+                    added = resolve_load(names, args.get("categories"), all_defs)
                     new = added - offered
                     offered |= added
                     obs = (f"added: {', '.join(sorted(new)) or '(nothing new)'} "
                            f"— {len(offered)} tools available")
+                    obs += _unknown_names_note(names, all_defs, spec.categories)
                     log.info("  load_tools(names=%s, categories=%s) -> +%d, %d available",
                              args.get("names"), args.get("categories"), len(new), len(offered))
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
