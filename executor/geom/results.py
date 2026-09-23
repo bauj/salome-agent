@@ -4,11 +4,13 @@ from executor.geom.helpers import registry
 def _shape_info(geompy, shape) -> dict | None:
     """World-space bounding box, size and centre (bbox midpoint) of a shape,
     in mm, rounded. Spatial feedback for the specialist -- lets it catch a
-    misplaced part ("my wheel is at the origin") without a rendered view."""
+    misplaced part ("my wheel is at the origin") without a rendered view.
+    Precise: the default box encloses curved faces' control poles (a filleted
+    40-radius cone reads +-42.73 instead of +-39.48), and ~10 ms is nothing."""
     if shape is None:
         return None
     try:
-        xmin, xmax, ymin, ymax, zmin, zmax = geompy.BoundingBox(shape)
+        xmin, xmax, ymin, ymax, zmin, zmax = geompy.BoundingBox(shape, True)
     except Exception:
         return None
     r = lambda v: round(v, 4)
@@ -158,7 +160,7 @@ def _delta_note(executor, name: str, args: dict, result: dict) -> str | None:
 
 
 def _centre(geompy, shape) -> list:
-    xmin, xmax, ymin, ymax, zmin, zmax = geompy.BoundingBox(shape)
+    xmin, xmax, ymin, ymax, zmin, zmax = geompy.BoundingBox(shape, True)
     r = lambda v: round(v, 4)
     return [r((xmin + xmax) / 2), r((ymin + ymax) / 2), r((zmin + zmax) / 2)]
 
