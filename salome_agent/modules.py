@@ -54,6 +54,10 @@ class ModuleSpec:
     catalogue: str = ""
     # Tools that also end the loop, each with its own handle (amend's replan).
     extra_terminators: tuple = ()
+    # result_names, this attempt's calls, full call_log, upstream names, last
+    # known shape_info by name -> a report that reopens the stage once, or None
+    # to let the terminator close it.
+    audit: Callable[..., "str | None"] | None = None
 
 
 MODULES: dict[str, ModuleSpec] = {}
