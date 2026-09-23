@@ -111,7 +111,7 @@ def test_no_tool_call_is_nudged_then_loop_continues():
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
     result = run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
-                                  llm, client, iteration_cap=5)
+                                  llm, client, iteration_cap=5, upstream={"box_1": None})
     assert result["result_names"] == ["box_1"]
     second = llm.chat.call_args_list[1].kwargs["messages"]
     assert any(isinstance(m.get("content"), str) and "did not call a tool" in m["content"]
@@ -123,7 +123,7 @@ def test_all_tool_results_are_compacted_including_the_newest():
     llm.chat.side_effect = [
         _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
         _resp(("make_box", {"dx": 5, "dy": 5, "dz": 5})),
-        _resp(("finish_stage", {"result_names": ["box_2"]})),
+        _resp(("finish_stage", {"result_names": ["box_1", "box_2"]})),
     ]
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
@@ -163,7 +163,7 @@ def test_message_prefix_is_byte_stable_across_turns():
     llm.chat.side_effect = [
         _resp(("make_box", {"dx": 10, "dy": 10, "dz": 10})),
         _resp(("make_box", {"dx": 5, "dy": 5, "dz": 5})),
-        _resp(("finish_stage", {"result_names": ["box_2"]})),
+        _resp(("finish_stage", {"result_names": ["box_1", "box_2"]})),
     ]
     client = MagicMock()
     client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
@@ -319,14 +319,13 @@ def test_batched_calls_all_run_in_one_turn():
         _resp(("make_box", {"dx": 1, "dy": 1, "dz": 1}),
               ("make_box", {"dx": 2, "dy": 2, "dz": 2}),
               ("translate", {"shape": "box_2", "dx": 5})),
-        _resp(("finish_stage", {"result_names": ["tr_1"]})),
+        _resp(("finish_stage", {"result_names": ["box_1", "tr_1"]})),
     ]
     client = MagicMock()
     client.list_tools.return_value = {"tools": [
         {"name": "make_box", "category": "primitive"},
         {"name": "translate", "category": "transform"}]}
-    client.call_tool.return_value = {"ok": True, "records": [{"fn": "X", "args": [],
-                                     "out_vars": ["o"], "publish": ["o"]}]}
+    client.call_tool.side_effect = _naming_call_tool()
     run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
                          "tools": ["make_box", "translate"]}, llm, client, iteration_cap=5,
                         verify_cadence="none")
@@ -403,9 +402,25 @@ def _walls_client():
         {"name": "make_box", "category": "primitive"},
         {"name": "translate", "category": "transform"},
         {"name": "measure", "category": "query"}]}
-    client.call_tool.return_value = {"ok": True, "records": [{"fn": "X", "args": [],
-                                     "out_vars": ["o"], "publish": ["o"]}]}
+    client.call_tool.side_effect = _naming_call_tool()
     return client
+
+
+def _naming_call_tool():
+    """call_tool that publishes box_N / tr_N like the real tools, so the
+    finish_stage audit sees the names the test's model finishes with."""
+    counters = {}
+
+    def call_tool(name, args):
+        if name in ("measure", "check_shape"):
+            return {"ok": True, "measurements": {}}
+        prefix = {"make_box": "box", "make_cylinder": "cyl", "translate": "tr"}[name]
+        counters[prefix] = counters.get(prefix, 0) + 1
+        out = f"{prefix}_{counters[prefix]}"
+        refs = [{"kind": "ref", "value": args["shape"]}] if "shape" in args else []
+        return {"ok": True, "records": [{"fn": "X", "args": refs,
+                                         "out_vars": [out], "publish": [out]}]}
+    return call_tool
 
 
 def test_final_cadence_nudges_a_measure_before_finish_then_accepts():
@@ -459,7 +474,7 @@ def test_strict_cadence_nudges_after_three_risky_ops():
               ("translate", {"shape": "b", "dx": 2}),
               ("translate", {"shape": "c", "dx": 3})),
         _resp(("measure", {"names": ["a"]})),
-        _resp(("finish_stage", {"result_names": ["a"]})),
+        _resp(("finish_stage", {"result_names": ["tr_1", "tr_2", "tr_3"]})),
     ]
     run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
                          "tools": ["translate"]},
@@ -524,7 +539,7 @@ def test_load_tools_widens_the_next_call():
     client = MagicMock()
     client.list_tools.return_value = {"tools": _defs()}
     run_geom_specialist({"module": "geom", "intent": "hollow", "params": {}, "inputs": []},
-                        llm, client, iteration_cap=5)
+                        llm, client, iteration_cap=5, upstream={"x": None})
     first = _tool_names(llm.chat.call_args_list[0])
     second = _tool_names(llm.chat.call_args_list[1])
     assert "make_thick_solid" not in first
@@ -621,3 +636,90 @@ def test_compact_result_keeps_a_delta_note():
     from salome_agent.specialists.geom import _compact_result
     compact = _compact_result({"ok": True, "records": [], "delta": "cut: removed nothing"})
     assert compact["delta"] == "cut: removed nothing"
+
+
+def _audited_run(calls, finishes, verify_cadence="none", upstream=None):
+    """Run a stage whose model makes `calls` (one per turn) then calls
+    finish_stage with each of `finishes` in turn. Returns (result, llm)."""
+    llm = MagicMock()
+    llm.chat.side_effect = ([_resp(c) for c in calls]
+                            + [_resp(("finish_stage", {"result_names": f})) for f in finishes])
+    client = _walls_client()
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                                  "tools": ["make_box", "translate"]},
+                                 llm, client, iteration_cap=10,
+                                 verify_cadence=verify_cadence, upstream=upstream)
+    return result, llm
+
+
+def _finish_replies(llm):
+    msgs = llm.chat.call_args_list[-1].kwargs["messages"]
+    return [m["content"] for m in msgs
+            if m.get("role") == "tool" and "call finish_stage again" in str(m.get("content"))]
+
+
+def test_audit_reopens_once_on_an_unknown_result_name_then_closes():
+    result, llm = _audited_run([("make_box", {"dx": 1, "dy": 1, "dz": 1})],
+                               [["bx_1"], ["bx_1"]])
+    [reply] = _finish_replies(llm)
+    assert "not a shape built in this run: bx_1" in reply
+    assert result["result_names"] == ["bx_1"]   # reports, never blocks
+
+
+def test_audit_flags_a_part_built_and_never_used():
+    _, llm = _audited_run([("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                           ("make_cylinder", {"radius": 1, "height": 2})],
+                          [["cyl_1"], ["cyl_1"]])
+    [reply] = _finish_replies(llm)
+    assert "nor used by another shape: box_1" in reply
+
+
+def test_audit_ignores_a_redone_primitive():
+    # the live cup run: inner cylinder remade taller, only the second one cut
+    _, llm = _audited_run([("make_cylinder", {"radius": 37, "height": 97}),
+                           ("make_cylinder", {"radius": 37, "height": 107})],
+                          [["cyl_2"]])
+    assert llm.chat.call_count == 3
+
+
+def test_audit_ignores_a_redone_transform():
+    # translate(box_1) twice, only the second kept — as in the enclosure golden run
+    _, llm = _audited_run([("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                           ("translate", {"shape": "box_1", "dx": 5}),
+                           ("translate", {"shape": "box_1", "dx": 6})],
+                          [["tr_2"]])
+    assert llm.chat.call_count == 4
+
+
+def test_audit_is_silent_when_the_result_is_an_upstream_name():
+    _, llm = _audited_run([], [["beam_1"]], upstream={"beam_1": None})
+    assert llm.chat.call_count == 1
+
+
+def test_audit_and_measure_nudge_share_one_reopen():
+    _, llm = _audited_run([("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                           ("translate", {"shape": "box_1", "dx": 5})],
+                          [["tr_9"], ["tr_9"]], verify_cadence="final")
+    [reply] = _finish_replies(llm)
+    assert "since your last measure" in reply
+    assert "not a shape built in this run: tr_9" in reply
+    assert llm.chat.call_count == 4
+
+
+def test_audit_report_flags_an_empty_shape_and_lists_result_bboxes():
+    from salome_agent.specialists.geom import _audit_finish
+    rec = {"fn": "X", "args": [], "out_vars": ["cut_1"], "publish": ["cut_1"]}
+    report = _audit_finish({"result_names": ["cut_1"]}, [{"tool": "cut", "records": [rec]}],
+                           [rec], frozenset(),
+                           {"cut_1": {"bbox": [0] * 6, "size": [0, 0, 0], "centre": [0, 0, 0]}})
+    assert "empty or a single point (size 0 x 0 x 0): cut_1" in report
+    assert "  cut_1 — bbox [0, 0, 0, 0, 0, 0]" in report
+
+
+def test_audit_is_silent_on_a_clean_stage():
+    from salome_agent.specialists.geom import _audit_finish
+    rec = {"fn": "X", "args": [], "out_vars": ["box_1"], "publish": ["box_1"]}
+    assert _audit_finish({"result_names": ["box_1"]}, [{"tool": "make_box", "records": [rec]}],
+                         [rec], frozenset(),
+                         {"box_1": {"bbox": [0, 1] * 3, "size": [1, 1, 1],
+                                    "centre": [.5] * 3}}) is None

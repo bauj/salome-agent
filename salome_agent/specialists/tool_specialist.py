@@ -88,7 +88,11 @@ class ToolSpecialist:
         # finish_stage if any are outstanding; "strict" also nudges mid-loop every
         # _STRICT_NUDGE_EVERY of them.
         risky_since_measure = 0
-        nudged_final = False
+        # finish_stage is checked once: a clean stage closes on the first call,
+        # an odd one is reopened with a report and closes on the next (task 217).
+        audited = False
+        shape_infos: dict[str, dict] = {}
+        n_seed_calls = len(calls)
         # Per-stage tool retrieval: offer CORE_TOOLS + the planner's hints, not the
         # whole registry (which was ~66% of a run's input tokens). The model widens
         # its set on demand via load_tools. "all" restores the send-everything
@@ -193,6 +197,10 @@ class ToolSpecialist:
                         calls.append({"tool": name, "tool_args": args,
                                       "records": list(result["records"])})
                     log.debug("    tool %s ok", name)
+                    if result.get("result_shape") and result.get("shape_info"):
+                        shape_infos[result["result_shape"]] = result["shape_info"]
+                    if isinstance(result.get("measurements"), dict):
+                        shape_infos.update({n: v for n, v in result["measurements"].items() if v})
                     if spec.risky_categories:
                         if name in spec.measure_tools:
                             risky_since_measure = 0
@@ -214,17 +222,27 @@ class ToolSpecialist:
 
             if finish_call is not None:
                 call_id, args, term = finish_call
-                if (term is spec.terminator and spec.measure_tools
-                        and verify_cadence in ("final", "strict")
-                        and risky_since_measure > 0 and not nudged_final):
-                    nudged_final = True
-                    log.info("  verify_cadence=%s: nudging a measure before finish_stage",
-                             verify_cadence)
-                    messages.append({"role": "tool", "tool_call_id": call_id, "content":
-                        "You have moved or combined shapes since your last measure. "
-                        "Call `measure` on your result shape(s) and confirm their "
-                        "placement, then call finish_stage again."})
-                    continue
+                if term is spec.terminator and not audited:
+                    parts = []
+                    if (spec.measure_tools and verify_cadence in ("final", "strict")
+                            and risky_since_measure > 0):
+                        log.info("  verify_cadence=%s: nudging a measure before finish_stage",
+                                 verify_cadence)
+                        parts.append(
+                            "You have moved or combined shapes since your last measure. "
+                            "Call `measure` on your result shape(s) and confirm their "
+                            "placement, then call finish_stage again.")
+                    if spec.audit is not None:
+                        report = spec.audit(args, calls[n_seed_calls:], call_log,
+                                            upstream, shape_infos)
+                        if report:
+                            log.info("  finish_stage audit: reopening the stage")
+                            parts.append(report)
+                    if parts:
+                        audited = True
+                        messages.append({"role": "tool", "tool_call_id": call_id,
+                                         "content": "\n\n".join(parts)})
+                        continue
                 return _with_calls(term.handle(args, call_log), calls)
 
             if (spec.risky_categories and verify_cadence == "strict"

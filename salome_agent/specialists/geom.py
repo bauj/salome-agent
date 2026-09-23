@@ -1,6 +1,6 @@
 import json
 
-from executor.geom import TOOL_DESCRIPTIONS
+from executor.geom import TOOL_DESCRIPTIONS, registry
 from salome_agent.codegen import _refs_in
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec, Terminator, register
@@ -172,7 +172,8 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
     return ToolSpecialist(GEOM_SPEC).run(
         stage_plan, llm, client, iteration_cap, blocks=tuple(blocks),
         tool_selection=tool_selection, verify_cadence=verify_cadence,
-        retry=retry, seed_call_log=seed_call_log, seed_calls=seed_calls)
+        retry=retry, seed_call_log=seed_call_log, seed_calls=seed_calls,
+        upstream=tuple(upstream or ()))
 
 
 def _retry_block(retry: dict) -> str:
@@ -191,21 +192,85 @@ def _retry_block(retry: dict) -> str:
         for name in built:
             info = built_info.get(name)
             if info:
-                lines.append(f"  {name} — bbox {info['bbox']}, size {info['size']}, "
-                             f"centre {info['centre']}")
+                lines.append(_info_line(name, info))
             else:
                 lines.append(f"  {name}")
     return "\n".join(lines)
 
 
-def _finish_stage(args: dict, call_log: list) -> dict:
+def _result_names(args: dict) -> list[str]:
     result_names = args["result_names"]
     # A schema hint doesn't guarantee compliance — seen live, a model returned
     # this as a JSON-encoded string, which codegen's set() would then iterate
     # as individual characters.
     if isinstance(result_names, str):
         result_names = json.loads(result_names)
-    return {"call_log": call_log, "result_names": _leaf_result_names(call_log, result_names)}
+    return result_names
+
+
+def _finish_stage(args: dict, call_log: list) -> dict:
+    return {"call_log": call_log,
+            "result_names": _leaf_result_names(call_log, _result_names(args))}
+
+
+# Tools whose output is a part the model meant to keep or build on. Sketch
+# helpers, subshape extractions and queries are routinely left unused.
+_SOLID_CATEGORIES = {"primitive", "swept", "boolean", "transform"}
+_SOLID_TOOLS = {"fillet_edges", "chamfer_edges"}
+
+
+def _audit_finish(args: dict, calls: list, call_log: list, upstream: frozenset,
+                  infos: dict) -> str | None:
+    """Anomalies only — None on a clean stage, so finish_stage closes at no
+    extra cost. Built on what the loop already has: no server round-trip."""
+    try:
+        names = list(dict.fromkeys(_result_names(args)))
+    except (KeyError, ValueError, TypeError):
+        return None
+    built = {v for r in call_log for v in r.get("out_vars") or []}
+    refs = {r["recv"] for r in call_log if r.get("recv")}
+    for r in call_log:
+        for a in r.get("args") or []:
+            refs |= _refs_in(a)
+    unknown = [n for n in names if n not in built and n not in upstream]
+    categories = registry.categories()
+    orphans = []
+    for i, c in enumerate(calls):
+        if not (categories.get(c["tool"]) in _SOLID_CATEGORIES or c["tool"] in _SOLID_TOOLS):
+            continue
+        # A later call of the same tool is taken as a redo, the first attempt
+        # left unused on purpose (both golden runs and a live cup run do this).
+        # The price: a forgotten part is only caught when no later call used
+        # its tool.
+        if any(later["tool"] == c["tool"] for later in calls[i + 1:]):
+            continue
+        orphans += [v for r in c["records"] for v in r.get("out_vars") or []
+                    if v not in refs and v not in names and v not in orphans]
+    empty = [n for n in names
+             if infos.get(n) and all(abs(d) < 1e-6 for d in infos[n]["size"])]
+    if not (unknown or orphans or empty):
+        return None
+    lines = ["Before this stage closes, check:"]
+    if unknown:
+        lines.append(f"- not a shape built in this run: {', '.join(unknown)} — "
+                     "use the exact published name.")
+    if orphans:
+        lines.append(f"- built but neither in result_names nor used by another shape: "
+                     f"{', '.join(orphans)} — add any that belong to the result; leave "
+                     "out any you abandoned on purpose.")
+    if empty:
+        lines.append(f"- empty or a single point (size 0 x 0 x 0): {', '.join(empty)}.")
+    known = [n for n in names if infos.get(n)]
+    if known:
+        lines.append("Your result shapes:")
+        lines += [_info_line(n, infos[n]) for n in known]
+    lines.append("Fix what needs fixing, then call finish_stage again — unchanged if "
+                 "it is already right.")
+    return "\n".join(lines)
+
+
+def _info_line(name: str, info: dict) -> str:
+    return f"  {name} — bbox {info['bbox']}, size {info['size']}, centre {info['centre']}"
 
 
 def _geom_tools_for(client) -> dict:
@@ -216,8 +281,7 @@ def _upstream_block(info: dict) -> str:
     lines = []
     for name, detail in info.items():
         if detail:
-            lines.append(f"  {name} — bbox {detail['bbox']}, size {detail['size']}, "
-                         f"centre {detail['centre']}")
+            lines.append(_info_line(name, detail))
         else:
             lines.append(f"  {name} — (geometry unavailable)")
     return ("Objects built by an EARLIER stage, given only for reference "
@@ -270,6 +334,7 @@ GEOM_SPEC = register(ModuleSpec(
     measure_tools=frozenset(_MEASURE_TOOLS),
     render_upstream=_geom_upstream,
     render_retry=lambda retry: _retry_block(retry),
+    audit=_audit_finish,
     call_prefix="geompy.",
     preamble=_GEOM_PREAMBLE,
     catalogue=_geom_catalogue_str(),
