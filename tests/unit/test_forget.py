@@ -1,7 +1,7 @@
 # tests/unit/test_forget.py
 from types import SimpleNamespace
 
-from agent_server.backend import HeadlessBackend, display_names, forget_names
+from agent_server.backend import HeadlessBackend, display_names, forget_names, hide_names
 from agent_server.core import Core
 
 
@@ -106,3 +106,32 @@ def test_core_display_command():
                               display=lambda names: {"ok": True, "shown": list(names)})
     assert Core(backend).handle({"id": 5, "cmd": "display", "names": ["a"]}) == {
         "id": 5, "ok": True, "shown": ["a"]}
+
+
+def test_hide_erases_each_found_study_object_from_the_viewer_only():
+    study = FakeStudy(["fuse_1"])
+    erased = []
+    r = hide_names(_ns(study), ["fuse_1", "nope_1"], erased.append)
+    assert r == {"ok": True, "hidden": ["fuse_1"]}
+    assert erased == ["0:1:fuse_1"] and "fuse_1" in study.objs
+
+
+def test_headless_hide_is_a_no_op():
+    b = HeadlessBackend(build_namespace=lambda live: _ns(FakeStudy(["box_1"])))
+    assert b.hide(["box_1"]) == {"ok": True, "hidden": []}
+
+
+def test_core_hide_command():
+    backend = SimpleNamespace(poisoned=lambda: False,
+                              hide=lambda names: {"ok": True, "hidden": list(names)})
+    assert Core(backend).handle({"id": 6, "cmd": "hide", "names": ["a"]}) == {
+        "id": 6, "ok": True, "hidden": ["a"]}
+
+
+def test_client_hide_sends_the_hide_command():
+    from salome_agent.executor_client import ExecutorClient
+    client = ExecutorClient.__new__(ExecutorClient)
+    sent = []
+    client._call = lambda cmd, **kw: sent.append((cmd, kw)) or {"ok": True}
+    client.hide(["a"])
+    assert sent == [("hide", {"names": ["a"]})]

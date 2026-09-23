@@ -105,6 +105,9 @@ class ExecutorClient:
     def display(self, names):
         return self._call("display", names=names)
 
+    def hide(self, names):
+        return self._call("hide", names=names)
+
     def shutdown(self):
         return self._call("shutdown")
 
