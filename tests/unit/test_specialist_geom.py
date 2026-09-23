@@ -549,6 +549,25 @@ def test_load_tools_widens_the_next_call():
                for m in msgs)
 
 
+def test_load_tools_unknown_name_says_so_and_suggests_the_real_one():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("load_tools", {"names": ["thick_solid", "ghost"]})),
+        _resp(("finish_stage", {"result_names": ["x"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": _defs()}
+    run_geom_specialist({"module": "geom", "intent": "hollow", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=5, upstream={"x": None})
+    msgs = llm.chat.call_args_list[1].kwargs["messages"]
+    obs = next(m["content"] for m in msgs if m.get("role") == "tool")
+    assert "unknown tool name thick_solid" in obs
+    assert "make_thick_solid (swept)" in obs
+    assert "unknown tool name ghost" in obs
+    assert "swept" in obs.split("ghost", 1)[1]
+    assert "make_thick_solid" not in _tool_names(llm.chat.call_args_list[1])
+
+
 def test_tool_selection_all_offers_the_full_registry():
     llm = MagicMock()
     llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))

@@ -5,6 +5,8 @@ Pure functions, no I/O -- the geom specialist loop uses these to decide which
 tool definitions to send the LLM on each turn instead of the whole registry.
 """
 
+import difflib
+
 CORE_TOOLS = frozenset({
     "measure", "check_shape", "list_study_objects", "get_subshapes",
     "make_box", "fuse", "cut", "translate", "align",
@@ -37,9 +39,17 @@ def resolve_load(names, categories, all_defs: dict[str, dict]) -> set[str]:
     """Expand a load_tools(names=, categories=) request to concrete tool names.
 
     `all_defs`: tool name -> its list_tools() entry (must carry "category").
-    Unknown names and unknown categories are silently dropped.
+    Unknown names and unknown categories are dropped (see suggest_tool_names).
     """
     want = {n for n in (names or []) if n in all_defs}
     cats = set(categories or [])
     want |= {n for n, d in all_defs.items() if d.get("category") in cats}
     return want
+
+
+def suggest_tool_names(name: str, all_defs: dict[str, dict]) -> list[str]:
+    """Real tool names close to a guessed one (at most 3): names containing the
+    guess first (`thick_solid` -> `make_thick_solid`), then spelling matches."""
+    contains = sorted(n for n in all_defs if name in n)
+    close = difflib.get_close_matches(name, list(all_defs), n=3, cutoff=0.75)
+    return list(dict.fromkeys(contains + close))[:3]
