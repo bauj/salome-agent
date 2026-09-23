@@ -2032,8 +2032,23 @@ class TestDeltaNote:
         note = geom_tools._delta_note(
             ex, "translate", {"shape": "src", "dx": 5, "dy": 0, "dz": 0},
             {"result_shape": "tr_1",
-             "shape_info": {"bbox": [], "size": [], "centre": [5.0, 5.0, 5.0]}})
+             "shape_info": {"bbox": [0.0, 10.0, 0.0, 10.0, 0.0, 10.0],
+                            "size": [10.0, 10.0, 10.0], "centre": [5.0, 5.0, 5.0]}})
         assert note and "no effect" in note
+
+    def test_rotation_about_the_shape_centre_is_silent(self):
+        # A torus rotated 90 deg about OX keeps its centre at the origin but its
+        # bbox turns 28x28x8 -> 28x8x28: it did move (seen live, run 291882037be4).
+        geompy = MagicMock()
+        self._vols(geompy, {"src": 100.0, "rot_1": 100.0})
+        geompy.BoundingBox.return_value = [-14.0, 14.0, -14.0, 14.0, -4.0, 4.0]
+        ex = self._ex(geompy, {"src": "src", "rot_1": "rot_1"})
+        note = geom_tools._delta_note(
+            ex, "rotate", {"shape": "src", "axis": "OX", "angle_deg": 90},
+            {"result_shape": "rot_1",
+             "shape_info": {"bbox": [-14.0, 14.0, -4.0, 4.0, -14.0, 14.0],
+                            "size": [28.0, 8.0, 28.0], "centre": [0.0, 0.0, 0.0]}})
+        assert note is None
 
     def test_good_rigid_transform_is_silent(self):
         geompy = MagicMock()
