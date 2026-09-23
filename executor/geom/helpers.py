@@ -263,3 +263,17 @@ def _resolve_point(executor, arg, records: list) -> str:
         })
         return name
     return arg
+
+
+def _check_sub_ids(tool: str, geompy, shape, shape_name: str, ids, kind: str) -> None:
+    """Reject ids that are not `kind` subshapes of `shape` before OCC sees
+    them: OCC answers a wrong id with "TopoDS::Edge" or "Offset driver failed",
+    and models guess 0-based indexes (task 218). The error carries the real ids."""
+    valid = list(geompy.SubShapeAllIDs(shape, geompy.ShapeType[kind]))
+    bad = [i for i in ids if i not in valid]
+    if bad:
+        shown = ", ".join(map(str, valid[:24])) + (", ..." if len(valid) > 24 else "")
+        raise ValueError(
+            f"{tool}: {bad} are not {kind.lower()} ids of {shape_name} — its "
+            f"{kind.lower()} ids are [{shown}]. Ids are GEOM subshape ids (from "
+            f"get_subshapes), not 0-based indexes.")
