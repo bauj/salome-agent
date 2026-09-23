@@ -270,7 +270,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             tool_selection=policy.get("tool_selection", "hints"),
             verify_cadence=policy.get("verify_cadence", "final"),
             retry=retry, seed_call_log=seed, seed_calls=seed_calls,
-            cancel=config["configurable"].get("cancel"))
+            cancel=config["configurable"].get("cancel"), upstream=upstream)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
