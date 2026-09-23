@@ -4,8 +4,18 @@ from dataclasses import dataclass
 
 from salome_agent.build_graph import BuildGraph
 from salome_agent.executor_client import SessionDied, SessionPoisoned
-from salome_agent.replay import ReplayFailed, rebuild_all, sync
+from salome_agent.replay import ReplayFailed, _forget, rebuild_all, sync
 from salome_agent.runner import EventMapper, drive, initial_state, show_results
+
+
+def _stage_vars(final: dict, *graphs: BuildGraph) -> list[str]:
+    """Names a turn's stages built that no graph accounts for: a stage's calls
+    reach build_graph only in assemble, and only when the stage is ok (task 259)."""
+    known = {v for g in graphs for v in g.all_out_vars()}
+    stages = final.get("stages") or {}
+    names = [v for idx in sorted(stages) for r in stages[idx].get("call_log") or []
+             for v in r.get("out_vars") or []]
+    return [v for v in dict.fromkeys(names) if v not in known]
 
 
 @dataclass
@@ -88,7 +98,7 @@ class Conversation:
         outcome = final.get("turn_outcome") or {}
         if final.get("degraded"):
             self.degraded = True
-            self._stray |= set(after.all_out_vars())
+            self._stray |= set(after.all_out_vars()) | set(_stage_vars(final, before, after))
             self.graph = before
             return TurnResult("degraded", f"{fatal} — run /rebuild", final)
         if "SALOME agent server" in fatal:
@@ -107,14 +117,16 @@ class Conversation:
         return TurnResult("ok", outcome.get("summary") or "done", final)
 
     def _rollback(self, after, before, message, final) -> TurnResult:
+        stray = _stage_vars(final, before, after)
         try:
             self.graph = sync(self.client, current=after, target=before)
+            _forget(self.client, stray)
         except (SessionDied, SessionPoisoned) as e:
             self.ended = True
             return TurnResult("ended", f"{message}; session lost during rollback: {e}", final)
         except ReplayFailed as e:
             self.degraded = True
-            self._stray |= set(after.all_out_vars())
+            self._stray |= set(after.all_out_vars()) | set(stray)
             self.graph = before
             return TurnResult("degraded", f"{message}; rollback failed: {e} — run /rebuild", final)
         self._write_outputs()
