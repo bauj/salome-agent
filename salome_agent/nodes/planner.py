@@ -29,11 +29,16 @@ together).
 operations belong to one stage; splitting breaks the object-name handoff.
 
 For an assembly you MAY give each part (or each group of identical parts)
-its own stage, plus a final stage that combines them by name. Do that when
-the parts are distinct enough to name. A car is an assembly: body, cabin,
-wheels are separate parts even though they are fused at the end. Also use
-separate stages whenever the work crosses modules (geom -> smesh -> paravis)
-or the request asks for genuinely independent deliverables.
+its own stage. Do that when the parts are distinct enough to name. A car is
+an assembly: body, cabin, wheels are separate parts. Also use separate
+stages whenever the work crosses modules (geom -> smesh -> paravis) or the
+request asks for genuinely independent deliverables.
+
+Fuse parts into one solid only when they are one piece of material (a mug
+and its handle) or the request asks for a single solid. Never fuse parts
+that should keep different colours (a red body, black wheels): an object
+shows one colour, so the fuse loses them. Leave such parts as separate
+objects.
 
 Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
@@ -54,9 +59,9 @@ _DETAIL_HINT = {
               "stage unless they are truly independent deliverables.",
     "balanced": "",
     "fine": "\n\nFor any assembly, give EACH part (or group of identical "
-            "parts) its own stage and add a final stage that combines them. "
-            "The final result being one fused solid does not make the parts "
-            "one part. Still never split a single part's own construction.",
+            "parts) its own stage, plus a final stage that fuses them when "
+            "they are to be fused. Being fused at the end does not make the "
+            "parts one part. Still never split a single part's own construction.",
 }
 
 
