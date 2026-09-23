@@ -525,7 +525,7 @@ def test_hinted_stage_offers_core_plus_hints_plus_meta_tools_only():
         "measure", "check_shape", "list_study_objects", "make_box", "fuse",
         "cut", "translate",
         "set_color",
-        "finish_stage", "load_tools",
+        "finish_stage", "load_tools", "discard",
     }
     assert "make_thick_solid" not in offered
 
@@ -749,3 +749,114 @@ def test_audit_is_silent_on_a_clean_stage():
                          [rec], frozenset(),
                          {"box_1": {"bbox": [0, 1] * 3, "size": [1, 1, 1],
                                     "centre": [.5] * 3}}) is None
+
+
+def _forgetting_client():
+    client = _walls_client()
+    client.forget.side_effect = lambda names: {"ok": True, "removed": list(names)}
+    return client
+
+
+def _run(calls, finish, client=None, upstream=None, finishes=1):
+    """Each entry of `calls` is one model turn (a single (tool, args) call)."""
+    llm = MagicMock()
+    llm.chat.side_effect = ([_resp(c) for c in calls]
+                            + [_resp(("finish_stage", {"result_names": finish}))] * finishes)
+    client = client or _forgetting_client()
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                                  "tools": ["make_box", "translate"]},
+                                 llm, client, iteration_cap=10, verify_cadence="none",
+                                 upstream=upstream)
+    return result, llm, client
+
+
+def _tool_reply(llm, index):
+    msgs = llm.chat.call_args_list[-1].kwargs["messages"]
+    return [m["content"] for m in msgs if m.get("role") == "tool"][index]
+
+
+def _built(result):
+    return [v for r in result["call_log"] for v in r["out_vars"]]
+
+
+def test_discard_is_offered_to_a_geom_stage():
+    _, llm, _ = _run([], ["box_1"], upstream={"box_1": None})
+    names = [t["name"] for t in llm.chat.call_args_list[0].kwargs["tools"]]
+    assert "discard" in names
+
+
+def test_discard_forgets_an_abandoned_attempt_and_drops_it_from_the_stage():
+    result, llm, client = _run([("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                                ("translate", {"shape": "box_1", "dx": 5}),
+                                ("discard", {"names": ["box_1", "tr_1"]}),
+                                ("make_box", {"dx": 2, "dy": 2, "dz": 2})],
+                               ["box_2"])
+    client.forget.assert_called_once_with(["box_1", "tr_1"])
+    assert "discarded: box_1, tr_1" in _tool_reply(llm, 2)
+    assert _built(result) == ["box_2"]
+    assert [c["tool"] for c in result["calls"]] == ["make_box"]
+
+
+def test_discard_refuses_a_shape_a_kept_shape_still_uses():
+    result, llm, client = _run([("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                                ("translate", {"shape": "box_1", "dx": 5}),
+                                ("discard", {"names": ["box_1"]})],
+                               ["tr_1"])
+    client.forget.assert_not_called()
+    reply = _tool_reply(llm, 2)
+    assert "box_1 is still used by tr_1" in reply
+    assert _built(result) == ["box_1", "tr_1"]
+
+
+def test_discard_refuses_a_name_not_built_in_this_stage():
+    _, llm, client = _run([("discard", {"names": ["beam_1"]})], ["beam_1"],
+                          upstream={"beam_1": None})
+    client.forget.assert_not_called()
+    assert "beam_1 was not built in this stage" in _tool_reply(llm, 0)
+
+
+def test_discard_drops_a_display_record_on_the_discarded_shape():
+    from salome_agent.specialists.tool_specialist import prune_records
+    box = {"fn": "MakeBoxDXDYDZ", "args": [], "out_vars": ["box_1"], "publish": ["box_1"]}
+    colour = {"fn": "SetColor", "args": [], "out_vars": [], "recv": "box_1", "emit": "method_call"}
+    call_log, calls, removed_calls = prune_records(
+        [box, colour], [{"tool": "make_box", "tool_args": {}, "records": [box]},
+                        {"tool": "set_color", "tool_args": {}, "records": [colour]}],
+        {"box_1"})
+    assert call_log == [] and calls == [] and removed_calls == [0, 1]
+
+
+def test_finish_stage_sweeps_a_shape_that_is_neither_a_result_nor_used():
+    # the redone box: box_1 is abandoned, box_2 kept. Audit stays quiet (a
+    # later make_box counts as a redo), the sweep still removes box_1.
+    result, llm, client = _run([("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                                ("make_box", {"dx": 2, "dy": 2, "dz": 2})],
+                               ["box_2"])
+    client.forget.assert_called_once_with(["box_1"])
+    assert _built(result) == ["box_2"]
+    assert [c["tool"] for c in result["calls"]] == ["make_box"]
+
+
+def test_finish_stage_sweep_keeps_what_a_result_depends_on():
+    result, _, client = _run([("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                              ("translate", {"shape": "box_1", "dx": 5})],
+                             ["tr_1"])
+    client.forget.assert_not_called()
+    assert _built(result) == ["box_1", "tr_1"]
+
+
+def test_finish_stage_sweep_does_nothing_when_no_result_name_resolves():
+    # codegen then keeps every published shape, so the study must too
+    result, llm, client = _run([("make_box", {"dx": 1, "dy": 1, "dz": 1})],
+                               ["nope"], finishes=2)
+    client.forget.assert_not_called()
+    assert _built(result) == ["box_1"]
+
+
+def test_finish_stage_sweep_keeps_the_records_when_forget_fails():
+    client = _walls_client()
+    client.forget.return_value = {"ok": False, "error": "boom"}
+    result, _, _ = _run([("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                         ("make_box", {"dx": 2, "dy": 2, "dz": 2})],
+                        ["box_2"], client=client)
+    assert _built(result) == ["box_1", "box_2"]
