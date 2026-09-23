@@ -596,6 +596,13 @@ def test_compact_result_keeps_query_payload_keys():
     assert "records" not in compact
 
 
+def test_compact_result_keeps_the_colour_note():
+    from salome_agent.specialists.geom import _compact_result
+
+    full = {"ok": True, "records": [], "colour": "fuse: operands carry different colours"}
+    assert _compact_result(full)["colour"] == "fuse: operands carry different colours"
+
+
 def test_prompt_documents_the_query_then_act_pattern():
     from salome_agent.specialists.geom import _geom_prompt
     for cadence in ("none", "final", "strict"):

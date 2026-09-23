@@ -147,7 +147,7 @@ def _compact_result(result: dict) -> dict:
     if not result.get("ok"):
         return {"ok": False, "error": result.get("error")}
     keep = {"ok": True}
-    for k in ("result_shape", "shape_info", "delta", "measurements", "names", "sanity",
+    for k in ("result_shape", "shape_info", "delta", "colour", "measurements", "names", "sanity",
               "ids", "centres", "distance", "properties"):
         if k in result:
             keep[k] = result[k]

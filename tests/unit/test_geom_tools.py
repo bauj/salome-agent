@@ -988,6 +988,115 @@ class TestBooleanTools:
         assert record["args"][1] == {"kind": "list", "value": []}
 
 
+def _coloured(rgb):
+    """A shape mock whose GetColor() answers like GEOM: 0-1 floats, -1 when unset."""
+    shape = MagicMock()
+    r, g, b = rgb if rgb is not None else (-1.0, -1.0, -1.0)
+    shape.GetColor.return_value = SimpleNamespace(R=r, G=g, B=b)
+    return shape
+
+
+class TestBooleanColours:
+    """A boolean result is a new object with no colour (task 246)."""
+
+    def _ex(self, geompy, bindings):
+        geom_tools.reset_counters()
+        geompy.CheckShape.return_value = (True, "")
+        return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                               geom_bindings=bindings)
+
+    def test_fuse_of_same_coloured_parts_keeps_the_colour(self):
+        geompy = MagicMock()
+        out = MagicMock()
+        geompy.MakeFuse.return_value = out
+        a, b = _coloured((1.0, 0.0, 0.0)), _coloured((1.0, 0.0, 0.0))
+        ex = self._ex(geompy, {"a": a, "b": b})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["a", "b"]})
+
+        out.SetColor.assert_called_once_with(a.GetColor.return_value)
+        colour = result["records"][1]
+        assert colour["fn"] == "SetColor"
+        assert colour["emit"] == "method_call"
+        assert colour["recv"] == "sa_fuse_1"
+        assert colour["args"] == [{"kind": "salomeds_color", "value": [255, 0, 0]}]
+        assert "colour" not in result
+
+    def test_fuse_of_differently_coloured_parts_says_the_colours_are_lost(self):
+        geompy = MagicMock()
+        out = MagicMock()
+        geompy.MakeFuse.return_value = out
+        ex = self._ex(geompy, {"body": _coloured((1.0, 0.0, 0.0)),
+                               "wheels": _coloured((0.0, 0.0, 0.0))})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["body", "wheels"]})
+
+        out.SetColor.assert_not_called()
+        assert len(result["records"]) == 1
+        note = result["colour"]
+        assert "body (255, 0, 0)" in note and "wheels (0, 0, 0)" in note
+        assert "separate" in note
+
+    def test_coloured_and_uncoloured_operands_count_as_different(self):
+        geompy = MagicMock()
+        geompy.MakeFuse.return_value = MagicMock()
+        ex = self._ex(geompy, {"a": _coloured((1.0, 0.0, 0.0)), "b": _coloured(None)})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["a", "b"]})
+
+        assert "b uncoloured" in result["colour"]
+
+    def test_uncoloured_operands_stay_silent(self):
+        geompy = MagicMock()
+        out = MagicMock()
+        geompy.MakeFuse.return_value = out
+        ex = self._ex(geompy, {"a": _coloured(None), "b": _coloured(None)})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["a", "b"]})
+
+        out.SetColor.assert_not_called()
+        assert len(result["records"]) == 1
+        assert "colour" not in result
+
+    def test_cut_keeps_the_main_shape_colour_whatever_the_tools(self):
+        geompy = MagicMock()
+        out = MagicMock()
+        geompy.MakeCut.return_value = out
+        main = _coloured((0.0, 0.0, 1.0))
+        ex = self._ex(geompy, {"main": main, "tool": _coloured((1.0, 0.0, 0.0))})
+
+        result = geom_tools.tool_cut(ex, {"main": "main", "tools": ["tool"]})
+
+        out.SetColor.assert_called_once_with(main.GetColor.return_value)
+        assert result["records"][1]["args"][0]["value"] == [0, 0, 255]
+        assert "colour" not in result
+
+    def test_common_and_partition_carry_a_shared_colour(self):
+        for tool, fn in ((geom_tools.tool_common, "MakeCommonList"),
+                         (geom_tools.tool_partition, "MakePartition")):
+            geompy = MagicMock()
+            out = MagicMock()
+            getattr(geompy, fn).return_value = out
+            ex = self._ex(geompy, {"a": _coloured((0.0, 1.0, 0.0)),
+                                   "b": _coloured((0.0, 1.0, 0.0))})
+
+            result = tool(ex, {"shapes": ["a", "b"]})
+
+            assert result["records"][1]["fn"] == "SetColor", fn
+
+    def test_unreadable_colour_is_treated_as_uncoloured(self):
+        geompy = MagicMock()
+        geompy.MakeFuse.return_value = MagicMock()
+        a, b = MagicMock(), MagicMock()
+        a.GetColor.side_effect = RuntimeError("CORBA")
+        ex = self._ex(geompy, {"a": a, "b": b})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["a", "b"]})
+
+        assert result["ok"] is True
+        assert len(result["records"]) == 1
+
+
 class TestTransformationTools:
     """Unit tests for transformation tools."""
 
