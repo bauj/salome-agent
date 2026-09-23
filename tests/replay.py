@@ -54,6 +54,9 @@ class ReplayExecutorClient:
     def __init__(self, cassette: dict):
         self._calls = list(cassette["exec"])
         self._i = 0
+        # forgets the cassette predates (finish_stage's sweep of dead ends);
+        # the golden tests assert them.
+        self.unrecorded_forgets: list[list] = []
 
     def _next(self, cmd: str, payload: dict) -> dict:
         assert self._i < len(self._calls), f"cassette ran out at {cmd}({payload})"
@@ -74,6 +77,10 @@ class ReplayExecutorClient:
         return self._next("call_tool", payload)
 
     def forget(self, names):
+        nxt = self._calls[self._i] if self._i < len(self._calls) else None
+        if nxt is None or nxt["cmd"] != "forget":
+            self.unrecorded_forgets.append(list(names))
+            return {"ok": True, "removed": list(names)}
         return self._next("forget", {"names": names})
 
     def display(self, names):

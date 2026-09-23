@@ -16,7 +16,10 @@ are millimetres, unconverted; angles are in degrees.
 
 When done, call finish_stage(result_names) naming which of your published
 objects matter — everything they transitively depend on is kept, everything
-else is dropped.
+else is removed from the study.
+
+If you abandon an attempt — a part you are going to rebuild differently —
+call discard on the shapes you built for it before you move on.
 
 Do only what the request asks. Do not invent colours, transparency or
 display modes that were not requested.
@@ -256,8 +259,8 @@ def _audit_finish(args: dict, calls: list, call_log: list, upstream: frozenset,
                      "use the exact published name.")
     if orphans:
         lines.append(f"- built but neither in result_names nor used by another shape: "
-                     f"{', '.join(orphans)} — add any that belong to the result; leave "
-                     "out any you abandoned on purpose.")
+                     f"{', '.join(orphans)} — add any that belong to the result; the rest "
+                     "is removed from the study when the stage closes.")
     if empty:
         lines.append(f"- empty or a single point (size 0 x 0 x 0): {', '.join(empty)}.")
     known = [n for n in names if infos.get(n)]
@@ -335,6 +338,7 @@ GEOM_SPEC = register(ModuleSpec(
     render_upstream=_geom_upstream,
     render_retry=lambda retry: _retry_block(retry),
     audit=_audit_finish,
+    forgets=True,
     call_prefix="geompy.",
     preamble=_GEOM_PREAMBLE,
     catalogue=_geom_catalogue_str(),

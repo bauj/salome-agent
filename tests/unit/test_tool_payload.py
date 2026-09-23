@@ -14,7 +14,7 @@ from salome_agent.specialists.tool_specialist import ToolSpecialist
 _EXPECTED_TOOL_ORDER = [
     "align", "check_shape", "cut", "fuse", "get_subshapes",
     "list_study_objects", "make_box", "measure", "translate",
-    "finish_stage", "load_tools",
+    "finish_stage", "load_tools", "discard",
 ]
 
 _EXPECTED_LOAD_TOOLS_PARAMETERS = {

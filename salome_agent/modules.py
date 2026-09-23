@@ -58,6 +58,10 @@ class ModuleSpec:
     # known shape_info by name -> a report that reopens the stage once, or None
     # to let the terminator close it.
     audit: Callable[..., "str | None"] | None = None
+    # The module's published names are study objects the loop may remove:
+    # offers the discard tool, and a clean finish removes what the results do
+    # not reach, so the study matches result.py.
+    forgets: bool = False
 
 
 MODULES: dict[str, ModuleSpec] = {}

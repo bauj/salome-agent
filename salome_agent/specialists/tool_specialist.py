@@ -1,5 +1,6 @@
 import json
 
+from salome_agent.codegen import _reachable, _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.llm import assistant_tool_turn, continuity_fields
 from salome_agent.logs import log
@@ -16,6 +17,74 @@ _LOAD_TOOLS_DESCRIPTION = (
     "tool `names`, a list of `categories`, or both. Use it whenever the tool "
     "you need is not in your current list."
 )
+
+
+_DISCARD_DESCRIPTION = (
+    "Remove shapes you built in this stage for an attempt you abandoned (e.g. "
+    "a part you are rebuilding differently) from the study and the result. "
+    "Name every shape of that attempt, including the ones built from it."
+)
+_DISCARD_DEF = {"name": "discard", "description": _DISCARD_DESCRIPTION,
+                "parameters": {"type": "object", "properties": {
+                    "names": {"type": "array", "items": {"type": "string"},
+                              "description": "published names to remove"}},
+                    "required": ["names"]}}
+
+
+def _drops(record: dict, names: set) -> bool:
+    out = record.get("out_vars") or []
+    if out:
+        return set(out) <= names
+    return record.get("recv") in names
+
+
+def prune_records(call_log: list, calls: list, names: set) -> tuple[list, list, list]:
+    """call_log and calls without the records that made (or restyled) `names`.
+    Also returns the indices of the calls left with no record at all."""
+    kept_log = [r for r in call_log if not _drops(r, names)]
+    kept_calls, removed = [], []
+    for i, c in enumerate(calls):
+        records = [r for r in c["records"] if not _drops(r, names)]
+        if records:
+            kept_calls.append({**c, "records": records})
+        else:
+            removed.append(i)
+    return kept_log, kept_calls, removed
+
+
+def _discard_refusal(names: list, call_log: list) -> str | None:
+    wanted = set(names)
+    built = {v for r in call_log for v in r.get("out_vars") or []}
+    lines = [f"{n} was not built in this stage — you can only discard your own shapes."
+             for n in names if n not in built]
+    for r in call_log:
+        out = r.get("out_vars") or []
+        if not out or _drops(r, wanted):
+            continue
+        together = sorted(wanted & set(out))
+        if together:
+            rest = ", ".join(v for v in out if v not in wanted)
+            lines.append(f"{', '.join(together)} was made by one call together with "
+                         f"{rest} — discard them together.")
+        refs = set()
+        for a in r.get("args") or []:
+            refs |= _refs_in(a)
+        for n in sorted(wanted & refs):
+            lines.append(f"{n} is still used by {', '.join(out)} — discard that too, "
+                         f"or keep {n}.")
+    return "\n".join(lines) or None
+
+
+def _dead_ends(call_log: list, result_names: list) -> list[str]:
+    """What codegen leaves out of result.py: shapes the results do not reach.
+    Empty when no result name resolves — codegen then keeps everything."""
+    built = {v for r in call_log for v in r.get("out_vars") or []}
+    built |= {r["recv"] for r in call_log if not r.get("out_vars") and r.get("recv")}
+    if not set(result_names) & built:
+        return []
+    keep = _reachable(call_log, result_names)
+    return list(dict.fromkeys(v for r in call_log for v in r.get("out_vars") or []
+                              if v not in keep))
 
 
 def _call_key(name: str, args: dict) -> tuple:
@@ -120,6 +189,7 @@ class ToolSpecialist:
         finish_def = {"name": spec.terminator.name, "parameters": spec.terminator.schema,
                       "description": spec.terminator.description}
         load_def = self._load_tools_def()
+        discard_def = _DISCARD_DEF if spec.forgets else None
         if tool_selection == "all" or not spec.core_tools:
             offered = set(all_defs)
         else:
@@ -141,7 +211,8 @@ class ToolSpecialist:
             log.debug("    %s iter %d/%d: asking LLM...", spec.name, i + 1, iteration_cap)
             tools = ([all_defs[n] for n in sorted(offered) if n in all_defs]
                      + [finish_def] + extra_defs
-                     + ([load_def] if load_def is not None else []))
+                     + ([load_def] if load_def is not None else [])
+                     + ([discard_def] if discard_def is not None else []))
             # Tool results are stored already compacted (see below), so `messages`
             # is sent verbatim: each turn's request extends the previous one byte
             # for byte, which keeps a gateway's prefix/KV cache alive. `load_tools`
@@ -198,6 +269,25 @@ class ToolSpecialist:
                     obs += _unknown_names_note(names, all_defs, spec.categories)
                     log.info("  load_tools(names=%s, categories=%s) -> +%d, %d available",
                              args.get("names"), args.get("categories"), len(new), len(offered))
+                    messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
+                    continue
+                if name == "discard" and discard_def is not None:
+                    names = args.get("names") or []
+                    if isinstance(names, str):
+                        names = [names]
+                    names = list(dict.fromkeys(names))
+                    obs = _discard_refusal(names, call_log)
+                    if obs is None:
+                        r = client.forget(names)
+                        if r.get("ok"):
+                            call_log, calls, gone = prune_records(call_log, calls, set(names))
+                            n_seed_calls -= sum(1 for g in gone if g < n_seed_calls)
+                            for n in names:
+                                shape_infos.pop(n, None)
+                            obs = f"discarded: {', '.join(names)} — removed from the study"
+                        else:
+                            obs = f"discard failed: {r.get('error') or 'forget failed'}"
+                    log.info("  discard(%s) -> %s", names, obs)
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
                     continue
                 key = _call_key(name, args)
@@ -266,7 +356,12 @@ class ToolSpecialist:
                         messages.append({"role": "tool", "tool_call_id": call_id,
                                          "content": "\n\n".join(parts)})
                         continue
-                return _with_calls(term.handle(args, call_log), calls)
+                result = term.handle(args, call_log)
+                if term is spec.terminator and spec.forgets:
+                    call_log, calls = _sweep(client, call_log, calls,
+                                             result.get("result_names") or [])
+                    result = {**result, "call_log": call_log}
+                return _with_calls(result, calls)
 
             if (spec.risky_categories and verify_cadence == "strict"
                     and risky_since_measure >= _STRICT_NUDGE_EVERY):
@@ -278,6 +373,22 @@ class ToolSpecialist:
                     "their placement before continuing."})
                 risky_since_measure = 0
         return _with_calls(spec.on_exhausted(call_log, last_error), calls)
+
+
+def _sweep(client, call_log: list, calls: list, result_names: list) -> tuple[list, list]:
+    """Remove this stage's dead ends from the study at a clean finish, so the
+    live study matches result.py. Best effort: if forget fails, the records
+    stay and the study keeps them too."""
+    dead = _dead_ends(call_log, result_names)
+    if not dead:
+        return call_log, calls
+    r = client.forget(dead)
+    if not r.get("ok"):
+        log.warning("  finish_stage: could not remove unused %s: %s", dead, r.get("error"))
+        return call_log, calls
+    log.info("  finish_stage: removed unused %s", ", ".join(dead))
+    call_log, calls, _ = prune_records(call_log, calls, set(dead))
+    return call_log, calls
 
 
 def _upstream_change_note(records, upstream: frozenset) -> str:

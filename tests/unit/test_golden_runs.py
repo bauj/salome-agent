@@ -17,6 +17,11 @@ _REQUESTS = {
 # replay must reuse the id of the live run that produced that golden.
 _RUN_IDS = {"vase": "817b5ec87944", "enclosure": "da7ca73a0a12"}
 
+# Dead ends finish_stage removes from the study: shapes result.py already
+# leaves out (a thicken the vase run redid, a translate the enclosure redid).
+_SWEPT = {"vase": [["sa_817b5ec87944_thick_1"]],
+          "enclosure": [["sa_da7ca73a0a12_tr_1"]]}
+
 
 def _has(name):
     return os.path.exists(os.path.join(_CASSETTES, f"{name}.json"))
@@ -27,9 +32,10 @@ def test_replayed_run_reproduces_its_golden_result_py(name, tmp_path):
     if not _has(name):
         pytest.skip(f"cassette {name} not captured yet (see plan Task 0b)")
     cassette = load_cassette(name)
-    script = _replay_run(_REQUESTS[name], cassette, str(tmp_path), _RUN_IDS[name])
+    script, client = _replay_run(_REQUESTS[name], cassette, str(tmp_path), _RUN_IDS[name])
     with open(os.path.join(_GOLDEN, f"{name}.py")) as f:
         assert script == f.read()
+    assert client.unrecorded_forgets == _SWEPT[name]
 
 
 def _replay_run(request, cassette, work_dir, run_id="replay"):
@@ -57,4 +63,4 @@ def _replay_run(request, cassette, work_dir, run_id="replay"):
     }
     out = graph.invoke(state, config=config)
     assert not out.get("fatal"), out.get("fatal")
-    return out["final_script"]
+    return out["final_script"], client
