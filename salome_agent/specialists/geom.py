@@ -24,6 +24,15 @@ call discard on the shapes you built for it before you move on.
 Do only what the request asks. Do not invent colours, transparency or
 display modes that were not requested.
 
+If a requested value or step order cannot work geometrically (a fillet
+wider than the wall it sits on, a hole larger than its part), make the
+smallest change that does work and say what you changed when you finish.
+When a tool error names a value to use, use exactly that value; do not
+work out whether a larger one would also fit. Pick one fix
+and try it; do not weigh a list of alternatives. Plan only your next step
+or two, not the whole stage: later steps get decided with their results in
+hand.
+
 If a tool result carries a `delta` note, it flagged something numerically
 wrong with that boolean or transform (a cut that removed nothing, a fuse of
 parts that never touched, a rigid move that changed volume) — fix the cause
@@ -327,6 +336,9 @@ GEOM_SPEC = register(ModuleSpec(
     execute=lambda client, name, args: client.call_tool(name, args),
     render_result=lambda result: str(_compact_result(result)),
     tools_for=_geom_tools_for,
+    kickoff=("Start with the first step now. Do not work out the later steps "
+             "yet: each tool result tells you what you need for the next one, "
+             "and the tool descriptions say how each tool behaves."),
     no_tool_nudge=("You did not call a tool. Call at least one tool now — "
                    "finish_stage once the geometry is done."),
     on_exhausted=lambda call_log, last_error: {"call_log": call_log, "last_error": last_error},

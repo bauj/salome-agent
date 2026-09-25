@@ -148,6 +148,8 @@ class ToolSpecialist:
              cancel, upstream) -> dict:
         spec = self.spec
         parts = [str(stage_plan)] + [b for b in blocks if b]
+        if spec.kickoff:
+            parts.append(spec.kickoff)
         if retry and spec.render_retry:
             rendered = spec.render_retry(retry)
             if rendered is not None:
