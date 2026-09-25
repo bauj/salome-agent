@@ -50,6 +50,8 @@ class ModuleSpec:
 
     call_prefix: str | None = None
     preamble: str = ""
+    # Closes the stage's first user message, next to the intent the model reads.
+    kickoff: str = ""
     # Empty means the planner never offers this module as a stage.
     catalogue: str = ""
     # Tools that also end the loop, each with its own handle (amend's replan).

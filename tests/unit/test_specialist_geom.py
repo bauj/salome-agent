@@ -860,3 +860,17 @@ def test_finish_stage_sweep_keeps_the_records_when_forget_fails():
                          ("make_box", {"dx": 2, "dy": 2, "dz": 2})],
                         ["box_2"], client=client)
     assert _built(result) == ["box_1", "box_2"]
+
+
+def test_first_message_tells_the_model_to_start_with_one_step():
+    # Live run 39b9e9cc5d3b: the first geom turn rehearsed every later step
+    # (3.5k-10k reasoning tokens before one make_polygon_face call).
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("finish_stage", {"result_names": ["x"]}))
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "make_box", "category": "primitive"}]}
+    run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=3)
+    sent = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert sent.startswith("{'module': 'geom'")
+    assert sent.endswith("the tool descriptions say how each tool behaves.")
