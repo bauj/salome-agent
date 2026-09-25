@@ -32,7 +32,7 @@ def tool_make_prism(executor, args: dict):
 
 
 @tool("make_revolution", category="swept",
-      description='Revolve a face/wire/edge about `axis` by angle_deg. The profile must not touch the axis.',
+      description='Revolve a face/wire/edge about `axis` by angle_deg. The profile must not cross the axis; an edge lying on the axis is fine (a full 360-degree revolve of it gives a solid). The order of the profile points (clockwise or not) does not matter.',
       schema={"type": "object", "properties": {"base": {"type": "string", "description": "face/wire/edge to revolve"}, "axis": {"description": "\"OX\"/\"OY\"/\"OZ\" or published vector name", "oneOf": [{"type": "string", "enum": ["OX", "OY", "OZ"]}, {"type": "string"}]}, "angle_deg": {"type": "number", "description": "rotation angle in degrees"}}, "required": ["base", "axis", "angle_deg"]},
       arg_types={"angle_deg": float})
 def tool_make_revolution(executor, args: dict):
@@ -115,8 +115,21 @@ def _curved_open_face_note(geompy, shape, faces) -> str:
     return note + (f", e.g. one of {flat}" if flat else "")
 
 
+def _unchanged(geompy, before, after) -> bool:
+    """A MakeThickSolid that silently returned its input: a filleted solid
+    hollowed with inside=True comes back with the same volume and face count."""
+    try:
+        face = geompy.ShapeType["FACE"]
+        if len(geompy.SubShapeAll(before, face)) != len(geompy.SubShapeAll(after, face)):
+            return False
+        v0, v1 = geompy.BasicProperties(before)[2], geompy.BasicProperties(after)[2]
+        return abs(v1 - v0) <= 1e-6 * max(abs(v0), 1.0)
+    except Exception:  # noqa: BLE001 — a failed measurement must not fail the tool
+        return False
+
+
 @tool("make_thick_solid", category="swept",
-      description='Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened).',
+      description='Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened). inside=true puts the wall inside the original surface (outer size kept); inside=false puts it outside (the part grows by `thickness`).',
       schema={"type": "object", "properties": {"shape": {"type": "string", "description": "shape to thicken"}, "thickness": {"type": "number"}, "faces": {"type": "array", "items": {"type": "integer"}, "description": "face subshape IDs to remove (open) -- required; a closed solid cannot be thickened without at least one"}, "inside": {"type": "boolean", "default": False}}, "required": ["shape", "thickness", "faces"]},
       arg_types={"thickness": float})
 def tool_make_thick_solid(executor, args: dict):
@@ -139,6 +152,12 @@ def tool_make_thick_solid(executor, args: dict):
     is_valid, msg = geompy.CheckShape(thick, True, 1)
     if not is_valid:
         return {"ok": False, "error": f"make_thick_solid: CheckShape failed ({msg})"}
+    if _unchanged(geompy, shape, thick):
+        return {"ok": False, "error": (
+            f"make_thick_solid: the result is the input unchanged -- same volume and "
+            f"faces, nothing was hollowed (OCC gave up on the inside={inside} offset "
+            f"without raising). Try inside={not inside}, or hollow before rounding "
+            f"the edges next to the open face")}
     name = _next_name(executor, "thick")
     _publish(executor, thick, name)
     return {

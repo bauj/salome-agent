@@ -391,7 +391,7 @@
         "angle_deg"
       ]
     },
-    "description": "Revolve a face/wire/edge about `axis` by angle_deg. The profile must not touch the axis.",
+    "description": "Revolve a face/wire/edge about `axis` by angle_deg. The profile must not cross the axis; an edge lying on the axis is fine (a full 360-degree revolve of it gives a solid). The order of the profile points (clockwise or not) does not matter.",
     "category": "swept"
   },
   {
@@ -446,7 +446,7 @@
         "faces"
       ]
     },
-    "description": "Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened).",
+    "description": "Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened). inside=true puts the wall inside the original surface (outer size kept); inside=false puts it outside (the part grows by `thickness`).",
     "category": "swept"
   },
   {
@@ -1210,7 +1210,7 @@
         "where"
       ]
     },
-    "description": "Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = \"all\", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state).",
+    "description": "Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = \"all\", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state). on_plane with state \"on\" returns only subshapes lying in that plane -- e.g. the rim circle of a revolved shape, not the seam edges running along its profile.",
     "category": "query"
   },
   {
