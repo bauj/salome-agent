@@ -40,6 +40,10 @@ that should keep different colours (a red body, black wheels): an object
 shows one colour, so the fuse loses them. Leave such parts as separate
 objects.
 
+Ask only for what the user asked for: no colour, transparency or extra
+features they did not mention. Any value you fill in yourself must fit the
+others -- a fillet radius below the wall thickness it rounds.
+
 Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
   AND display properties of geometry (colour, transparency, display mode).
