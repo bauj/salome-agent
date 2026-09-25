@@ -37,6 +37,10 @@ that should keep different colours (a red body, black wheels): an object
 shows one colour, so the fuse loses them. Leave such parts as separate
 objects.
 
+Ask only for what the user asked for: no colour, transparency or extra
+features they did not mention. Any value you fill in yourself must fit the
+others -- a fillet radius below the wall thickness it rounds.
+
 Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
   AND display properties of geometry (colour, transparency, display mode).
@@ -62,9 +66,9 @@ geom tools available to a single geom stage:
   make_circle -- A circular edge (wire), centre point, `normal` axis, radius.
   make_polygon_face -- Planar face bounded by a closed polygon through `points` (3 or more corners, in order; the last joins back to the first). Extrude it with make_prism for a gable roof, wedge or any prismatic profile.
   make_prism -- Linear extrusion of a face/wire/edge by the vector (dx, dy, dz).
-  make_revolution -- Revolve a face/wire/edge about `axis` by angle_deg. The profile must not touch the axis.
+  make_revolution -- Revolve a face/wire/edge about `axis` by angle_deg. The profile must not cross the axis; an edge lying on the axis is fine (a full 360-degree revolve of it gives a solid). The order of the profile points (clockwise or not) does not matter.
   make_pipe -- Sweep a cross-section `base` along a `path` wire/edge.
-  make_thick_solid -- Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened).
+  make_thick_solid -- Hollow a solid into a shell of wall thickness `thickness`. `faces` lists face subshape IDs to leave open (required -- a closed solid cannot be thickened). inside=true puts the wall inside the original surface (outer size kept); inside=false puts it outside (the part grows by `thickness`).
   make_filling -- A surface filling a set of boundary contour edges/wires.
   fuse -- Boolean union of two or more shapes into one.
   cut -- Boolean subtraction: `main` minus every shape in `tools`.
@@ -89,6 +93,6 @@ geom tools available to a single geom stage:
   measure -- Report bbox/size/centre (mm) of one or more published shapes by name. Use it to check where a shape landed and to see upstream shapes you did not build.
   explode -- Publish every subshape of the given sub_type (edge, face, ...) of `shape` as its own named object, sorted by centre for a deterministic order. Use get_subshapes instead if you only need ids.
   get_subshape -- Build one new named shape from a list of subshape ids of `shape` (e.g. a group of faces). Get the ids from get_subshapes or explode.
-  get_subshapes -- Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = "all", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state).
+  get_subshapes -- Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = "all", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state). on_plane with state "on" returns only subshapes lying in that plane -- e.g. the rim circle of a revolved shape, not the seam edges running along its profile.
   min_distance -- Report the shortest distance (mm) between two published shapes.
   basic_properties -- Report [length, area, volume] of `shape` (mm): length for an edge/wire, area for a face/shell, volume for a solid; the others are 0.
