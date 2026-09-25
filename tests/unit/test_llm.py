@@ -963,3 +963,59 @@ def test_cancel_during_a_retry_wait_gives_up_without_retrying(monkeypatch):
     with pytest.raises(LLMCancelled):
         client.chat(messages=[{"role": "user", "content": "plan"}])
     assert posts == [1]
+
+
+def _hooked(monkeypatch, lines):
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=lines))
+    client = LLMClient("http://x/v1", "", "auto")
+    seen = []
+    client.on_stream = seen.append
+    return client, seen
+
+
+def _delta(**d):
+    return "data: " + json.dumps({"choices": [{"delta": d}]})
+
+
+def test_stream_hook_gets_reasoning_and_prose_on_a_tool_call(monkeypatch):
+    lines = [_delta(reasoning_content="think "), _delta(reasoning_content="more"),
+             _delta(content="I will box."),
+             "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
+             "data: [DONE]"]
+    client, seen = _hooked(monkeypatch, lines)
+    client.chat(messages=[{"role": "user", "content": "x"}],
+                tools=[{"name": "make_box"}], module="geom")
+    assert seen == [{"type": "start", "module": "geom"},
+                    {"type": "delta", "channel": "reasoning", "text": "think "},
+                    {"type": "delta", "channel": "reasoning", "text": "more"},
+                    {"type": "delta", "channel": "prose", "text": "I will box."},
+                    {"type": "end"}]
+
+
+def test_stream_hook_skips_planner_content(monkeypatch):
+    lines = [_delta(reasoning_content="plan it"), _delta(content='{"stages": []}'),
+             "data: [DONE]"]
+    client, seen = _hooked(monkeypatch, lines)
+    client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
+    assert [e for e in seen if e["type"] == "delta"] == [
+        {"type": "delta", "channel": "reasoning", "text": "plan it"}]
+    assert seen[0] == {"type": "start", "module": "planner"}
+    assert seen[-1] == {"type": "end"}
+
+
+def test_stream_hook_ends_on_error_and_a_raising_hook_is_ignored(monkeypatch):
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=[_delta(reasoning_content="a"),
+                                                               "data: [DONE]"]))
+    client = LLMClient("http://x/v1", "", "auto", json_retries=0)
+    seen = []
+
+    def hook(ev):
+        seen.append(ev["type"])
+        raise RuntimeError("display broke")
+
+    client.on_stream = hook
+    with pytest.raises(ValueError):          # no JSON content -> planner parse error
+        client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
+    assert seen == ["start", "delta", "end"]

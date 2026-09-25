@@ -37,7 +37,7 @@ class ReplayLLM(LLMClient):
     def exhausted(self) -> bool:
         return self._i >= len(self._messages)
 
-    def _round_trip(self, payload, tool_names, extra_body):
+    def _round_trip(self, payload, tool_names, extra_body, module=None):
         assert not self.exhausted, "cassette ran out of LLM responses"
         message = self._messages[self._i]
         self._i += 1
