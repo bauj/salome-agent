@@ -845,6 +845,48 @@ class TestComplexObjectTools:
         record = result["records"][0]
         assert record["args"][3] == {"kind": "literal", "value": True}
 
+    def test_make_thick_solid_that_changed_nothing_is_an_error(self):
+        """A filleted solid hollowed with inside=True comes back unchanged from
+        OCC without raising (live runs b2c10475efd6, e9aae71088d8, 05e8d26d2d9b
+        all finished with a solid vase)."""
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.ShapeType = {"FACE": 4}
+        before, after = MagicMock(name="before"), MagicMock(name="after")
+        geompy.MakeThickSolid.return_value = after
+        geompy.SubShapeAllIDs.return_value = [3, 20]
+        geompy.CheckShape.return_value = (True, "")
+        geompy.SubShapeAll.side_effect = lambda s, t: ["f"] * 6
+        geompy.BasicProperties.side_effect = lambda s: (0.0, 0.0, 829300.0)
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": before})
+
+        result = geom_tools.tool_make_thick_solid(
+            ex, {"shape": "shape", "thickness": 2.0, "faces": [20], "inside": True})
+
+        assert result["ok"] is False
+        assert "unchanged" in result["error"]
+        assert "inside=False" in result["error"]
+        geompy.addToStudy.assert_not_called()
+
+    def test_make_thick_solid_that_hollowed_passes_the_no_op_check(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.ShapeType = {"FACE": 4}
+        before, after = MagicMock(name="before"), MagicMock(name="after")
+        geompy.MakeThickSolid.return_value = after
+        geompy.SubShapeAllIDs.return_value = [3, 20]
+        geompy.CheckShape.return_value = (True, "")
+        geompy.SubShapeAll.side_effect = lambda s, t: ["f"] * (6 if s is before else 11)
+        geompy.BasicProperties.side_effect = lambda s: (0.0, 0.0, 829300.0 if s is before else 95800.0)
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": before})
+
+        result = geom_tools.tool_make_thick_solid(
+            ex, {"shape": "shape", "thickness": 2.0, "faces": [20], "inside": False})
+
+        assert result["ok"] is True
+
     def test_make_filling(self):
         """make_filling creates a filling."""
         geom_tools.reset_counters()
@@ -1528,7 +1570,7 @@ class TestLocalOpsTools:
             "MakeFilletEdges : Fillet can't be computed on the given shape with the given radius")
         result = geom_tools.tool_fillet_edges(ex, {"shape": "shape", "radius": 999.0, "edges": "all"})
         assert result["ok"] is False
-        assert "radius below" in result["error"]
+        assert "radius" in result["error"]
 
     def test_chamfer_edges_wraps_a_geompy_failure(self):
         geompy = MagicMock()
@@ -2147,7 +2189,49 @@ class TestRecoveryHints:
         result = geom_tools.call_tool(ex, "fillet_edges",
                                       {"shape": "shape", "radius": 5, "edges": [5, 7]})
         assert "shortest selected edge is 4 mm" in result["error"]
-        assert "radius below 2" in result["error"]
+        assert "Use radius 1:" in result["error"]
+
+    def test_fillet_occ_segfault_gets_the_same_advice(self):
+        """Live run fb975ace95ef: a 1.5 mm fillet on a 2 mm rim crashed OCC and
+        the model got only the generic hint."""
+        ex = self._executor()
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [5, 7]
+        geompy.MakeFillet.side_effect = RuntimeError(
+            "MakeFilletEdges : SIGSEGV 'segmentation violation' detected. Address 3e800018d2e.")
+        geompy.GetSubShape.side_effect = lambda s, ids: ids[0]
+        geompy.BasicProperties.side_effect = lambda e: {5: (10.0, 0, 0), 7: (4.0, 0, 0)}[e]
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 1.5, "edges": [5, 7]})
+        assert "Use radius 1:" in result["error"]
+
+    def test_fillet_radius_failure_names_a_thin_neighbouring_face(self):
+        """A shelled vase's rim: both rim edges bound a 2 mm face, so the
+        ceiling is 1 mm, not half the 111 mm edge length (live run 44743d6ecbdb
+        spent 234 s arguing with the edge-length hint)."""
+        ex = self._executor(shape="shape")
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [103, 109]
+        geompy.MakeFillet.side_effect = RuntimeError(
+            "MakeFilletEdges : Fillet can't be computed on the given shape with the given radius")
+        geompy.GetSubShape.side_effect = lambda s, ids: f"e{ids[0]}"
+        geompy.BasicProperties.return_value = (111.4, 0, 0)
+        # face "rim" holds both rim edges; "wall" holds 103 and a far edge 98
+        # plus a seam 105 that touches it (distance 0, ignored)
+        edges_of = {"rim": ["e103", "e109"], "wall": ["e103", "e98", "e105"]}
+        geompy.SubShapeAll.side_effect = lambda s, t: (
+            ["rim", "wall"] if s == "shape" else edges_of[s])
+        geompy.GetSubShapeID.side_effect = lambda s, e: int(e[1:])
+        dist = {frozenset(("e103", "e109")): 2.0, frozenset(("e103", "e98")): 17.0,
+                frozenset(("e103", "e105")): 0.0}
+        geompy.MinDistance.side_effect = lambda a, b: (
+            0.0 if a in edges_of else dist[frozenset((a, b))])
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 4, "edges": [103, 109]})
+        assert result["ok"] is False
+        assert "only 2 mm wide" in result["error"]
+        assert "Use radius 0.5:" in result["error"]
+        assert "55.7" not in result["error"]
 
     def test_known_occ_message_gets_a_hint(self):
         ex = self._executor()

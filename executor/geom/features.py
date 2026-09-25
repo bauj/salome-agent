@@ -54,6 +54,59 @@ def _shortest_edge(geompy, shape, ids) -> float | None:
         return None
 
 
+_MAX_FACES_FOR_WIDTH = 100
+
+
+def _narrowest_neighbour(geompy, shape, ids) -> tuple[float, float, bool] | None:
+    """(radius ceiling, face width, both sides selected) from the narrowest face
+    next to a selected edge: its width is the distance to the nearest edge of
+    that face that does not touch the selected one (a 2 mm rim for a shelled
+    vase). A fillet on both edges of such a face gets half of it."""
+    try:
+        edge_t, face_t = geompy.ShapeType["EDGE"], geompy.ShapeType["FACE"]
+        faces = geompy.SubShapeAll(shape, face_t)
+        if len(faces) > _MAX_FACES_FOR_WIDTH:
+            return None
+        selected, best = set(ids), None
+        for eid in ids:
+            edge = geompy.GetSubShape(shape, [eid])
+            for face in faces:
+                if geompy.MinDistance(face, edge) > 1e-7:
+                    continue
+                face_edges = geompy.SubShapeAll(face, edge_t)
+                face_ids = [geompy.GetSubShapeID(shape, e) for e in face_edges]
+                if eid not in face_ids:
+                    continue
+                for oid, other in zip(face_ids, face_edges):
+                    if oid == eid:
+                        continue
+                    width = float(geompy.MinDistance(edge, other))
+                    if width <= 1e-7:
+                        continue
+                    both = oid in selected
+                    ceiling = width / 2 if both else width
+                    if best is None or ceiling < best[0]:
+                        best = (ceiling, width, both)
+        return best
+    except Exception:  # noqa: BLE001 — best-effort hint only
+        return None
+
+
+def _fillet_advice(geompy, shape, ids) -> str:
+    shortest = _shortest_edge(geompy, shape, ids)
+    narrow = _narrowest_neighbour(geompy, shape, ids)
+    if narrow and (shortest is None or narrow[0] < shortest / 2):
+        # Half the geometric ceiling: a concave edge (inner rim of a shell)
+        # fails well before it, and one number stops the model second-guessing.
+        ceiling, width, _ = narrow
+        return (f"the radius is too large — a face next to the selected edges is only "
+                f"{width:.4g} mm wide. Use radius {ceiling / 2:.2g}: it fits here")
+    if shortest:
+        return (f"the radius is too large — the shortest selected edge is "
+                f"{shortest:.4g} mm. Use radius {shortest / 4:.2g}: it fits here")
+    return "try a smaller radius or check the edge ids"
+
+
 @tool("fillet_edges", category="feature",
       description='Round edges of `shape` with the given `radius`. Select edges with `edges` ("all" or a list of edge ids from get_subshapes/explode) or inline with a `where` predicate (same as get_subshapes). Fails if the radius is too large for the shape.',
       schema={"type": "object", "properties": {"shape": {"type": "string", "description": "published name of the shape to fillet"}, "edges": {"description": "\"all\" or a list of edge subshape ids", "oneOf": [{"type": "string", "enum": ["all"]}, {"type": "array", "items": {"type": "integer"}}]}, "where": {"description": "instead of `edges`, select the edges inline: same predicate as get_subshapes -- {\"sorted_by\":\"z\",\"take\":\"max\",\"count\":4}, {\"by_size\":\"longest\",\"count\":N}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"}, "radius": {"type": "number"}}, "required": ["shape", "radius"]},
@@ -70,12 +123,10 @@ def tool_fillet_edges(executor, args: dict):
     try:
         filleted = geompy.MakeFillet(shape, args["radius"], edge_type, edge_ids)
     except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
-        shortest = _shortest_edge(geompy, shape, edge_ids) if "radius" in str(e) else None
-        if shortest:
-            advice = (f"the radius is too large — the shortest selected edge is "
-                      f"{shortest:.4g} mm, so try a radius below {shortest / 2:.4g}")
-        else:
-            advice = "try a smaller radius or check the edge ids"
+        # OCC also segfaults (caught by GEOM) on a radius too big for a thin rim.
+        radius_trouble = any(k in str(e) for k in ("radius", "SIGSEGV"))
+        advice = (_fillet_advice(geompy, shape, edge_ids) if radius_trouble
+                  else "try a smaller radius or check the edge ids")
         return {"ok": False, "error": f"fillet_edges: MakeFillet failed ({e}); {advice}"}
     # theReturnStatus=1 -> (isValid, description); the default (0) returns
     # a bare bool, which broke unpacking here until caught in testing.
