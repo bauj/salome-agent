@@ -215,6 +215,27 @@ def test_cancel_during_a_stage_stops_its_tool_loop(tmp_path, monkeypatch):
     client.call_tool.assert_not_called()
 
 
+def test_cancel_while_the_planner_streams_ends_aborted(tmp_path, monkeypatch):
+    from salome_agent.llm import LLMCancelled
+    cancel = threading.Event()
+    llm = MagicMock()
+    llm.usage = None
+
+    def chat(**kw):
+        assert llm.cancel is cancel          # the turn's event reaches the client
+        cancel.set()
+        raise LLMCancelled()
+
+    llm.chat.side_effect = chat
+    _fake_llm(monkeypatch, llm)
+    events = []
+    res = run_request("x", _config(tmp_path), client=None, on_event=events.append,
+                      on_gate=lambda p: {"action": "approve"}, cancel=cancel, run_id="r1")
+    assert [e["kind"] for e in events] == ["aborted"]
+    assert res.final_state["aborted"] is True
+    assert res.exit_code == 1
+
+
 def test_run_dir_is_absolute_even_with_a_relative_work_dir(tmp_path, monkeypatch):
     llm = MagicMock()
     llm.chat.return_value = ONE_STAGE
