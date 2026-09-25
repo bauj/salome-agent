@@ -56,6 +56,12 @@ class StreamBudgetExceeded(requests.Timeout):
     burns another full budget on the same stuck backend."""
 
 
+class LLMCancelled(Exception):
+    """The turn's cancel event was set while a call was in flight (Stop in the
+    chat). Not a failure and never retried; deliberately not a requests or
+    RuntimeError subclass so no endpoint-failure handler swallows it."""
+
+
 # A dropped/half-read stream raises one of these; all are retried with backoff.
 # StreamBudgetExceeded subclasses requests.Timeout but is caught first and NOT
 # retried.
@@ -224,6 +230,20 @@ class LLMClient:
         self.usage = {"calls": 0, "metered_calls": 0,
                       "prompt_tokens": 0, "completion_tokens": 0,
                       "approx_prompt_tokens": 0, "llm_seconds": 0.0}
+        # The running turn's threading.Event, set by runner.drive(): a call
+        # in flight stops at the next streamed line or retry wait (GH #47).
+        self.cancel = None
+
+    def _check_cancel(self) -> None:
+        if self.cancel is not None and self.cancel.is_set():
+            raise LLMCancelled("LLM call cancelled")
+
+    def _pause(self, seconds: float) -> None:
+        """A retry wait that a cancel cuts short."""
+        if self.cancel is None:
+            time.sleep(seconds)
+        elif self.cancel.wait(seconds):
+            raise LLMCancelled("LLM call cancelled")
 
     @staticmethod
     def _approx_tokens(payload: dict) -> int:
@@ -288,6 +308,7 @@ class LLMClient:
         # falls back to ISO-8859-1 for text/* and garbles every non-ASCII char.
         resp.encoding = "utf-8"
         for raw in resp.iter_lines(chunk_size=None, decode_unicode=True):
+            self._check_cancel()
             if time.monotonic() > deadline:
                 raise StreamBudgetExceeded(
                     f"LLM stream ran past the {self.request_timeout:g}s total "
@@ -392,6 +413,7 @@ class LLMClient:
         attempts = self.max_retries + 1
         for attempt in range(1, attempts + 1):
             resp = None
+            self._check_cancel()
             try:
                 resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
                                      headers=headers, verify=self.ssl_cert_file,
@@ -408,7 +430,7 @@ class LLMClient:
                     log.debug("LLM request attempt %d got HTTP %d after %.1fs, retrying",
                               attempt, resp.status_code, elapsed)
                     resp.close()
-                    time.sleep(_backoff_seconds(attempt))
+                    self._pause(_backoff_seconds(attempt))
                     t0 = time.monotonic()
                     continue
                 if resp.status_code == 429 and attempt < attempts:
@@ -416,12 +438,17 @@ class LLMClient:
                     log.warning("LLM request attempt %d rate-limited (HTTP 429), "
                                 "waiting %.0fs before retry", attempt, wait)
                     resp.close()
-                    time.sleep(wait)
+                    self._pause(wait)
                     t0 = time.monotonic()
                     continue
                 resp.raise_for_status()
                 message, usage, finish, ttft = self._consume_stream(resp, t0)
                 break
+            except LLMCancelled:
+                log.info("LLM request attempt %d cancelled", attempt)
+                if resp is not None:
+                    resp.close()
+                raise
             except StreamBudgetExceeded as e:
                 log.warning("LLM request attempt %d: %s", attempt, e)
                 if resp is not None:
@@ -434,7 +461,7 @@ class LLMClient:
                     resp.close()
                 if attempt == attempts:
                     raise
-                time.sleep(_backoff_seconds(attempt))
+                self._pause(_backoff_seconds(attempt))
                 t0 = time.monotonic()
         self.usage["llm_seconds"] += time.monotonic() - t0
         self._record_usage({"usage": usage})

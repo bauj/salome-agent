@@ -114,34 +114,43 @@ def initial_state(request: str, config: dict, client, run_id: str, batch: bool) 
 def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
     from langgraph.types import Command
 
+    from salome_agent.llm import LLMCancelled
+
     def cancelled() -> bool:
         return cancel is not None and cancel.is_set()
 
-    # nodes read it too, so a long tool loop stops mid-node (task 256)
+    # nodes read it too, so a long tool loop stops mid-node (task 256); the
+    # client reads it per streamed line, so a long model response does (GH #47)
     cfg = {**cfg, "configurable": {**cfg["configurable"], "cancel": cancel}}
+    llm.cancel = cancel
 
     stopped = False
-    while True:
-        pending = None
-        for chunk in app.stream(inp, config=cfg, stream_mode="updates"):
-            for node, update in chunk.items():
-                if node == "__interrupt__":
-                    pending = update[0].value
-                    continue
-                for ev in mapper.events(node, update):
-                    if ev["kind"] == "report":
-                        ev["data"]["usage"] = getattr(llm, "usage", None)
-                    on_event(ev)
+    try:
+        while True:
+            pending = None
+            for chunk in app.stream(inp, config=cfg, stream_mode="updates"):
+                for node, update in chunk.items():
+                    if node == "__interrupt__":
+                        pending = update[0].value
+                        continue
+                    for ev in mapper.events(node, update):
+                        if ev["kind"] == "report":
+                            ev["data"]["usage"] = getattr(llm, "usage", None)
+                        on_event(ev)
+                if cancelled():
+                    stopped = True
+                    break
+            if stopped or pending is None:
+                break
+            decision = on_gate(pending)
             if cancelled():
                 stopped = True
                 break
-        if stopped or pending is None:
-            break
-        decision = on_gate(pending)
-        if cancelled():
-            stopped = True
-            break
-        inp = Command(resume=decision)
+            inp = Command(resume=decision)
+    except LLMCancelled:
+        stopped = True
+    finally:
+        llm.cancel = None
 
     final = dict(app.get_state(cfg).values)
     if stopped and not final.get("aborted"):

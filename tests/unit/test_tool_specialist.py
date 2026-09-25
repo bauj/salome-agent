@@ -207,6 +207,17 @@ def test_cancel_already_set_skips_the_llm():
     assert result["exhausted"] is True
 
 
+def test_llm_cancelled_mid_call_ends_the_stage_with_its_calls():
+    from salome_agent.llm import LLMCancelled
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1})), LLMCancelled()]
+    spec = _spec(on_exhausted=lambda call_log, last_error: {"call_log": call_log,
+                                                            "exhausted": True})
+    result = ToolSpecialist(spec).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
+    assert result["exhausted"] is True
+    assert [c["tool_args"] for c in result["calls"]] == [{"a": 1}]
+
+
 def _in_place(recv):
     return {"ok": True, "records": [{"fn": "SetColor", "args": [], "out_vars": [],
                                      "publish": None, "emit": "method_call", "recv": recv}]}

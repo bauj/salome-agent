@@ -2,7 +2,7 @@ import json
 
 from salome_agent.codegen import _reachable, _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
-from salome_agent.llm import assistant_tool_turn, continuity_fields
+from salome_agent.llm import LLMCancelled, assistant_tool_turn, continuity_fields
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec
 from salome_agent.specialists.tool_selection import (
@@ -220,8 +220,12 @@ class ToolSpecialist:
             # A shallow copy per call: the message dicts are never mutated after
             # append, so the copy is byte-identical content, and each request is a
             # verbatim extension of the last.
-            response = llm.chat(messages=list(messages), tools=tools,
-                                module=stage_plan.get("module"))
+            try:
+                response = llm.chat(messages=list(messages), tools=tools,
+                                    module=stage_plan.get("module"))
+            except LLMCancelled:
+                log.info("  %s stage: cancelled mid-call", spec.name)
+                return _with_calls(spec.on_exhausted(call_log, last_error), calls)
             if response.get("content"):
                 log.debug("    LLM reasoning: %s", response["content"])
             tool_calls = response["tool_calls"]

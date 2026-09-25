@@ -3,8 +3,8 @@ import json
 import pytest
 import requests
 
-from salome_agent.llm import (LLMClient, _parse_json_content, assistant_tool_turn,
-                              continuity_fields)
+from salome_agent.llm import (LLMCancelled, LLMClient, _parse_json_content,
+                              assistant_tool_turn, continuity_fields)
 
 
 def _sse_frames(body):
@@ -904,3 +904,62 @@ def test_streamed_non_ascii_survives_decoding(monkeypatch):
         messages=[{"role": "user", "content": "hi"}],
         tools=[{"name": "t", "parameters": {"type": "object", "properties": {}}}])
     assert out["content"] == "200×120 mm — 45°"
+
+
+def test_cancel_mid_stream_stops_reading_and_closes_the_response(monkeypatch):
+    import threading
+    cancel = threading.Event()
+    read = []
+    closed = []
+
+    class _Resp(_FakeResp):
+        def iter_lines(self, chunk_size=512, decode_unicode=False):
+            for i in range(1000):
+                read.append(i)
+                if i == 3:
+                    cancel.set()
+                yield "data: " + json.dumps(
+                    {"choices": [{"delta": {"reasoning_content": "hmm "}}]})
+
+        def close(self):
+            closed.append(1)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _Resp(None))
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = cancel
+    with pytest.raises(LLMCancelled):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert len(read) == 4
+    assert closed
+
+
+def test_cancel_already_set_sends_no_request(monkeypatch):
+    import threading
+    posts = []
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: posts.append(1))
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = threading.Event()
+    client.cancel.set()
+    with pytest.raises(LLMCancelled):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert posts == []
+
+
+def test_cancel_during_a_retry_wait_gives_up_without_retrying(monkeypatch):
+    import threading
+    cancel = threading.Event()
+    posts = []
+
+    def post(*a, **k):
+        posts.append(1)
+        cancel.set()
+        return _FakeResp({}, status_code=429, headers={"Retry-After": "30"})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = cancel
+    with pytest.raises(LLMCancelled):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert posts == [1]
