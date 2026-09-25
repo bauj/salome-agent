@@ -6,6 +6,40 @@ PLAN = [{"module": "geom", "intent": "box", "params": {}, "inputs": []},
         {"module": "smesh", "intent": "mesh it", "params": {}, "inputs": []}]
 
 
+def test_reasoning_source_follows_planner_stage_and_edit():
+    m = EventMapper("r1", "/w/r1")
+    ev = m.reasoning("planner", 1, "reasoning", "hmm")
+    assert ev == {"kind": "reasoning", "run_id": "r1",
+                  "data": {"source": "planner", "index": None, "call": 1,
+                           "channel": "reasoning", "text": "hmm"}}
+    assert m.reasoning("geom", 2, "prose", "x")["data"]["source"] == "edit"
+    m.events("plan", {"plan": PLAN})
+    m.events("advance", {"stages": {}, "stage_idx": 1})
+    d = m.reasoning("smesh", 3, "prose", "x")["data"]
+    assert (d["source"], d["index"]) == ("stage", 1)
+
+
+def test_reasoning_relay_throttles_and_flushes_on_end_and_channel_switch():
+    from salome_agent.runner import ReasoningRelay
+    now = [0.0]
+    out = []
+    relay = ReasoningRelay(EventMapper("r1", "/w"), out.append, clock=lambda: now[0])
+    relay({"type": "start", "module": "planner"})
+    relay({"type": "delta", "channel": "reasoning", "text": "a"})
+    now[0] = 0.2
+    relay({"type": "delta", "channel": "reasoning", "text": "b"})
+    assert out == []
+    now[0] = 0.6
+    relay({"type": "delta", "channel": "reasoning", "text": "c"})
+    relay({"type": "delta", "channel": "prose", "text": "p"})
+    relay({"type": "end"})
+    assert [(e["data"]["call"], e["data"]["channel"], e["data"]["text"]) for e in out] == [
+        (1, "reasoning", "abc"), (1, "prose", "p")]
+    relay({"type": "start", "module": "planner"})
+    relay({"type": "end"})
+    assert len(out) == 2                     # an empty call emits nothing
+
+
 def _kinds(evs):
     return [e["kind"] for e in evs]
 
@@ -234,6 +268,26 @@ def test_cancel_while_the_planner_streams_ends_aborted(tmp_path, monkeypatch):
     assert [e["kind"] for e in events] == ["aborted"]
     assert res.final_state["aborted"] is True
     assert res.exit_code == 1
+
+
+def test_drive_relays_streamed_reasoning_as_events(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.usage = None
+
+    def chat(**kw):
+        llm.on_stream({"type": "start", "module": "planner"})
+        llm.on_stream({"type": "delta", "channel": "reasoning", "text": "one box"})
+        llm.on_stream({"type": "end"})
+        return ONE_STAGE
+
+    llm.chat.side_effect = chat
+    _fake_llm(monkeypatch, llm)
+    events = []
+    run_request("x", _config(tmp_path), client=None, on_event=events.append,
+                on_gate=lambda p: {"action": "abort"}, run_id="r1")
+    assert events[0]["kind"] == "reasoning"
+    assert events[0]["data"]["text"] == "one box"
+    assert llm.on_stream is None             # removed when the turn ends
 
 
 def test_run_dir_is_absolute_even_with_a_relative_work_dir(tmp_path, monkeypatch):

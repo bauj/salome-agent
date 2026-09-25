@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -26,6 +27,18 @@ class EventMapper:
 
     def event(self, kind: str, **data) -> dict:
         return {"kind": kind, "run_id": self.run_id, "data": data}
+
+    def reasoning(self, module, call: int, channel: str, text: str) -> dict:
+        """A streamed chunk of model reasoning or tool-turn prose. No plan this
+        turn and not the planner means an amend (chat edit) turn."""
+        if module == "planner":
+            source, index = "planner", None
+        elif self.plan:
+            source, index = "stage", self.idx
+        else:
+            source, index = "edit", None
+        return self.event("reasoning", source=source, index=index, call=call,
+                          channel=channel, text=text)
 
     def events(self, node: str, update: dict | None) -> list[dict]:
         update = update or {}
@@ -111,6 +124,43 @@ def initial_state(request: str, config: dict, client, run_id: str, batch: bool) 
     }
 
 
+class ReasoningRelay:
+    """LLMClient.on_stream -> `reasoning` events, merged so a long reasoning
+    stream sends one event per `interval` rather than one per token."""
+
+    def __init__(self, mapper, on_event, clock=time.monotonic, interval: float = 0.5):
+        self.mapper, self.on_event = mapper, on_event
+        self.clock, self.interval = clock, interval
+        self.call = 0
+        self.module = None
+        self.channel = None
+        self.buf: list[str] = []
+        self.last = 0.0
+
+    def __call__(self, ev: dict) -> None:
+        kind = ev["type"]
+        if kind == "start":
+            self.call += 1
+            self.module = ev.get("module")
+            self.channel, self.buf, self.last = None, [], self.clock()
+        elif kind == "delta":
+            if ev["channel"] != self.channel:
+                self._flush()
+                self.channel = ev["channel"]
+            self.buf.append(ev["text"])
+            if self.clock() - self.last >= self.interval:
+                self._flush()
+        elif kind == "end":
+            self._flush()
+
+    def _flush(self) -> None:
+        if self.buf:
+            self.on_event(self.mapper.reasoning(self.module, self.call, self.channel,
+                                                "".join(self.buf)))
+            self.buf = []
+        self.last = self.clock()
+
+
 def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
     from langgraph.types import Command
 
@@ -123,6 +173,7 @@ def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
     # client reads it per streamed line, so a long model response does (GH #47)
     cfg = {**cfg, "configurable": {**cfg["configurable"], "cancel": cancel}}
     llm.cancel = cancel
+    llm.on_stream = ReasoningRelay(mapper, on_event)
 
     stopped = False
     try:
@@ -151,6 +202,7 @@ def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
         stopped = True
     finally:
         llm.cancel = None
+        llm.on_stream = None
 
     final = dict(app.get_state(cfg).values)
     if stopped and not final.get("aborted"):

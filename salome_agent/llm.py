@@ -233,10 +233,21 @@ class LLMClient:
         # The running turn's threading.Event, set by runner.drive(): a call
         # in flight stops at the next streamed line or retry wait (GH #47).
         self.cancel = None
+        # Also set by runner.drive(): called with {"type": "start" | "delta" |
+        # "end", ...} as a call streams, so a front end can show the reasoning live.
+        self.on_stream = None
 
     def _check_cancel(self) -> None:
         if self.cancel is not None and self.cancel.is_set():
             raise LLMCancelled("LLM call cancelled")
+
+    def _stream_event(self, **ev) -> None:
+        if self.on_stream is None:
+            return
+        try:
+            self.on_stream(ev)
+        except Exception as e:  # noqa: BLE001 — a display problem must not fail the call
+            log.warning("LLM stream hook failed: %s", e)
 
     def _pause(self, seconds: float) -> None:
         """A retry wait that a cancel cuts short."""
@@ -278,7 +289,8 @@ class LLMClient:
             log.warning("could not write LLM trace: %s", e)
         log.debug("LLM response:\n%s", json.dumps(response, indent=2, default=str, ensure_ascii=False))
 
-    def _consume_stream(self, resp, t0: float) -> tuple[dict, dict | None, str | None, float | None]:
+    def _consume_stream(self, resp, t0: float,
+                        prose: bool = False) -> tuple[dict, dict | None, str | None, float | None]:
         """Reassemble an SSE `data:` stream into one provider `message` dict
         (plus usage / finish_reason / time-to-first-token). `content` and
         `reasoning_content` fragments are concatenated; `tool_calls` fragments
@@ -336,8 +348,12 @@ class LLMClient:
                 delta = choice.get("delta") or {}
                 if delta.get("content"):
                     content.append(delta["content"])
+                    if prose:
+                        self._stream_event(type="delta", channel="prose", text=delta["content"])
                 if delta.get("reasoning_content"):
                     reasoning.append(delta["reasoning_content"])
+                    self._stream_event(type="delta", channel="reasoning",
+                                       text=delta["reasoning_content"])
                 for key in _CONTINUITY_KEYS:
                     if delta.get(key):
                         msg_extra[key] = delta[key]
@@ -390,9 +406,17 @@ class LLMClient:
         return message, usage, finish, ttft
 
     def _round_trip(self, payload: dict, tool_names: list[str] | None,
-                    extra_body: dict | None = None) -> dict:
+                    extra_body: dict | None = None, module: str | None = None) -> dict:
         """One streamed POST to /chat/completions (with transient-failure
         retries) — returns the reassembled provider `message` object."""
+        self._stream_event(type="start", module=module)
+        try:
+            return self._round_trip_attempts(payload, tool_names, extra_body)
+        finally:
+            self._stream_event(type="end")
+
+    def _round_trip_attempts(self, payload: dict, tool_names: list[str] | None,
+                             extra_body: dict | None) -> dict:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         headers.update(self.extra_headers)
         payload = {**payload, "stream": True,
@@ -442,7 +466,8 @@ class LLMClient:
                     t0 = time.monotonic()
                     continue
                 resp.raise_for_status()
-                message, usage, finish, ttft = self._consume_stream(resp, t0)
+                message, usage, finish, ttft = self._consume_stream(
+                    resp, t0, prose=bool(tool_names))
                 break
             except LLMCancelled:
                 log.info("LLM request attempt %d cancelled", attempt)
@@ -498,7 +523,7 @@ class LLMClient:
         tool_names = [t["name"] for t in tools] if tools else None
 
         if tools:
-            message = self._round_trip(payload, tool_names, extra_body)
+            message = self._round_trip(payload, tool_names, extra_body, module)
             calls = message.get("tool_calls") or []
             content = message.get("content") or ""
             log.debug("LLM tool_calls=%s%s",
@@ -523,7 +548,7 @@ class LLMClient:
         # will not parse, hand the model its own answer plus the exact parser
         # error and re-ask, up to json_retries times (GH #6).
         for attempt in range(self.json_retries + 1):
-            message = self._round_trip(payload, None, extra_body)
+            message = self._round_trip(payload, None, extra_body, module)
             content = message.get("content")
             try:
                 return _parse_json_content(content)
