@@ -209,6 +209,10 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     request = state["user_request"]
     if state.get("replan_context"):
         request = f"{request}\n\n{state['replan_context']}"
+    else:
+        # a first turn that was cancelled or failed rolls back, so a follow-up
+        # "retry" is planned from scratch and must still see what was asked
+        request += _earlier_requests(state)
     try:
         stage_plans = plan(request, llm, detail)
     except Exception as e:  # noqa: BLE001

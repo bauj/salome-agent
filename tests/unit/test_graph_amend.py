@@ -138,6 +138,43 @@ def test_replan_tells_the_planner_the_earlier_requests(tmp_path, monkeypatch):
     assert "did not finish" in request
 
 
+def _first_plan_seen(tmp_path, monkeypatch, history):
+    from salome_agent.nodes import planner as planner_mod
+    seen = {}
+
+    def fake_plan(request, llm, detail="balanced"):
+        seen["request"] = request
+        raise RuntimeError("stop after planning")
+
+    monkeypatch.setattr(planner_mod, "plan", fake_plan)
+    state = _state(tmp_path, BuildGraph(), "retry", turn=0)
+    state["history"] = history
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    build_graph(batch=True).invoke(state, config=cfg)
+    return seen["request"]
+
+
+def test_retry_after_a_cancelled_first_turn_tells_the_planner_what_was_asked(tmp_path,
+                                                                            monkeypatch):
+    # a rolled-back turn leaves turn_idx at 0, so "retry" is planned, not amended
+    request = _first_plan_seen(tmp_path, monkeypatch, [
+        {"event": "turn", "turn": 0, "text": "A small car with 4 torus wheels",
+         "status": "failed", "summary": None}])
+    assert request.startswith("retry")
+    assert "A small car with 4 torus wheels (did not finish)" in request
+
+
+def test_first_plan_without_earlier_turns_is_the_bare_request(tmp_path, monkeypatch):
+    assert _first_plan_seen(tmp_path, monkeypatch, []) == "retry"
+
+
+def test_replan_lists_the_earlier_requests_once(tmp_path, monkeypatch):
+    request = _replan_seen(tmp_path, monkeypatch, [
+        {"event": "turn", "turn": 0, "text": "a box", "status": "ok", "summary": "box"}])
+    assert request.count("Earlier requests") == 1
+
+
 def test_replan_without_earlier_turns_adds_no_request_list(tmp_path, monkeypatch):
     assert "Earlier requests" not in _replan_seen(tmp_path, monkeypatch, [])
 
