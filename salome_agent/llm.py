@@ -197,7 +197,13 @@ class LLMClient:
         self.module_extra_body = module_extra_body or {}
         # requests `verify`: a CA-bundle path, else True (default: verify against
         # the system trust store — never "" / False, which disables TLS checks).
-        self.ssl_cert_file = ssl_cert_file or True
+        # Checked here so a bad path fails at startup, not on the first request.
+        self.ssl_cert_file = True
+        if ssl_cert_file:
+            cert_path = os.path.realpath(os.path.expanduser(ssl_cert_file))
+            if not os.path.isfile(cert_path):
+                raise FileNotFoundError(f"SSL certificate file not found: {cert_path}")
+            self.ssl_cert_file = cert_path
         self.temperature = temperature
         # Total wall-clock budget for one streamed round-trip.
         self.request_timeout = request_timeout

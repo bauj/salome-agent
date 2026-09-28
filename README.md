@@ -98,7 +98,7 @@ cp config.example.json config.json
 
 Required keys: `llm.base_url`, `llm.model`, `salome.root`. Missing any of them is a hard error.
 
-`llm.ssl_cert_file` is optional: a path to a CA bundle for verifying an HTTPS endpoint with a private CA. Empty/omitted verifies against the system trust store.
+`llm.ssl_cert_file` is optional: a path to a CA bundle for verifying an HTTPS endpoint with a private CA (`~` is expanded; a missing file fails at startup). Empty/omitted verifies against the system trust store.
 
 `llm.extra_headers` is optional: an object of extra HTTP headers sent verbatim on every LLM request. In a string value, `{run_id}` is replaced with the current run's id — useful for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`.
 
