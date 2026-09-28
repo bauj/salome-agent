@@ -2,7 +2,7 @@ import json
 
 from salome_agent.logs import log
 
-REQUIRED = [("llm", "base_url"), ("llm", "model"), ("salome", "root")]
+REQUIRED = [("llm", "base_url"), ("llm", "model")]
 
 # Keys the code actually reads out of the `llm` block (see cli.build_llm /
 # llm.LLMClient). An unknown key here is almost always a typo -- a hyphen for

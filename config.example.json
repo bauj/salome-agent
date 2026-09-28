@@ -11,8 +11,7 @@
     "plan_detail": "balanced",
     "tool_selection": "hints",
     "verify_cadence": "final",
-    "on_stage_failure": "abort",
-    "assembler_smoke_run": true
+    "on_stage_failure": "abort"
   },
   "work_dir": "~/.local/share/salome-agent/runs"
 }
