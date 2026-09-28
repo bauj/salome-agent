@@ -11,8 +11,7 @@ def test_loads_valid_config(tmp_path):
         "llm": {"base_url": "http://x", "api_key": "k", "model": "m", "temperature": 0},
         "salome": {"root": "/opt/salome"},
         "policy": {"static_retries": 3, "exec_retries": 2, "exec_timeout_s": 120,
-                   "tool_iteration_cap": 12, "on_stage_failure": "abort",
-                   "assembler_smoke_run": True},
+                   "tool_iteration_cap": 12, "on_stage_failure": "abort"},
         "work_dir": "~/.local/share/salome-agent/runs",
     }))
     config = load_config(str(cfg_path))
@@ -48,3 +47,9 @@ def test_known_llm_keys_do_not_warn(tmp_path, caplog):
     with caplog.at_level("WARNING", logger="salome_agent"):
         load_config(str(cfg_path))
     assert "unknown key" not in caplog.text
+
+
+def test_salome_root_is_optional(tmp_path):
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({"llm": {"base_url": "http://x", "model": "m"}}))
+    assert load_config(str(cfg_path))["llm"]["model"] == "m"
