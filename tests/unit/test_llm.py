@@ -323,6 +323,31 @@ def test_chat_sends_extra_headers(monkeypatch):
     assert captured["headers"]["x-opencode-session"] == "run123"
 
 
+def test_chat_verifies_against_ssl_cert_file_with_home_expanded(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "ca.pem").write_text("")
+    captured = {}
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        captured["verify"] = verify
+        return _FakeResp({"choices": [{"finish_reason": "stop",
+                                       "message": {"content": '{"ok": 1}'}}]})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    LLMClient("http://x/v1", "", "auto", ssl_cert_file="~/ca.pem").chat(
+        messages=[{"role": "user", "content": "x"}])
+    assert captured["verify"] == str(tmp_path / "ca.pem")
+
+
+def test_missing_ssl_cert_file_fails_at_construction(tmp_path):
+    with pytest.raises(FileNotFoundError, match="SSL certificate file not found"):
+        LLMClient("http://x/v1", "", "auto", ssl_cert_file=str(tmp_path / "nope.pem"))
+
+
+def test_no_ssl_cert_file_verifies_against_system_store():
+    assert LLMClient("http://x/v1", "", "auto").ssl_cert_file is True
+
+
 def test_build_llm_substitutes_run_id_in_extra_headers():
     from salome_agent.cli import build_llm
 
