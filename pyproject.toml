@@ -9,10 +9,7 @@ requires-python = ">=3.10"
 dependencies = [
     "langgraph",
     "requests",
-    "langchain-core",
-    "langchain-openai",
     "typing-extensions>=4.16.0",
-    "packaging",
 ]
 
 [project.optional-dependencies]
