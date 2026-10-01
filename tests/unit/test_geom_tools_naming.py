@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
-from executor import geom_tools
+# Alias keeps the assertions below unedited after the geom_tools -> geom package move.
+from executor import geom as geom_tools
 
 
 def test_next_name_applies_prefix_and_increments():

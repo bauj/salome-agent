@@ -99,3 +99,23 @@ def test_plan_appends_image_description_to_the_request():
     plan("make this bracket", llm, image_description="Summary: an L-bracket")
     user_content = llm.chat.call_args.kwargs["messages"][1]["content"]
     assert user_content == "make this bracket\n\nImage description:\nSummary: an L-bracket"
+
+
+def test_every_routable_module_contributes_its_catalogue():
+    from salome_agent.modules import routable
+
+    specs = {s.name for s in routable()}
+    assert specs == {"geom", "smesh", "paravis"}
+    for spec in routable():
+        assert spec.catalogue.strip() in PLANNER_SYSTEM_PROMPT
+
+
+def test_a_module_with_no_catalogue_is_not_routable():
+    from salome_agent.modules import ModuleSpec, Terminator, routable
+
+    spec = ModuleSpec(
+        name="amend", prompt=lambda c: "",
+        terminator=Terminator("finish_turn", {}, "", lambda a, c: {}),
+        execute=lambda c, n, a: {"ok": True}, render_result=str,
+        tools_for=lambda c: {}, no_tool_nudge="", on_exhausted=lambda c, e: {})
+    assert spec not in routable()

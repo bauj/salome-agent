@@ -73,10 +73,17 @@ def write_report(state: dict, usage: dict | None = None) -> str:
         lines += [f"Session: live GUI study. Objects prefixed `{prefix}` may "
                   f"remain from failed stage attempts — safe to bulk-delete.", ""]
     elif sess.get("mode") == "headless":
-        lines += ["Session: isolated study.", ""]
+        prefix = sess.get("name_prefix") or "sa_"
+        lines += [f"Session: headless study, shared across runs. This run's "
+                  f"objects are prefixed `{prefix}`.", ""]
     if usage and usage.get("calls"):
         lines += _usage_lines(usage)
     lines += _timing_lines(state)
+    outcome = state.get("turn_outcome") or {}
+    if outcome.get("summary") or outcome.get("question"):
+        lines += ["## Amend", "", outcome.get("summary") or "",
+                  *([f"Question for you: {outcome['question']}"] if outcome.get("question") else []),
+                  ""]
     lines.append("## Stages")
     total = len(state["stages"])
     for idx in sorted(state["stages"]):

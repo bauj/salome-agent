@@ -3,8 +3,8 @@ import json
 import pytest
 import requests
 
-from salome_agent.llm import (LLMClient, _parse_json_content, assistant_tool_turn,
-                              continuity_fields, with_images)
+from salome_agent.llm import (LLMCancelled, LLMClient, _parse_json_content,
+                              assistant_tool_turn, continuity_fields, with_images)
 
 
 def _sse_frames(body):
@@ -344,6 +344,31 @@ def test_chat_sends_extra_headers(monkeypatch):
               extra_headers={"x-opencode-session": "run123"}).chat(
         messages=[{"role": "user", "content": "x"}])
     assert captured["headers"]["x-opencode-session"] == "run123"
+
+
+def test_chat_verifies_against_ssl_cert_file_with_home_expanded(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "ca.pem").write_text("")
+    captured = {}
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        captured["verify"] = verify
+        return _FakeResp({"choices": [{"finish_reason": "stop",
+                                       "message": {"content": '{"ok": 1}'}}]})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    LLMClient("http://x/v1", "", "auto", ssl_cert_file="~/ca.pem").chat(
+        messages=[{"role": "user", "content": "x"}])
+    assert captured["verify"] == str(tmp_path / "ca.pem")
+
+
+def test_missing_ssl_cert_file_fails_at_construction(tmp_path):
+    with pytest.raises(FileNotFoundError, match="SSL certificate file not found"):
+        LLMClient("http://x/v1", "", "auto", ssl_cert_file=str(tmp_path / "nope.pem"))
+
+
+def test_no_ssl_cert_file_verifies_against_system_store():
+    assert LLMClient("http://x/v1", "", "auto").ssl_cert_file is True
 
 
 def test_build_llm_substitutes_run_id_in_extra_headers():
@@ -901,21 +926,147 @@ def test_trace_records_ttft(monkeypatch, tmp_path):
     assert "ttft_s" in entry["response"]
 
 
-def test_stream_is_decoded_as_utf8_not_latin1(monkeypatch):
-    seen = {}
+def test_streamed_non_ascii_survives_decoding(monkeypatch):
+    """An SSE body with no charset makes requests assume ISO-8859-1 (its text/*
+    default); UTF-8 "×" then came back as "Ã\x97" and, echoed into later
+    prompts, compounded (PR #44)."""
+    import io
+
+    # raw UTF-8 on the wire, as real providers send it — not \uXXXX escapes
+    frame = json.dumps({"choices": [{"delta": {"role": "assistant",
+                                               "content": "200×120 mm — 45°"},
+                                     "finish_reason": "stop"}]}, ensure_ascii=False)
+    body = f"data: {frame}\n\ndata: [DONE]\n\n".encode("utf-8")
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        resp = requests.Response()
+        resp.status_code = 200
+        resp.headers["Content-Type"] = "text/event-stream"
+        # what HTTPAdapter.build_response does
+        resp.encoding = requests.utils.get_encoding_from_headers(resp.headers)
+        resp.raw = io.BytesIO(body)
+        return resp
+
+    monkeypatch.setattr(requests, "post", post)
+    out = LLMClient(base_url="http://x", api_key="k", model="m").chat(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"name": "t", "parameters": {"type": "object", "properties": {}}}])
+    assert out["content"] == "200×120 mm — 45°"
+
+
+def test_cancel_mid_stream_stops_reading_and_closes_the_response(monkeypatch):
+    import threading
+    cancel = threading.Event()
+    read = []
+    closed = []
 
     class _Resp(_FakeResp):
-        encoding = "ISO-8859-1"  # what requests guesses for a charset-less SSE reply
-
         def iter_lines(self, chunk_size=512, decode_unicode=False):
-            seen["encoding"] = self.encoding
-            yield from super().iter_lines(chunk_size, decode_unicode)
+            for i in range(1000):
+                read.append(i)
+                if i == 3:
+                    cancel.set()
+                yield "data: " + json.dumps(
+                    {"choices": [{"delta": {"reasoning_content": "hmm "}}]})
+
+        def close(self):
+            closed.append(1)
 
     monkeypatch.setattr("salome_agent.llm.requests.post",
-                        lambda *a, **k: _Resp({"choices": [{"message": {"content": "{}"}}]}))
-    LLMClient("http://x/v1", "k", "m", ssl_cert_file="").chat(
-        messages=[{"role": "user", "content": "hi"}])
-    assert seen["encoding"] == "utf-8"
+                        lambda *a, **k: _Resp(None))
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = cancel
+    with pytest.raises(LLMCancelled):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert len(read) == 4
+    assert closed
+
+
+def test_cancel_already_set_sends_no_request(monkeypatch):
+    import threading
+    posts = []
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: posts.append(1))
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = threading.Event()
+    client.cancel.set()
+    with pytest.raises(LLMCancelled):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert posts == []
+
+
+def test_cancel_during_a_retry_wait_gives_up_without_retrying(monkeypatch):
+    import threading
+    cancel = threading.Event()
+    posts = []
+
+    def post(*a, **k):
+        posts.append(1)
+        cancel.set()
+        return _FakeResp({}, status_code=429, headers={"Retry-After": "30"})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = cancel
+    with pytest.raises(LLMCancelled):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert posts == [1]
+
+
+def _hooked(monkeypatch, lines):
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=lines))
+    client = LLMClient("http://x/v1", "", "auto")
+    seen = []
+    client.on_stream = seen.append
+    return client, seen
+
+
+def _delta(**d):
+    return "data: " + json.dumps({"choices": [{"delta": d}]})
+
+
+def test_stream_hook_gets_reasoning_and_prose_on_a_tool_call(monkeypatch):
+    lines = [_delta(reasoning_content="think "), _delta(reasoning_content="more"),
+             _delta(content="I will box."),
+             "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
+             "data: [DONE]"]
+    client, seen = _hooked(monkeypatch, lines)
+    client.chat(messages=[{"role": "user", "content": "x"}],
+                tools=[{"name": "make_box"}], module="geom")
+    assert seen == [{"type": "start", "module": "geom"},
+                    {"type": "delta", "channel": "reasoning", "text": "think "},
+                    {"type": "delta", "channel": "reasoning", "text": "more"},
+                    {"type": "delta", "channel": "prose", "text": "I will box."},
+                    {"type": "end"}]
+
+
+def test_stream_hook_skips_planner_content(monkeypatch):
+    lines = [_delta(reasoning_content="plan it"), _delta(content='{"stages": []}'),
+             "data: [DONE]"]
+    client, seen = _hooked(monkeypatch, lines)
+    client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
+    assert [e for e in seen if e["type"] == "delta"] == [
+        {"type": "delta", "channel": "reasoning", "text": "plan it"}]
+    assert seen[0] == {"type": "start", "module": "planner"}
+    assert seen[-1] == {"type": "end"}
+
+
+def test_stream_hook_ends_on_error_and_a_raising_hook_is_ignored(monkeypatch):
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=[_delta(reasoning_content="a"),
+                                                               "data: [DONE]"]))
+    client = LLMClient("http://x/v1", "", "auto", json_retries=0)
+    seen = []
+
+    def hook(ev):
+        seen.append(ev["type"])
+        raise RuntimeError("display broke")
+
+    client.on_stream = hook
+    with pytest.raises(ValueError):          # no JSON content -> planner parse error
+        client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
+    assert seen == ["start", "delta", "end"]
 
 
 def test_length_finish_reason_warns_about_truncation(monkeypatch, caplog):

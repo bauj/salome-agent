@@ -29,8 +29,14 @@ class FakeBackend:
     def refresh(self, module):
         self.refreshed.append(module)
 
+    def forget(self, names):
+        return {"ok": True, "removed": []}
+
     def find_object(self, name):
         return name
+
+    def leftovers(self):
+        return 0
 
     def poisoned(self):
         return self._poisoned

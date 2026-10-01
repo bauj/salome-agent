@@ -67,6 +67,12 @@ class StreamBudgetExceeded(requests.Timeout):
     burns another full budget on the same stuck backend."""
 
 
+class LLMCancelled(Exception):
+    """The turn's cancel event was set while a call was in flight (Stop in the
+    chat). Not a failure and never retried; deliberately not a requests or
+    RuntimeError subclass so no endpoint-failure handler swallows it."""
+
+
 # A dropped/half-read stream raises one of these; all are retried with backoff.
 # StreamBudgetExceeded subclasses requests.Timeout but is caught first and NOT
 # retried.
@@ -202,7 +208,13 @@ class LLMClient:
         self.module_extra_body = module_extra_body or {}
         # requests `verify`: a CA-bundle path, else True (default: verify against
         # the system trust store — never "" / False, which disables TLS checks).
-        self.ssl_cert_file = ssl_cert_file or True
+        # Checked here so a bad path fails at startup, not on the first request.
+        self.ssl_cert_file = True
+        if ssl_cert_file:
+            cert_path = os.path.realpath(os.path.expanduser(ssl_cert_file))
+            if not os.path.isfile(cert_path):
+                raise FileNotFoundError(f"SSL certificate file not found: {cert_path}")
+            self.ssl_cert_file = cert_path
         self.temperature = temperature
         # Total wall-clock budget for one streamed round-trip.
         self.request_timeout = request_timeout
@@ -235,6 +247,31 @@ class LLMClient:
         self.usage = {"calls": 0, "metered_calls": 0,
                       "prompt_tokens": 0, "completion_tokens": 0,
                       "approx_prompt_tokens": 0, "llm_seconds": 0.0}
+        # The running turn's threading.Event, set by runner.drive(): a call
+        # in flight stops at the next streamed line or retry wait (GH #47).
+        self.cancel = None
+        # Also set by runner.drive(): called with {"type": "start" | "delta" |
+        # "end", ...} as a call streams, so a front end can show the reasoning live.
+        self.on_stream = None
+
+    def _check_cancel(self) -> None:
+        if self.cancel is not None and self.cancel.is_set():
+            raise LLMCancelled("LLM call cancelled")
+
+    def _stream_event(self, **ev) -> None:
+        if self.on_stream is None:
+            return
+        try:
+            self.on_stream(ev)
+        except Exception as e:  # noqa: BLE001 — a display problem must not fail the call
+            log.warning("LLM stream hook failed: %s", e)
+
+    def _pause(self, seconds: float) -> None:
+        """A retry wait that a cancel cuts short."""
+        if self.cancel is None:
+            time.sleep(seconds)
+        elif self.cancel.wait(seconds):
+            raise LLMCancelled("LLM call cancelled")
 
     @staticmethod
     def _approx_tokens(payload: dict) -> int:
@@ -269,7 +306,8 @@ class LLMClient:
             log.warning("could not write LLM trace: %s", e)
         log.debug("LLM response:\n%s", json.dumps(response, indent=2, default=str, ensure_ascii=False))
 
-    def _consume_stream(self, resp, t0: float) -> tuple[dict, dict | None, str | None, float | None]:
+    def _consume_stream(self, resp, t0: float,
+                        prose: bool = False) -> tuple[dict, dict | None, str | None, float | None]:
         """Reassemble an SSE `data:` stream into one provider `message` dict
         (plus usage / finish_reason / time-to-first-token). `content` and
         `reasoning_content` fragments are concatenated; `tool_calls` fragments
@@ -295,7 +333,11 @@ class LLMClient:
         # "read exactly amt bytes" semantics and blocks until the buffer fills
         # or the stream ends — a slow token trickle then stalls. None yields
         # whatever is on the socket as it arrives.
+        # SSE is UTF-8 by spec; with no charset in the Content-Type, requests
+        # falls back to ISO-8859-1 for text/* and garbles every non-ASCII char.
+        resp.encoding = "utf-8"
         for raw in resp.iter_lines(chunk_size=None, decode_unicode=True):
+            self._check_cancel()
             if time.monotonic() > deadline:
                 raise StreamBudgetExceeded(
                     f"LLM stream ran past the {self.request_timeout:g}s total "
@@ -323,8 +365,12 @@ class LLMClient:
                 delta = choice.get("delta") or {}
                 if delta.get("content"):
                     content.append(delta["content"])
+                    if prose:
+                        self._stream_event(type="delta", channel="prose", text=delta["content"])
                 if delta.get("reasoning_content"):
                     reasoning.append(delta["reasoning_content"])
+                    self._stream_event(type="delta", channel="reasoning",
+                                       text=delta["reasoning_content"])
                 for key in _CONTINUITY_KEYS:
                     if delta.get(key):
                         msg_extra[key] = delta[key]
@@ -377,9 +423,17 @@ class LLMClient:
         return message, usage, finish, ttft
 
     def _round_trip(self, payload: dict, tool_names: list[str] | None,
-                    extra_body: dict | None = None) -> dict:
+                    extra_body: dict | None = None, module: str | None = None) -> dict:
         """One streamed POST to /chat/completions (with transient-failure
         retries) — returns the reassembled provider `message` object."""
+        self._stream_event(type="start", module=module)
+        try:
+            return self._round_trip_attempts(payload, tool_names, extra_body)
+        finally:
+            self._stream_event(type="end")
+
+    def _round_trip_attempts(self, payload: dict, tool_names: list[str] | None,
+                             extra_body: dict | None) -> dict:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         headers.update(self.extra_headers)
         payload = {**payload, "stream": True,
@@ -400,6 +454,7 @@ class LLMClient:
         attempts = self.max_retries + 1
         for attempt in range(1, attempts + 1):
             resp = None
+            self._check_cancel()
             try:
                 resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
                                      headers=headers, verify=self.ssl_cert_file,
@@ -416,7 +471,7 @@ class LLMClient:
                     log.debug("LLM request attempt %d got HTTP %d after %.1fs, retrying",
                               attempt, resp.status_code, elapsed)
                     resp.close()
-                    time.sleep(_backoff_seconds(attempt))
+                    self._pause(_backoff_seconds(attempt))
                     t0 = time.monotonic()
                     continue
                 if resp.status_code == 429 and attempt < attempts:
@@ -424,16 +479,18 @@ class LLMClient:
                     log.warning("LLM request attempt %d rate-limited (HTTP 429), "
                                 "waiting %.0fs before retry", attempt, wait)
                     resp.close()
-                    time.sleep(wait)
+                    self._pause(wait)
                     t0 = time.monotonic()
                     continue
                 resp.raise_for_status()
-                # An SSE reply is text/event-stream with no charset, which
-                # requests decodes as ISO-8859-1 -- turning "Ø" / "°" into
-                # "Ã" / "Â°". JSON is UTF-8 by spec.
-                resp.encoding = "utf-8"
-                message, usage, finish, ttft = self._consume_stream(resp, t0)
+                message, usage, finish, ttft = self._consume_stream(
+                    resp, t0, prose=bool(tool_names))
                 break
+            except LLMCancelled:
+                log.info("LLM request attempt %d cancelled", attempt)
+                if resp is not None:
+                    resp.close()
+                raise
             except StreamBudgetExceeded as e:
                 log.warning("LLM request attempt %d: %s", attempt, e)
                 if resp is not None:
@@ -446,7 +503,7 @@ class LLMClient:
                     resp.close()
                 if attempt == attempts:
                     raise
-                time.sleep(_backoff_seconds(attempt))
+                self._pause(_backoff_seconds(attempt))
                 t0 = time.monotonic()
         self.usage["llm_seconds"] += time.monotonic() - t0
         self._record_usage({"usage": usage})
@@ -491,7 +548,7 @@ class LLMClient:
         tool_names = [t["name"] for t in tools] if tools else None
 
         if tools:
-            message = self._round_trip(payload, tool_names, extra_body)
+            message = self._round_trip(payload, tool_names, extra_body, module)
             calls = message.get("tool_calls") or []
             content = message.get("content") or ""
             log.debug("LLM tool_calls=%s%s",
@@ -505,8 +562,8 @@ class LLMClient:
                 return {"tool_call": None, "args": None, "tool_call_id": None,
                         "tool_calls": [], "content": content, "raw_message": message}
             # tool_calls: every call the model emitted this turn (tool_choice=
-            # "auto" allows several). The singular keys mirror the first call —
-            # kept for callers that only ever expect one (specialists/base.py).
+            # "auto" allows several). The singular keys mirror the first call,
+            # kept for backward compatibility with callers that expect only one.
             first = parsed[0]
             return {"tool_call": first["name"], "args": first["args"],
                     "tool_call_id": first["id"], "tool_calls": parsed,
@@ -516,7 +573,7 @@ class LLMClient:
         # will not parse, hand the model its own answer plus the exact parser
         # error and re-ask, up to json_retries times (GH #6).
         for attempt in range(self.json_retries + 1):
-            message = self._round_trip(payload, None, extra_body)
+            message = self._round_trip(payload, None, extra_body, module)
             content = message.get("content")
             try:
                 return _parse_json_content(content)

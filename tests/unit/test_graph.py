@@ -62,11 +62,6 @@ def test_retry_context_measure_failure_is_best_effort():
     assert ctx["built_info"] is None
 
 
-def test_select_upstream_scopes_to_declared_inputs_when_they_resolve():
-    stages = {0: {"status": "ok", "result_names": ["box_1", "cyl_1"]}}
-    assert select_upstream({"inputs": ["cyl_1"]}, stages, 1) == ["cyl_1"]
-
-
 def test_select_upstream_falls_back_when_inputs_do_not_resolve():
     stages = {0: {"status": "ok", "result_names": ["box_1"]}}
     assert select_upstream({"inputs": ["cube"]}, stages, 1) == ["box_1"]
@@ -137,18 +132,19 @@ def test_abort_at_plan_gate_writes_no_output_files(tmp_path):
 
 def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
     from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
 
     captured = {}
 
-    def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
-                                 tool_selection="hints", verify_cadence="final",
-                                 image_description=None, retry=None, seed_call_log=None):
-        captured["upstream"] = upstream
+    def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
+                tool_selection="hints", verify_cadence="final", retry=None,
+                seed_call_log=None, seed_calls=None, cancel=None, upstream=()):
+        captured["blocks"] = blocks
         captured["tool_selection"] = tool_selection
+        captured["upstream"] = upstream
         return {"call_log": [], "result_names": ["walls_1"]}
 
-    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist",
-                        fake_run_geom_specialist)
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
 
     client = MagicMock()
     client.call_tool.return_value = {
@@ -174,10 +170,10 @@ def test_geom_stage_measures_upstream_and_forwards_it(monkeypatch):
     graph._run_stage_node(state, config)
 
     client.call_tool.assert_called_once_with("measure", {"names": ["fuse_1"]})
-    assert captured["upstream"] == {
-        "fuse_1": {"bbox": [0, 100, 0, 100, 0, 20],
-                   "size": [100, 100, 20], "centre": [50, 50, 10]}
-    }
+    assert len(captured["blocks"]) == 1
+    assert "fuse_1" in captured["blocks"][0]
+    assert "[50, 50, 10]" in captured["blocks"][0]
+    assert list(captured["upstream"]) == ["fuse_1"]
 
 
 def _http_error(code):
@@ -219,11 +215,12 @@ def test_plan_node_still_raises_a_non_endpoint_error(monkeypatch):
 
 def test_run_stage_node_turns_endpoint_error_into_a_clean_fatal(monkeypatch):
     from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
 
-    def boom(*a, **k):
+    def boom(self, *a, **k):
         raise requests.ConnectionError("no route to host")
 
-    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", boom)
+    monkeypatch.setattr(ToolSpecialist, "run", boom)
     state = {
         "stage_idx": 0,
         "plan": [{"module": "geom", "intent": "box", "params": {}, "inputs": []}],
@@ -235,6 +232,23 @@ def test_run_stage_node_turns_endpoint_error_into_a_clean_fatal(monkeypatch):
     cmd = graph._run_stage_node(state, config)
     assert cmd.goto == "assemble"
     assert "fatal" in cmd.update
+
+
+def test_unknown_planner_module_becomes_a_fatal_not_a_crash(tmp_path):
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.return_value = {
+        "stages": [{"module": "mesh", "intent": "mesh it", "params": {}, "inputs": []}]}
+    llm.usage = None
+    built = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": "t1", "llm_client": llm, "executor_client": None}}
+    state = _initial_state(tmp_path)
+    state["config"]["batch"] = True
+
+    final = built.invoke(state, config=cfg)
+    assert final["fatal"] == "planner produced unknown module 'mesh'"
+    assert final["report"]
 
 
 def test_endpoint_fatal_run_produces_report_and_exit_code(tmp_path, monkeypatch):
@@ -253,17 +267,17 @@ def test_endpoint_fatal_run_produces_report_and_exit_code(tmp_path, monkeypatch)
 
 def test_first_geom_stage_does_not_call_measure(monkeypatch):
     from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
 
     captured = {}
 
-    def fake_run_geom_specialist(stage_plan, llm, client, cap, upstream=None,
-                                 tool_selection="hints", verify_cadence="final",
-                                 image_description=None, retry=None, seed_call_log=None):
+    def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
+                tool_selection="hints", verify_cadence="final", retry=None,
+                seed_call_log=None, seed_calls=None, cancel=None, upstream=()):
         captured["tool_selection"] = tool_selection
         return {"call_log": [], "result_names": ["box_1"]}
 
-    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist",
-                        fake_run_geom_specialist)
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
     client = MagicMock()
     state = {
         "stage_idx": 0,
@@ -304,15 +318,17 @@ def _geom_state(status_stage=None):
 
 def test_run_stage_node_records_per_stage_timing(monkeypatch):
     from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
 
     llm = _FakeLLM()
 
-    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
-                 verify_cadence="final", image_description=None, retry=None, seed_call_log=None):
+    def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
+                tool_selection="hints", verify_cadence="final", retry=None,
+                seed_call_log=None, seed_calls=None, cancel=None, upstream=()):
         llm.burn(calls=4, in_tok=12000, out_tok=1500, seconds=20.0)
         return {"call_log": [], "result_names": ["box_1"]}
 
-    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
     state = _geom_state()
     cmd = graph._run_stage_node(state, {"configurable": {"llm_client": llm,
                                                          "executor_client": None}})
@@ -324,15 +340,17 @@ def test_run_stage_node_records_per_stage_timing(monkeypatch):
 
 def test_run_stage_node_timing_accumulates_across_a_retry(monkeypatch):
     from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
 
     llm = _FakeLLM()
 
-    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
-                 verify_cadence="final", image_description=None, retry=None, seed_call_log=None):
+    def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
+                tool_selection="hints", verify_cadence="final", retry=None,
+                seed_call_log=None, seed_calls=None, cancel=None, upstream=()):
         llm.burn(calls=3, in_tok=5000, out_tok=600, seconds=10.0)
         return {"call_log": [], "result_names": ["box_1"]}
 
-    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
     prior = {"module": "geom", "status": "failed",
              "timing": {"wall": 12.0, "llm_s": 10.0, "core_s": 2.0, "turns": 3,
                         "in_tok": 5000, "out_tok": 600}}
@@ -346,12 +364,14 @@ def test_run_stage_node_timing_accumulates_across_a_retry(monkeypatch):
 
 def test_run_stage_node_skips_timing_without_a_real_usage_dict(monkeypatch):
     from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
 
-    def fake_spec(stage_plan, llm, client, cap, upstream=None, tool_selection="hints",
-                 verify_cadence="final", image_description=None, retry=None, seed_call_log=None):
+    def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
+                tool_selection="hints", verify_cadence="final", retry=None,
+                seed_call_log=None, seed_calls=None, cancel=None, upstream=()):
         return {"call_log": [], "result_names": ["box_1"]}
 
-    monkeypatch.setattr("salome_agent.specialists.geom.run_geom_specialist", fake_spec)
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
     state = _geom_state()
     cmd = graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
                                                          "executor_client": None}})
@@ -404,3 +424,65 @@ def test_plan_node_hands_the_description_not_the_images_to_the_planner(monkeypat
              "image_description": "Summary: a box"}
     graph._plan_node(state, {"configurable": {"llm_client": MagicMock()}})
     assert seen == {"images": None, "image_description": "Summary: a box"}
+
+
+def test_select_upstream_always_returns_every_available_name():
+    from salome_agent.graph import select_upstream
+
+    stages = {0: {"status": "ok", "result_names": ["box_1", "cyl_1"]}}
+    # `inputs` holds plain words by design (planner.py), never object names —
+    # a full match used to scope down and never fires in practice.
+    assert select_upstream({"inputs": ["the box"]}, stages, 1) == ["box_1", "cyl_1"]
+    assert select_upstream({"inputs": ["box_1"]}, stages, 1) == ["box_1", "cyl_1"]
+    assert select_upstream({"inputs": []}, stages, 1) == ["box_1", "cyl_1"]
+
+
+def test_retry_context_carries_the_failed_attempts_calls():
+    calls = [{"tool": "make_box", "tool_args": {"dx": 1}, "records": []}]
+    state = {"stages": {0: {"status": "failed", "call_log": [], "calls": calls}},
+             "last_error": None, "history": []}
+    assert retry_context(state, 0, client=None)["calls"] == calls
+
+
+def _one_geom_stage(status="pending", **stage):
+    return {"stage_idx": 0,
+            "plan": [{"module": "geom", "intent": "box", "params": {}, "inputs": []}],
+            "stages": {0: {"module": "geom", "status": status, **stage}},
+            "config": {"policy": {"tool_iteration_cap": 5, "on_stage_failure": "abort"}},
+            "last_error": None, "history": []}
+
+
+def test_run_stage_keeps_the_call_trace(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+    calls = [{"tool": "make_box", "tool_args": {"dx": 1}, "records": []}]
+
+    def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
+                 tool_selection="hints", verify_cadence="final", retry=None,
+                 seed_call_log=None, seed_calls=None, cancel=None, upstream=()):
+        return {"call_log": [], "calls": calls, "result_names": ["box_1"]}
+
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
+    cmd = graph._run_stage_node(_one_geom_stage(), {"configurable": {
+        "llm_client": MagicMock(), "executor_client": None}})
+    assert cmd.update["stages"][0]["calls"] == calls
+
+
+def test_retry_seeds_the_failed_attempts_calls(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+    old = [{"tool": "make_box", "tool_args": {"dx": 1}, "records": []}]
+    seen = {}
+
+    def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
+                 tool_selection="hints", verify_cadence="final", retry=None,
+                 seed_call_log=None, seed_calls=None, cancel=None, upstream=()):
+        seen["seed_calls"] = seed_calls
+        return {"call_log": [], "calls": old, "result_names": ["box_1"]}
+
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
+    graph._run_stage_node(_one_geom_stage("failed", call_log=[], calls=old),
+                          {"configurable": {"llm_client": MagicMock(), "executor_client": None}})
+    assert seen["seed_calls"] == old

@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from executor import geom_tools
+# Alias keeps the assertions below unedited after the geom_tools -> geom package move.
+from executor import geom as geom_tools
 
 _VALID_CATEGORIES = {
     "primitive", "sketch", "swept", "boolean",
@@ -40,7 +41,7 @@ class TestToolDescriptions:
 class TestMeasureTool:
     def _executor(self, bbox_by_shape):
         geompy = MagicMock()
-        geompy.BoundingBox.side_effect = lambda s: bbox_by_shape[s]
+        geompy.BoundingBox.side_effect = lambda s, *_: bbox_by_shape[s]
         return SimpleNamespace(namespace={"geompy": geompy},
                                geom_bindings={n: n for n in bbox_by_shape})
 
@@ -554,6 +555,89 @@ class TestBasicObjectTools:
         assert record["args"][0] == {"kind": "ref", "value": "pt1"}
         assert record["args"][1] == {"kind": "ref", "value": "pt2"}
 
+    def test_make_line_is_described_as_a_segment(self):
+        assert "segment" in geom_tools.TOOL_DESCRIPTIONS["make_line"]
+        assert "infinite" not in geom_tools.TOOL_DESCRIPTIONS["make_line"]
+
+    def test_make_polygon_face_from_coordinates(self):
+        """Closed polyline through the corners -> planar face (GH #45)."""
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeVertex.side_effect = [MagicMock(), MagicMock(), MagicMock()]
+        geompy.PointCoordinates.side_effect = [(0, 0, 80), (0, 120, 80), (0, 60, 120)]
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy}, geom_bindings={})
+
+        result = geom_tools.tool_make_polygon_face(
+            ex, {"points": ["0,0,80", "0,120,80", "0,60,120"]})
+
+        assert result["ok"] is True, result.get("error")
+        assert [r["fn"] for r in result["records"]] == [
+            "MakeVertex", "MakeVertex", "MakeVertex", "MakePolyline", "MakeFaceWires"]
+        pts = [r["out_vars"][0] for r in result["records"][:3]]
+        poly, face = result["records"][3], result["records"][4]
+        assert poly["args"] == [{"kind": "list", "value": [{"kind": "ref", "value": p} for p in pts]},
+                                {"kind": "literal", "value": True}]
+        assert poly["publish"] is None
+        assert face["args"] == [{"kind": "list", "value": [{"kind": "ref", "value": poly["out_vars"][0]}]},
+                                {"kind": "literal", "value": 1}]
+        assert face["publish"] == face["out_vars"] == ["sa_face_1"]
+        assert "sa_face_1" in ex.geom_bindings
+
+    def test_make_polygon_face_accepts_point_names(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.PointCoordinates.side_effect = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
+                             geom_bindings={"a": 1, "b": 2, "c": 3})
+
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c"]})
+
+        assert result["ok"] is True
+        assert [r["fn"] for r in result["records"]] == ["MakePolyline", "MakeFaceWires"]
+        geompy.MakePolyline.assert_called_once_with([1, 2, 3], True)
+
+    def test_make_polygon_face_needs_three_points(self):
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": MagicMock()}, geom_bindings={})
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["0,0,0", "1,0,0"]})
+        assert result["ok"] is False
+        assert "at least 3" in result["error"]
+
+    def test_make_polygon_face_non_planar_says_so(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.PointCoordinates.side_effect = [(0, 0, 0), (10, 0, 0), (10, 10, 0), (0, 10, 5)]
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
+                             geom_bindings={"a": 1, "b": 2, "c": 3, "d": 4})
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c", "d"]})
+        assert result["ok"] is False
+        assert "same plane" in result["error"]
+        geompy.MakePolyline.assert_not_called()
+
+    def test_make_polygon_face_collinear_says_so(self):
+        geompy = MagicMock()
+        geompy.PointCoordinates.side_effect = [(0, 0, 0), (1, 1, 1), (2, 2, 2)]
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
+                             geom_bindings={"a": 1, "b": 2, "c": 3})
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c"]})
+        assert result["ok"] is False
+        assert "collinear" in result["error"]
+
+    def test_make_polygon_face_codegen(self):
+        from salome_agent.codegen import generate
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.PointCoordinates.side_effect = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        geompy.CheckShape.return_value = (True, "")
+        ex = SimpleNamespace(name_prefix="", namespace={"geompy": geompy},
+                             geom_bindings={"a": 1, "b": 2, "c": 3})
+        result = geom_tools.tool_make_polygon_face(ex, {"points": ["a", "b", "c"]})
+        assert generate(result["records"], ["face_1"]) == (
+            "wire_1 = geompy.MakePolyline([a, b, c], True)\n"
+            "face_1 = geompy.MakeFaceWires([wire_1], 1)\n"
+            "geompy.addToStudy(face_1, 'face_1')")
+
     def test_make_plane(self):
         """make_plane creates a plane from point and normal."""
         geom_tools.reset_counters()
@@ -719,6 +803,7 @@ class TestComplexObjectTools:
         geompy = MagicMock()
         thick = MagicMock()
         geompy.MakeThickSolid.return_value = thick
+        geompy.SubShapeAllIDs.return_value = [3, 13, 23]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(
             name_prefix="sa_",
@@ -745,6 +830,7 @@ class TestComplexObjectTools:
         geompy = MagicMock()
         thick = MagicMock()
         geompy.MakeThickSolid.return_value = thick
+        geompy.SubShapeAllIDs.return_value = [3, 13, 23]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(
             name_prefix="sa_",
@@ -758,6 +844,48 @@ class TestComplexObjectTools:
         assert result["ok"] is True
         record = result["records"][0]
         assert record["args"][3] == {"kind": "literal", "value": True}
+
+    def test_make_thick_solid_that_changed_nothing_is_an_error(self):
+        """A filleted solid hollowed with inside=True comes back unchanged from
+        OCC without raising (live runs b2c10475efd6, e9aae71088d8, 05e8d26d2d9b
+        all finished with a solid vase)."""
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.ShapeType = {"FACE": 4}
+        before, after = MagicMock(name="before"), MagicMock(name="after")
+        geompy.MakeThickSolid.return_value = after
+        geompy.SubShapeAllIDs.return_value = [3, 20]
+        geompy.CheckShape.return_value = (True, "")
+        geompy.SubShapeAll.side_effect = lambda s, t: ["f"] * 6
+        geompy.BasicProperties.side_effect = lambda s: (0.0, 0.0, 829300.0)
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": before})
+
+        result = geom_tools.tool_make_thick_solid(
+            ex, {"shape": "shape", "thickness": 2.0, "faces": [20], "inside": True})
+
+        assert result["ok"] is False
+        assert "unchanged" in result["error"]
+        assert "inside=False" in result["error"]
+        geompy.addToStudy.assert_not_called()
+
+    def test_make_thick_solid_that_hollowed_passes_the_no_op_check(self):
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.ShapeType = {"FACE": 4}
+        before, after = MagicMock(name="before"), MagicMock(name="after")
+        geompy.MakeThickSolid.return_value = after
+        geompy.SubShapeAllIDs.return_value = [3, 20]
+        geompy.CheckShape.return_value = (True, "")
+        geompy.SubShapeAll.side_effect = lambda s, t: ["f"] * (6 if s is before else 11)
+        geompy.BasicProperties.side_effect = lambda s: (0.0, 0.0, 829300.0 if s is before else 95800.0)
+        ex = SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                             geom_bindings={"shape": before})
+
+        result = geom_tools.tool_make_thick_solid(
+            ex, {"shape": "shape", "thickness": 2.0, "faces": [20], "inside": False})
+
+        assert result["ok"] is True
 
     def test_make_filling(self):
         """make_filling creates a filling."""
@@ -900,6 +1028,115 @@ class TestBooleanTools:
         record = result["records"][0]
         assert record["fn"] == "MakePartition"
         assert record["args"][1] == {"kind": "list", "value": []}
+
+
+def _coloured(rgb):
+    """A shape mock whose GetColor() answers like GEOM: 0-1 floats, -1 when unset."""
+    shape = MagicMock()
+    r, g, b = rgb if rgb is not None else (-1.0, -1.0, -1.0)
+    shape.GetColor.return_value = SimpleNamespace(R=r, G=g, B=b)
+    return shape
+
+
+class TestBooleanColours:
+    """A boolean result is a new object with no colour (task 246)."""
+
+    def _ex(self, geompy, bindings):
+        geom_tools.reset_counters()
+        geompy.CheckShape.return_value = (True, "")
+        return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                               geom_bindings=bindings)
+
+    def test_fuse_of_same_coloured_parts_keeps_the_colour(self):
+        geompy = MagicMock()
+        out = MagicMock()
+        geompy.MakeFuse.return_value = out
+        a, b = _coloured((1.0, 0.0, 0.0)), _coloured((1.0, 0.0, 0.0))
+        ex = self._ex(geompy, {"a": a, "b": b})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["a", "b"]})
+
+        out.SetColor.assert_called_once_with(a.GetColor.return_value)
+        colour = result["records"][1]
+        assert colour["fn"] == "SetColor"
+        assert colour["emit"] == "method_call"
+        assert colour["recv"] == "sa_fuse_1"
+        assert colour["args"] == [{"kind": "salomeds_color", "value": [255, 0, 0]}]
+        assert "colour" not in result
+
+    def test_fuse_of_differently_coloured_parts_says_the_colours_are_lost(self):
+        geompy = MagicMock()
+        out = MagicMock()
+        geompy.MakeFuse.return_value = out
+        ex = self._ex(geompy, {"body": _coloured((1.0, 0.0, 0.0)),
+                               "wheels": _coloured((0.0, 0.0, 0.0))})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["body", "wheels"]})
+
+        out.SetColor.assert_not_called()
+        assert len(result["records"]) == 1
+        note = result["colour"]
+        assert "body (255, 0, 0)" in note and "wheels (0, 0, 0)" in note
+        assert "separate" in note
+
+    def test_coloured_and_uncoloured_operands_count_as_different(self):
+        geompy = MagicMock()
+        geompy.MakeFuse.return_value = MagicMock()
+        ex = self._ex(geompy, {"a": _coloured((1.0, 0.0, 0.0)), "b": _coloured(None)})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["a", "b"]})
+
+        assert "b uncoloured" in result["colour"]
+
+    def test_uncoloured_operands_stay_silent(self):
+        geompy = MagicMock()
+        out = MagicMock()
+        geompy.MakeFuse.return_value = out
+        ex = self._ex(geompy, {"a": _coloured(None), "b": _coloured(None)})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["a", "b"]})
+
+        out.SetColor.assert_not_called()
+        assert len(result["records"]) == 1
+        assert "colour" not in result
+
+    def test_cut_keeps_the_main_shape_colour_whatever_the_tools(self):
+        geompy = MagicMock()
+        out = MagicMock()
+        geompy.MakeCut.return_value = out
+        main = _coloured((0.0, 0.0, 1.0))
+        ex = self._ex(geompy, {"main": main, "tool": _coloured((1.0, 0.0, 0.0))})
+
+        result = geom_tools.tool_cut(ex, {"main": "main", "tools": ["tool"]})
+
+        out.SetColor.assert_called_once_with(main.GetColor.return_value)
+        assert result["records"][1]["args"][0]["value"] == [0, 0, 255]
+        assert "colour" not in result
+
+    def test_common_and_partition_carry_a_shared_colour(self):
+        for tool, fn in ((geom_tools.tool_common, "MakeCommonList"),
+                         (geom_tools.tool_partition, "MakePartition")):
+            geompy = MagicMock()
+            out = MagicMock()
+            getattr(geompy, fn).return_value = out
+            ex = self._ex(geompy, {"a": _coloured((0.0, 1.0, 0.0)),
+                                   "b": _coloured((0.0, 1.0, 0.0))})
+
+            result = tool(ex, {"shapes": ["a", "b"]})
+
+            assert result["records"][1]["fn"] == "SetColor", fn
+
+    def test_unreadable_colour_is_treated_as_uncoloured(self):
+        geompy = MagicMock()
+        geompy.MakeFuse.return_value = MagicMock()
+        a, b = MagicMock(), MagicMock()
+        a.GetColor.side_effect = RuntimeError("CORBA")
+        ex = self._ex(geompy, {"a": a, "b": b})
+
+        result = geom_tools.tool_fuse(ex, {"shapes": ["a", "b"]})
+
+        assert result["ok"] is True
+        assert len(result["records"]) == 1
 
 
 class TestTransformationTools:
@@ -1205,7 +1442,7 @@ class TestLocalOpsTools:
         geompy.ShapeType = {"EDGE": 6}
         geompy.SubShapeAllSortedCentres.return_value = ["a", "b", "c"]
         geompy.SubShapeAllSortedCentresIDs.return_value = [10, 11, 12]
-        geompy.BoundingBox.side_effect = lambda s: {
+        geompy.BoundingBox.side_effect = lambda s, *_: {
             "a": [0, 0, 0, 0, 0, 0], "b": [0, 0, 0, 0, 9, 9],
             "c": [0, 0, 0, 0, 5, 5]}[s]
         geompy.MakeFillet.return_value = MagicMock()
@@ -1250,6 +1487,7 @@ class TestLocalOpsTools:
         shape = MagicMock()
         filleted = MagicMock()
         geompy.MakeFillet.return_value = filleted
+        geompy.SubShapeAllIDs.return_value = [1, 3, 5, 7]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(
             name_prefix="sa_",
@@ -1295,6 +1533,7 @@ class TestLocalOpsTools:
     def _fillet_executor(self):
         geompy = MagicMock()
         geompy.MakeFillet.return_value = MagicMock()
+        geompy.SubShapeAllIDs.return_value = [2, 3, 4, 6]
         geompy.CheckShape.return_value = (True, "")
         return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
                                geom_bindings={"shape": MagicMock()})
@@ -1331,7 +1570,7 @@ class TestLocalOpsTools:
             "MakeFilletEdges : Fillet can't be computed on the given shape with the given radius")
         result = geom_tools.tool_fillet_edges(ex, {"shape": "shape", "radius": 999.0, "edges": "all"})
         assert result["ok"] is False
-        assert "smaller radius" in result["error"]
+        assert "radius" in result["error"]
 
     def test_chamfer_edges_wraps_a_geompy_failure(self):
         geompy = MagicMock()
@@ -1349,6 +1588,7 @@ class TestLocalOpsTools:
         shape = MagicMock()
         chamfered = MagicMock()
         geompy.MakeChamferEdges.return_value = chamfered
+        geompy.SubShapeAllIDs.return_value = [1, 2]
         geompy.CheckShape.return_value = (True, "")
         ex = SimpleNamespace(
             name_prefix="sa_",
@@ -1486,6 +1726,19 @@ class TestShapeInfoFeedback:
             "centre": [5.0, 10.0, 6.5],
         }
 
+    def test_shape_info_asks_for_the_precise_bounding_box(self):
+        # The default box encloses a fillet's control poles: seen live, a
+        # filleted 40-radius cone measured +-42.73 (precise: +-39.48).
+        geom_tools.reset_counters()
+        geompy = MagicMock()
+        geompy.MakeBoxDXDYDZ.return_value = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        geompy.BoundingBox.return_value = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0]
+
+        geom_tools.call_tool(self._ex(geompy), "make_box", {"dx": 1, "dy": 1, "dz": 1})
+
+        assert all(c.args[1:] == (True,) for c in geompy.BoundingBox.call_args_list)
+
     def test_no_shape_info_for_display_tools(self, monkeypatch):
         geom_tools.reset_counters()
         geompy = MagicMock()
@@ -1567,7 +1820,7 @@ class TestGetSubshapesQuery:
         geompy.ShapeType = {"EDGE": 6, "FACE": 4}
         geompy.SubShapeAllSortedCentres.return_value = subs
         geompy.SubShapeAllSortedCentresIDs.return_value = ids
-        geompy.BoundingBox.side_effect = lambda s: bboxes[s]
+        geompy.BoundingBox.side_effect = lambda s, *_: bboxes[s]
         if props is not None:
             geompy.BasicProperties.side_effect = lambda s: props[s]
         return SimpleNamespace(namespace={"geompy": geompy},
@@ -1657,7 +1910,7 @@ class TestAlignTool:
     def _executor(self, bbox_by_shape):
         geompy = MagicMock()
         objs = {n: f"<{n}>" for n in bbox_by_shape}
-        geompy.BoundingBox.side_effect = lambda s: bbox_by_shape[
+        geompy.BoundingBox.side_effect = lambda s, *_: bbox_by_shape[
             next(n for n, o in objs.items() if o == s)]
         geompy.MakeTranslation.return_value = "<moved>"
         geompy.CheckShape.return_value = (True, "")
@@ -1736,7 +1989,7 @@ class TestDeltaNote:
 
     def _bboxes(self, geompy, mapping):
         # mapping: shape -> [xmin, xmax, ymin, ymax, zmin, zmax]
-        geompy.BoundingBox.side_effect = lambda s: mapping[s]
+        geompy.BoundingBox.side_effect = lambda s, *_: mapping[s]
 
     def test_fuse_of_bbox_disjoint_parts_is_flagged(self):
         geompy = MagicMock()
@@ -1821,8 +2074,23 @@ class TestDeltaNote:
         note = geom_tools._delta_note(
             ex, "translate", {"shape": "src", "dx": 5, "dy": 0, "dz": 0},
             {"result_shape": "tr_1",
-             "shape_info": {"bbox": [], "size": [], "centre": [5.0, 5.0, 5.0]}})
+             "shape_info": {"bbox": [0.0, 10.0, 0.0, 10.0, 0.0, 10.0],
+                            "size": [10.0, 10.0, 10.0], "centre": [5.0, 5.0, 5.0]}})
         assert note and "no effect" in note
+
+    def test_rotation_about_the_shape_centre_is_silent(self):
+        # A torus rotated 90 deg about OX keeps its centre at the origin but its
+        # bbox turns 28x28x8 -> 28x8x28: it did move (seen live, run 291882037be4).
+        geompy = MagicMock()
+        self._vols(geompy, {"src": 100.0, "rot_1": 100.0})
+        geompy.BoundingBox.return_value = [-14.0, 14.0, -14.0, 14.0, -4.0, 4.0]
+        ex = self._ex(geompy, {"src": "src", "rot_1": "rot_1"})
+        note = geom_tools._delta_note(
+            ex, "rotate", {"shape": "src", "axis": "OX", "angle_deg": 90},
+            {"result_shape": "rot_1",
+             "shape_info": {"bbox": [-14.0, 14.0, -4.0, 4.0, -14.0, 14.0],
+                            "size": [28.0, 8.0, 28.0], "centre": [0.0, 0.0, 0.0]}})
+        assert note is None
 
     def test_good_rigid_transform_is_silent(self):
         geompy = MagicMock()
@@ -1871,3 +2139,132 @@ class TestDeltaNote:
                                       {"shape": "box_1", "dx": 10, "dy": 0, "dz": 0})
         assert result["ok"] is True
         assert "volume changed" in result["delta"]
+
+
+def test_every_registered_geom_tool_is_complete():
+    from executor.geom import registry
+
+    for name in registry.names:
+        assert registry.descriptions()[name], f"no description for {name}"
+        assert registry.schemas()[name].get("type") == "object", f"bad schema for {name}"
+        assert name in registry.arg_types(), f"no arg_types entry for {name}"
+        assert registry.categories()[name] in _VALID_CATEGORIES, f"bad category for {name}"
+
+
+class TestRecoveryHints:
+    """Task 218: failures carry what to do next, not just OCC's message."""
+
+    def _executor(self, **bindings):
+        geompy = MagicMock()
+        geompy.CheckShape.return_value = (True, "")
+        return SimpleNamespace(name_prefix="sa_", namespace={"geompy": geompy},
+                               geom_bindings=bindings or {"shape": MagicMock()})
+
+    def test_guessed_face_id_is_rejected_with_the_real_ids(self):
+        ex = self._executor()
+        ex.namespace["geompy"].SubShapeAllIDs.return_value = [3, 13, 23]
+        result = geom_tools.call_tool(ex, "make_thick_solid",
+                                      {"shape": "shape", "thickness": 3, "faces": [0]})
+        assert result["ok"] is False
+        assert "[0] are not face ids of shape" in result["error"]
+        assert "[3, 13, 23]" in result["error"]
+        ex.namespace["geompy"].MakeThickSolid.assert_not_called()
+
+    def test_guessed_edge_id_is_rejected_before_occ(self):
+        ex = self._executor()
+        ex.namespace["geompy"].SubShapeAllIDs.return_value = [5, 7]
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 1, "edges": [0, 1]})
+        assert "[0, 1] are not edge ids of shape" in result["error"]
+        ex.namespace["geompy"].MakeFillet.assert_not_called()
+
+    def test_fillet_radius_failure_gives_a_measured_ceiling(self):
+        ex = self._executor()
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [5, 7]
+        geompy.MakeFillet.side_effect = RuntimeError(
+            "MakeFilletEdges : Fillet can't be computed on the given shape with the given radius")
+        geompy.GetSubShape.side_effect = lambda s, ids: ids[0]
+        geompy.BasicProperties.side_effect = lambda e: {5: (10.0, 0, 0), 7: (4.0, 0, 0)}[e]
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 5, "edges": [5, 7]})
+        assert "shortest selected edge is 4 mm" in result["error"]
+        assert "Use radius 1:" in result["error"]
+
+    def test_fillet_occ_segfault_gets_the_same_advice(self):
+        """Live run fb975ace95ef: a 1.5 mm fillet on a 2 mm rim crashed OCC and
+        the model got only the generic hint."""
+        ex = self._executor()
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [5, 7]
+        geompy.MakeFillet.side_effect = RuntimeError(
+            "MakeFilletEdges : SIGSEGV 'segmentation violation' detected. Address 3e800018d2e.")
+        geompy.GetSubShape.side_effect = lambda s, ids: ids[0]
+        geompy.BasicProperties.side_effect = lambda e: {5: (10.0, 0, 0), 7: (4.0, 0, 0)}[e]
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 1.5, "edges": [5, 7]})
+        assert "Use radius 1:" in result["error"]
+
+    def test_fillet_radius_failure_names_a_thin_neighbouring_face(self):
+        """A shelled vase's rim: both rim edges bound a 2 mm face, so the
+        ceiling is 1 mm, not half the 111 mm edge length (live run 44743d6ecbdb
+        spent 234 s arguing with the edge-length hint)."""
+        ex = self._executor(shape="shape")
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [103, 109]
+        geompy.MakeFillet.side_effect = RuntimeError(
+            "MakeFilletEdges : Fillet can't be computed on the given shape with the given radius")
+        geompy.GetSubShape.side_effect = lambda s, ids: f"e{ids[0]}"
+        geompy.BasicProperties.return_value = (111.4, 0, 0)
+        # face "rim" holds both rim edges; "wall" holds 103 and a far edge 98
+        # plus a seam 105 that touches it (distance 0, ignored)
+        edges_of = {"rim": ["e103", "e109"], "wall": ["e103", "e98", "e105"]}
+        geompy.SubShapeAll.side_effect = lambda s, t: (
+            ["rim", "wall"] if s == "shape" else edges_of[s])
+        geompy.GetSubShapeID.side_effect = lambda s, e: int(e[1:])
+        dist = {frozenset(("e103", "e109")): 2.0, frozenset(("e103", "e98")): 17.0,
+                frozenset(("e103", "e105")): 0.0}
+        geompy.MinDistance.side_effect = lambda a, b: (
+            0.0 if a in edges_of else dist[frozenset((a, b))])
+        result = geom_tools.call_tool(ex, "fillet_edges",
+                                      {"shape": "shape", "radius": 4, "edges": [103, 109]})
+        assert result["ok"] is False
+        assert "only 2 mm wide" in result["error"]
+        assert "Use radius 0.5:" in result["error"]
+        assert "55.7" not in result["error"]
+
+    def test_known_occ_message_gets_a_hint(self):
+        ex = self._executor()
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [3]
+        geompy.MakeThickSolid.side_effect = RuntimeError("MakeThickSolid : Offset driver failed")
+        geompy.GetSubShape.side_effect = lambda s, ids: ids[0]
+        geompy.KindOfShape.side_effect = lambda f: ["POLYGON"]
+        result = geom_tools.call_tool(ex, "make_thick_solid",
+                                      {"shape": "shape", "thickness": 30, "faces": [3]})
+        assert result["error"].startswith("MakeThickSolid : Offset driver failed — hint:")
+        assert "open a flat face" in result["error"]
+
+    def test_opening_a_curved_face_names_the_flat_ones(self):
+        ex = self._executor()
+        geompy = ex.namespace["geompy"]
+        geompy.SubShapeAllIDs.return_value = [3, 10, 12]
+        geompy.MakeThickSolid.side_effect = RuntimeError("MakeThickSolid : Offset driver failed")
+        geompy.GetSubShape.side_effect = lambda s, ids: ids[0]
+        geompy.KindOfShape.side_effect = lambda f: [{3: "CONE2D"}.get(f, "DISK_CIRCLE")]
+        result = geom_tools.call_tool(ex, "make_thick_solid",
+                                      {"shape": "shape", "thickness": 3, "faces": [3]})
+        assert result["error"] == ("MakeThickSolid : Offset driver failed — hint: face [3] is "
+                                   "curved; the open face must be flat, e.g. one of [10, 12]")
+
+    def test_unknown_object_name_suggests_close_ones(self):
+        ex = self._executor(sa_x_cut_2=MagicMock(), sa_x_box_1=MagicMock())
+        result = geom_tools.call_tool(ex, "fuse", {"shapes": ["sa_x_cut_1", "sa_x_box_1"]})
+        assert result["ok"] is False
+        assert "no object named 'sa_x_cut_1'" in result["error"]
+        assert "did you mean sa_x_cut_2" in result["error"]
+
+    def test_missing_argument_is_named(self):
+        ex = self._executor()
+        result = geom_tools.call_tool(ex, "make_thick_solid", {"shape": "shape", "thickness": 3})
+        assert result["error"] == "make_thick_solid: missing argument 'faces'"

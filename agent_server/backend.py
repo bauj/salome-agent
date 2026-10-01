@@ -4,7 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from typing import Protocol
 
-from executor import geom_tools
+from executor import geom
 
 
 def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
@@ -42,6 +42,74 @@ def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
     return result
 
 
+def forget_names(namespace: dict, geom_bindings: dict, names: list, erase=None) -> dict:
+    """erase(entry), when given, takes the object out of the viewer first —
+    removing the study object alone leaves its presentation on screen."""
+    study = namespace["salome"].myStudy
+    builder = study.NewBuilder()
+    removed = []
+    for name in names:
+        geom_bindings.pop(name, None)
+        for sobj in study.FindObjectByName(name, "GEOM"):
+            if erase is not None:
+                try:
+                    erase(sobj.GetID())
+                except Exception:
+                    pass
+            builder.RemoveObjectWithChildren(sobj)
+            removed.append(name)
+    return {"ok": True, "removed": removed}
+
+
+def display_names(namespace: dict, names: list, show) -> dict:
+    study = namespace["salome"].myStudy
+    shown = []
+    for name in names:
+        for sobj in study.FindObjectByName(name, "GEOM"):
+            show(sobj.GetID())
+            shown.append(name)
+    return {"ok": True, "shown": shown}
+
+
+def hide_names(namespace: dict, names: list, erase) -> dict:
+    """Takes objects out of the viewer; they stay in the study."""
+    study = namespace["salome"].myStudy
+    hidden = []
+    for name in names:
+        for sobj in study.FindObjectByName(name, "GEOM"):
+            erase(sobj.GetID())
+            hidden.append(name)
+    return {"ok": True, "hidden": hidden}
+
+
+_AGENT_COMPONENTS = ("GEOM", "SMESH")
+
+
+def study_objects(namespace: dict) -> list:
+    study = namespace["salome"].myStudy
+    out = []
+    for comp_name in _AGENT_COMPONENTS:
+        comp = study.FindComponent(comp_name)
+        if comp is None:
+            continue
+        it = study.NewChildIterator(comp)
+        while it.More():
+            sobj = it.Value()
+            # a removed object leaves its label behind, emptied of attributes
+            if sobj.GetAllAttributes():
+                out.append(sobj)
+            it.Next()
+    return out
+
+
+def clear_study(namespace: dict) -> int:
+    objs = study_objects(namespace)
+    builder = namespace["salome"].myStudy.NewBuilder()
+    for sobj in objs:
+        builder.RemoveObjectWithChildren(sobj)
+    return len(objs)
+
+
 class Backend(Protocol):
     name_prefix: str
     namespace: dict
@@ -53,7 +121,12 @@ class Backend(Protocol):
     def run_code(self, code: str, timeout: float, module: str | None = None) -> dict: ...
     def reset(self, scripts: list) -> dict: ...
     def refresh(self, module: str | None) -> None: ...
+    def forget(self, names: list) -> dict: ...
+    def display(self, names: list) -> dict: ...
+    def hide(self, names: list) -> dict: ...
     def find_object(self, name: str): ...
+    def leftovers(self) -> int: ...
+    def clear_study(self) -> dict: ...
     def poisoned(self) -> bool: ...
 
 
@@ -72,7 +145,10 @@ class HeadlessBackend:
         self._poisoned = False
 
     def begin_session(self, run_id: str | None) -> None:
-        geom_tools.reset_counters()
+        # The study outlives the run on a --serve-forever server, so name by
+        # run as GuiBackend does: forget-by-name must not reach another run's objects.
+        self.name_prefix = f"sa_{run_id}_" if run_id else ""
+        geom.reset_counters()
         self.geom_bindings.clear()
         self.accepted_scripts = []
 
@@ -87,7 +163,7 @@ class HeadlessBackend:
 
     def reset(self, scripts: list) -> dict:
         self.namespace = self._build(False)
-        geom_tools.reset_counters()
+        geom.reset_counters()
         self.geom_bindings.clear()
         for idx, s in enumerate(scripts):
             r = _run_with_timeout(s, self.namespace, 120)
@@ -99,8 +175,27 @@ class HeadlessBackend:
     def refresh(self, module: str | None) -> None:
         pass
 
+    def forget(self, names: list) -> dict:
+        return forget_names(self.namespace, self.geom_bindings, names)
+
+    def display(self, names: list) -> dict:
+        return {"ok": True, "shown": []}
+
+    def hide(self, names: list) -> dict:
+        return {"ok": True, "hidden": []}
+
     def find_object(self, name: str):
-        return self.namespace["find_object"](name)
+        fo = self.namespace["find_object"]
+        try:
+            return fo(self.name_prefix + name)
+        except LookupError:
+            return fo(name)
+
+    def leftovers(self) -> int:
+        return len(study_objects(self.namespace))
+
+    def clear_study(self) -> dict:
+        return {"ok": True, "removed": clear_study(self.namespace)}
 
     def poisoned(self) -> bool:
         return self._poisoned

@@ -53,7 +53,7 @@ def _reachable_with_display(call_log: list[dict], reachable: set[str]) -> set[tu
     return reachable_calls
 
 
-def generate(call_log: list[dict], result_names: list[str]) -> str:
+def roots_for(call_log: list[dict], result_names: list[str]) -> list[str]:
     # A weak model can call finish_stage with names that match no shape it
     # actually built (invented names, or an empty list). Pruning to those would
     # emit nothing and silently drop the whole stage from result.py (issue #7),
@@ -63,15 +63,22 @@ def generate(call_log: list[dict], result_names: list[str]) -> str:
     # out_vars — it mutates an existing object named by `recv` — but naming
     # that object in finish_stage is a legitimate match, not an invented name.
     built |= {call["recv"] for call in call_log if not call.get("out_vars") and call.get("recv")}
-    if not (set(result_names) & built):
-        from salome_agent.logs import log
+    if set(result_names) & built:
+        return list(result_names)
+    from salome_agent.logs import log
 
-        if call_log:
-            log.warning("codegen: result_names %s match no built shape — keeping "
-                        "every published shape for this stage", result_names)
-        result_names = [n for call in call_log for n in (call.get("publish") or [])]
+    if call_log:
+        log.warning("codegen: result_names %s match no built shape — keeping "
+                    "every published shape for this stage", result_names)
+    return [n for call in call_log for n in (call.get("publish") or [])]
 
-    reachable = _reachable(call_log, result_names)
+
+def generate(call_log: list[dict], result_names: list[str],
+             call_prefix: str = "geompy.", keep: set | None = None) -> str:
+    if keep is None:
+        reachable = _reachable(call_log, roots_for(call_log, result_names))
+    else:
+        reachable = keep
     reachable_calls = _reachable_with_display(call_log, reachable)
     lines = []
     for i, call in enumerate(call_log):
@@ -83,9 +90,10 @@ def generate(call_log: list[dict], result_names: list[str]) -> str:
 
         if emit == "geompy_call":
             assign_target = call["out_vars"][0] if call["out_vars"] else "_"
-            lines.append(f"{assign_target} = geompy.{call['fn']}({args_src})")
+            lines.append(f"{assign_target} = {call_prefix}{call['fn']}({args_src})")
             if call.get("publish"):
                 for var, name in zip(call["out_vars"], call["publish"]):
+                    # geompy.addToStudy is the publish API, not the module's call prefix
                     lines.append(f"geompy.addToStudy({var}, {name!r})")
         elif emit == "method_call":
             recv = call.get("recv")
@@ -98,13 +106,14 @@ def generate(call_log: list[dict], result_names: list[str]) -> str:
             lines.append("    pass")
         elif emit == "list_call":
             tmp = f"_sub_{i}"
-            lines.append(f"{tmp} = geompy.{call['fn']}({args_src})")
+            lines.append(f"{tmp} = {call_prefix}{call['fn']}({args_src})")
             pubs = dict(zip(call["out_vars"], call.get("publish") or []))
             for idx, var in enumerate(call["out_vars"]):
                 if var not in reachable:
                     continue
                 lines.append(f"{var} = {tmp}[{idx}]")
                 if var in pubs:
+                    # geompy.addToStudy is the publish API, not the module's call prefix
                     lines.append(f"geompy.addToStudy({var}, {pubs[var]!r})")
 
     return "\n".join(lines)

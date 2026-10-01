@@ -6,6 +6,40 @@ PLAN = [{"module": "geom", "intent": "box", "params": {}, "inputs": []},
         {"module": "smesh", "intent": "mesh it", "params": {}, "inputs": []}]
 
 
+def test_reasoning_source_follows_planner_stage_and_edit():
+    m = EventMapper("r1", "/w/r1")
+    ev = m.reasoning("planner", 1, "reasoning", "hmm")
+    assert ev == {"kind": "reasoning", "run_id": "r1",
+                  "data": {"source": "planner", "index": None, "call": 1,
+                           "channel": "reasoning", "text": "hmm"}}
+    assert m.reasoning("geom", 2, "prose", "x")["data"]["source"] == "edit"
+    m.events("plan", {"plan": PLAN})
+    m.events("advance", {"stages": {}, "stage_idx": 1})
+    d = m.reasoning("smesh", 3, "prose", "x")["data"]
+    assert (d["source"], d["index"]) == ("stage", 1)
+
+
+def test_reasoning_relay_throttles_and_flushes_on_end_and_channel_switch():
+    from salome_agent.runner import ReasoningRelay
+    now = [0.0]
+    out = []
+    relay = ReasoningRelay(EventMapper("r1", "/w"), out.append, clock=lambda: now[0])
+    relay({"type": "start", "module": "planner"})
+    relay({"type": "delta", "channel": "reasoning", "text": "a"})
+    now[0] = 0.2
+    relay({"type": "delta", "channel": "reasoning", "text": "b"})
+    assert out == []
+    now[0] = 0.6
+    relay({"type": "delta", "channel": "reasoning", "text": "c"})
+    relay({"type": "delta", "channel": "prose", "text": "p"})
+    relay({"type": "end"})
+    assert [(e["data"]["call"], e["data"]["channel"], e["data"]["text"]) for e in out] == [
+        (1, "reasoning", "abc"), (1, "prose", "p")]
+    relay({"type": "start", "module": "planner"})
+    relay({"type": "end"})
+    assert len(out) == 2                     # an empty call emits nothing
+
+
 def _kinds(evs):
     return [e["kind"] for e in evs]
 
@@ -191,6 +225,71 @@ def test_cancel_before_the_gate_answers_ends_aborted_without_resuming(tmp_path, 
     assert llm.chat.call_count == 1          # planner only, no specialist turn
 
 
+def test_cancel_during_a_stage_stops_its_tool_loop(tmp_path, monkeypatch):
+    cancel = threading.Event()
+    llm = MagicMock()
+    llm.usage = None
+
+    def chat(**kw):
+        if llm.chat.call_count == 1:
+            return ONE_STAGE
+        cancel.set()
+        return {"tool_calls": [{"name": "make_box", "args": {"dx": 1}, "id": None}],
+                "content": None, "raw_message": None}
+
+    llm.chat.side_effect = chat
+    _fake_llm(monkeypatch, llm)
+    client = MagicMock(mode="headless", name_prefix="")
+    client.list_tools.return_value = {"tools": []}
+    res = run_request("x", _config(tmp_path), client=client, on_event=lambda e: None,
+                      on_gate=lambda p: {"action": "approve"}, batch=True,
+                      cancel=cancel, run_id="r1")
+    assert res.final_state["aborted"] is True
+    assert llm.chat.call_count == 2          # planner + one specialist turn
+    client.call_tool.assert_not_called()
+
+
+def test_cancel_while_the_planner_streams_ends_aborted(tmp_path, monkeypatch):
+    from salome_agent.llm import LLMCancelled
+    cancel = threading.Event()
+    llm = MagicMock()
+    llm.usage = None
+
+    def chat(**kw):
+        assert llm.cancel is cancel          # the turn's event reaches the client
+        cancel.set()
+        raise LLMCancelled()
+
+    llm.chat.side_effect = chat
+    _fake_llm(monkeypatch, llm)
+    events = []
+    res = run_request("x", _config(tmp_path), client=None, on_event=events.append,
+                      on_gate=lambda p: {"action": "approve"}, cancel=cancel, run_id="r1")
+    assert [e["kind"] for e in events] == ["aborted"]
+    assert res.final_state["aborted"] is True
+    assert res.exit_code == 1
+
+
+def test_drive_relays_streamed_reasoning_as_events(tmp_path, monkeypatch):
+    llm = MagicMock()
+    llm.usage = None
+
+    def chat(**kw):
+        llm.on_stream({"type": "start", "module": "planner"})
+        llm.on_stream({"type": "delta", "channel": "reasoning", "text": "one box"})
+        llm.on_stream({"type": "end"})
+        return ONE_STAGE
+
+    llm.chat.side_effect = chat
+    _fake_llm(monkeypatch, llm)
+    events = []
+    run_request("x", _config(tmp_path), client=None, on_event=events.append,
+                on_gate=lambda p: {"action": "abort"}, run_id="r1")
+    assert events[0]["kind"] == "reasoning"
+    assert events[0]["data"]["text"] == "one box"
+    assert llm.on_stream is None             # removed when the turn ends
+
+
 def test_run_dir_is_absolute_even_with_a_relative_work_dir(tmp_path, monkeypatch):
     llm = MagicMock()
     llm.chat.return_value = ONE_STAGE
@@ -216,3 +315,46 @@ def test_client_supplies_the_session_handle(tmp_path, monkeypatch):
                       on_gate=lambda p: {"action": "abort"}, run_id="r1")
     assert res.final_state["session"]["mode"] == "gui"
     assert res.final_state["session"]["name_prefix"] == "p_"
+
+
+def test_amend_history_events_become_ui_events():
+    m = EventMapper("r1", "/w/r1")
+    evs = m.events("amend", {"history": [
+        {"event": "graph_edit", "op": "edit", "node": "n1", "param": "dz", "old": 1, "new": 2},
+        {"event": "replay", "nodes": ["n1", "n3"]},
+        {"event": "retry_hint", "hint": "x"}]})
+    assert [e["kind"] for e in evs] == ["graph_edit", "replay"]
+    assert evs[1]["data"] == {"nodes": ["n1", "n3"]}
+
+
+def test_show_results_displays_the_graph_result_names():
+    from unittest.mock import MagicMock
+
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.runner import show_results
+
+    g = BuildGraph()
+    b = g.add_block(0, "stage 1/1: geom", "geom", ["fuse_1"])
+    g.append(b, "fuse", {}, [{"fn": "F", "args": [], "out_vars": ["fuse_1"],
+                              "publish": ["fuse_1"]}], 0)
+    client = MagicMock()
+    show_results(client, g.to_dict())
+    client.display.assert_called_once_with(["fuse_1"])
+
+
+def test_show_results_is_best_effort():
+    from unittest.mock import MagicMock
+
+    from salome_agent.runner import show_results
+
+    client = MagicMock()
+    client.display.side_effect = RuntimeError("no viewer")
+    show_results(client, {"nodes": [], "blocks": []})    # nothing to show: no call
+    client.display.assert_not_called()
+    show_results(None, {"nodes": [], "blocks": []})
+    from salome_agent.build_graph import BuildGraph
+    g = BuildGraph()
+    b = g.add_block(0, "s", "geom", [])
+    g.append(b, "make_box", {}, [{"fn": "F", "args": [], "out_vars": ["box_1"],
+                                  "publish": ["box_1"]}], 0)
+    show_results(client, g.to_dict())                     # raises inside: swallowed

@@ -5,13 +5,33 @@ def _fake_ns():
     return {"geompy": object(), "smesh": object(), "find_object": lambda n: n}
 
 
-def test_begin_session_headless_has_empty_prefix_and_resets_counters():
-    from executor import geom_tools
+def test_begin_session_headless_prefixes_by_run_and_resets_counters():
+    # Alias keeps the assertions below unedited after the geom_tools -> geom package move.
+    from executor import geom as geom_tools
     b = HeadlessBackend(build_namespace=lambda live: _fake_ns())
     geom_tools._counters["box"] = 7
     b.begin_session("abc123")
-    assert b.name_prefix == ""
+    assert b.name_prefix == "sa_abc123_"
     assert geom_tools._counters == {}
+    b.begin_session(None)
+    assert b.name_prefix == ""
+
+
+def test_headless_find_object_tries_the_prefixed_name_first():
+    ns = _fake_ns()
+    ns["find_object"] = lambda n: {"sa_r1_box_1": "mine", "box_1": "old"}[n]
+    b = HeadlessBackend(build_namespace=lambda live: ns)
+    b.begin_session("r1")
+    assert b.find_object("box_1") == "mine"
+    assert b.find_object("sa_r1_box_1") == "mine"
+
+
+def test_headless_find_object_falls_back_to_the_bare_name():
+    ns = _fake_ns()
+    ns["find_object"] = lambda n: {"cube": "user"}[n]
+    b = HeadlessBackend(build_namespace=lambda live: ns)
+    b.begin_session("r1")
+    assert b.find_object("cube") == "user"
 
 
 def test_run_code_ok():

@@ -35,8 +35,8 @@ Flow: `request → plan → [per stage: specialist → verify static → verify 
 ## Requirements
 
 - **Python 3.10+**
-- A working **SALOME install** (developed against a recent `master` native build;
-  point `salome.root` at its top directory).
+- A working **SALOME install** (developed against a recent `master` native build).
+  The live tests find it via `$SALOME_ROOT` or `salome.root` in `config.json`.
 - An **OpenAI-compatible, tool-calling LLM endpoint** (base URL + API key + model name).
 
 ---
@@ -76,7 +76,11 @@ cp config.example.json config.json
     "ssl_cert_file": "",
     "temperature": 0,
     "timeout": 120,
-    "json_retries": 2
+    "json_retries": 2,
+    "max_retries": 2,
+    "extra_headers": {},
+    "extra_body": {},
+    "module_extra_body": {}
   },
   "salome": {
     "root": "/path/to/your/SALOME"
@@ -89,29 +93,60 @@ cp config.example.json config.json
     "plan_detail": "balanced",
     "tool_selection": "hints",
     "verify_cadence": "final",
-    "on_stage_failure": "abort",
-    "assembler_smoke_run": true
+    "on_stage_failure": "abort"
   },
   "work_dir": "~/.local/share/salome-agent/runs"
 }
 ```
 
-Required keys: `llm.base_url`, `llm.model`, `salome.root`. Missing any of them is a hard error.
+Required keys: `llm.base_url` and `llm.model`. Missing either is a hard error. An unknown key in the `llm` block (a typo such as `extra-body`) is logged as a warning and ignored.
 
-`llm.ssl_cert_file` is optional: a path to a CA bundle for verifying an HTTPS endpoint with a private CA. Empty/omitted verifies against the system trust store.
+#### `llm` — the model endpoint
 
-`llm.extra_headers` is optional: an object of extra HTTP headers sent verbatim on every LLM request. In a string value, `{run_id}` is replaced with the current run's id — useful for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`.
+Any OpenAI-compatible `/chat/completions` endpoint. Requests are streamed (SSE).
 
-`llm.extra_body` is optional: an object of extra top-level fields merged into every chat-completions JSON body, sibling to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider-specific body params such as a `reasoning_effort` knob, e.g. `{"reasoning_effort": "high"}` — whether the provider actually honors the field is up to that provider.
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `base_url` | — (required) | Endpoint base URL, up to and including `/v1`. |
+| `model` | — (required) | Model name sent in every request. |
+| `api_key` | `""` | Sent as `Authorization: Bearer <key>`. Leave empty for an endpoint without auth. |
+| `ssl_cert_file` | `""` | Path to a CA bundle for an HTTPS endpoint with a private CA. `~` is expanded; a missing file fails at startup. Empty verifies against the system trust store. |
+| `temperature` | `0` | Sampling temperature. |
+| `timeout` | `120` | Seconds. Total wall-clock budget for one streamed LLM call; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. The gap between two streamed chunks is capped separately at 60 s. `--timeout` overrides it. |
+| `json_retries` | `2` | When the planner's answer does not parse as JSON, the answer and the exact parser error are fed back and the planner is re-asked this many times before the run fails. |
+| `max_retries` | `2` | Retries for transient failures — connection drop, truncated stream, HTTP 429 (honouring `Retry-After`), fast 502/503/504 — with exponential backoff. Raise it for a flaky free-tier endpoint. |
+| `extra_headers` | `{}` | Extra HTTP headers sent verbatim on every request. In a string value `{run_id}` is replaced with the run's id — for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`. |
+| `extra_body` | `{}` | Extra top-level fields merged into every request's JSON body, next to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider body params such as `{"reasoning_effort": "high"}`; whether the provider honours a field is up to the provider. |
+| `module_extra_body` | `{}` | `{"planner" \| "geom" \| "smesh" \| "paravis": {...}}` — a body sent *instead of* `extra_body` (full replacement, not a merge) on that module's calls. Lets an expensive knob sit on the planner only, e.g. `{"planner": {"reasoning_effort": "high"}}`, while the many specialist calls run without it. |
 
-`llm.json_retries` (default 2): when the planner LLM returns something that will not parse as JSON, its answer plus the exact parser error are fed back and it is re-asked this many times before the run fails.
+#### `policy` — how a run behaves
 
-`policy.plan_detail` (`coarse` | `balanced` (default) | `fine`) hints the planner how finely to split a request into stages — `coarse` favours fewer, bigger stages; `fine` favours splitting a part/assembly into more stages.
+The first five keys have no built-in default — keep them in your config.
 
-`policy.verify_cadence` controls how hard the geom specialist is pushed to `measure`-check where its shapes landed:
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `static_retries` | — | Per stage: how many times a script that fails the static check is sent back to its specialist before the stage counts as failed. |
+| `exec_retries` | — | Per stage: how many times a script that fails when run under SALOME is sent back to its specialist. |
+| `exec_timeout_s` | — | Seconds allowed for one stage's script to run under SALOME in the exec check. |
+| `tool_iteration_cap` | — | Maximum LLM turns (each turn may carry several tool calls) a tool-calling specialist gets for one stage. |
+| `on_stage_failure` | — | `abort` \| `continue`. What `--batch` does when a stage still fails after its retries: stop the run, or skip the stage and go on. Interactive runs ask instead. `--on-failure` overrides it. |
+| `plan_detail` | `balanced` | `coarse` \| `balanced` \| `fine`. How finely the planner splits a request into stages — `coarse` favours fewer, bigger stages; `fine` favours splitting a part or assembly into more stages. |
+| `tool_selection` | `hints` | `hints` \| `all`. `hints`: the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: the full geom registry on every call. `--tools` overrides it. |
+| `verify_cadence` | `final` | How hard the geom specialist is pushed to `measure`-check where its shapes landed — see below. |
+
+`policy.verify_cadence`:
 - `none` — no self-check.
 - `final` (default) — read the `shape_info` that rides on every result for free; call `measure` explicitly only when something looks off and once on the result shape(s) before `finish_stage`. If a move or boolean is still unmeasured at `finish_stage`, the loop asks for a measure once before accepting.
 - `strict` — measure after every move or boolean. If the model does three in a row without one, the loop forces a measure before it can continue.
+
+#### Other keys
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `work_dir` | `.` | Where each run's folder (`<run_id>/` with `result.py`, `report.md`, logs) is written. `~` is expanded. `--work-dir` overrides it. |
+| `salome.root` | — | Path to your SALOME install. The agent itself does not use it (it talks to an already-running agent server); the live tests and `scripts/regen-toplevel-api.py` read it when `$SALOME_ROOT` is not set. |
+
+The salome-agent-gui plugin stores its own settings (`gui.theme`, `gui.batch`, …) in a `gui` section of the same file; the agent ignores that section.
 
 `config.json` is gitignored — keep your credentials there, not in `config.example.json`.
 
@@ -203,6 +238,7 @@ Run the result on its own, with no agent involved:
 | `--tools {hints,all}` | Geom tool retrieval. `hints` (default): the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the full geom registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
 | `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`. |
+| `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch` or `--no-session`. |
 
 ### GUI plugin setup
 
@@ -250,6 +286,39 @@ use `--batch` for unattended runs.
 
 Aborting at either gate stops immediately with exit 1 and writes nothing — no
 `result.py`, no `report.md`, no run directory.
+
+### Chat mode
+
+```bash
+salome-agent "a small house" --chat
+```
+
+`--chat` keeps the session open after the first result, so you can keep talking:
+
+```
+chat> make the roof taller
+chat> add a chimney
+chat> /undo
+```
+
+Commands:
+
+| Command | Meaning |
+|---------|---------|
+| `/undo` | revert the last turn |
+| `/redo` | re-apply the last undone turn (cleared by any new turn) |
+| `/show` | print the build graph |
+| `/result` | print `result.py` |
+| `/rebuild` | rebuild the whole study from the model (after a failed rollback) |
+| `/quit` | leave (Ctrl-D too) |
+
+One executor connection and one LLM session serve the whole conversation. An edit
+replays only the affected object and everything downstream of it, reusing the same
+object names, rather than starting the study over. `/undo` reverts the last turn;
+`/rebuild` forgets every name and replays the whole graph from scratch, for when a
+rollback itself fails. Ctrl-C cancels the turn in progress and returns to `chat>`.
+`--chat` is interactive and needs a live session, so it cannot be combined with
+`--batch` or `--no-session`.
 
 ---
 
@@ -300,7 +369,7 @@ salome_agent/
   llm.py            minimal OpenAI-compatible tool-calling client (+ with_images() for multimodal messages)
   state.py          RunState / stage TypedDicts
   nodes/            planner, gates (plan/retry), advance, assembler, report
-  specialists/      geom (tool-calling), smesh, paravis (raw script), base
+  specialists/      geom (tool-calling), smesh, paravis (raw script)
   verify/           static (top-level API check), exec_check, introspect
   server_conn.py    finds + connects to the SALOME agent server
   executor_client.py  TCP client for the server (hello handshake, framing)
@@ -315,7 +384,8 @@ agent_server/       the server that runs inside SALOME
   namespace.py      builds the exec namespace (geompy/smesh/... ; defers pvsimple)
   __main__.py       headless entry (`python -m agent_server`)
 executor/
-  geom_tools.py     geom tool implementations + per-tool JSON schemas
+  registry.py       ToolRegistry — tool decorator, schemas, arg-type coercion
+  geom/             geom tool implementations + per-tool JSON schemas
 plugin/             salome_agent_plugin.py — standalone manual-registration variant
                     (install-plugin.sh inlines the same call; not imported by it)
 scripts/            install-plugin.sh, start-headless-server.sh, regen-toplevel-api.py
@@ -341,8 +411,10 @@ docs/superpowers/   design specs + implementation plans
   Subshape ids come from
   `get_subshapes` (query — returns ids/centres, emits no `CallRecord`) or
   `explode` (publishes each subshape); `get_subshape` builds one shape from an id
-  list. Add tools using the existing handler + `ARG_TYPES` + `TOOL_SCHEMAS` +
-  `CallRecord` pattern in `executor/geom_tools.py`.
+  list. Add a tool with `@tool(name, category=..., description=..., schema=...,
+  arg_types=...)` in `executor/geom/<category>.py` (see an existing tool);
+  registration order = import order in `executor/geom/__init__.py` and is
+  pinned by `tests/fixtures/golden/list_tools.json`.
 - `reset_and_replay` (rollback) is wired only for the headless backend and has no
   graph-level caller yet — retries re-run the full stage script.
 - RAG / documentation retrieval was cut from v1.

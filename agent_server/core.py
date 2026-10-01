@@ -1,4 +1,4 @@
-from executor import geom_tools  # top-level — salome_init mutates sys.path later
+from executor import geom  # top-level — salome_init mutates sys.path later
 from agent_server import handshake
 
 _FATAL = {"ok": False, "fatal": True,
@@ -22,7 +22,8 @@ class Core:
         if cmd == "hello":
             b.begin_session(req.get("run_id"))
             return {"id": rid, "ready": True, "proto": handshake.PROTO,
-                    "mode": b.mode, "name_prefix": b.name_prefix}
+                    "mode": b.mode, "name_prefix": b.name_prefix,
+                    "leftovers": b.leftovers()}
         if cmd == "run":
             r = b.run_code(req["code"], req["timeout"], req.get("module"))
             if r["ok"]:
@@ -48,12 +49,24 @@ class Core:
         if cmd == "sanity":
             return {"id": rid, "ok": True, "warnings": [], "failures": []}
         if cmd == "list_tools":
-            return {"id": rid, "tools": geom_tools.list_tools()}
+            return {"id": rid, "tools": geom.list_tools()}
         if cmd == "call_tool":
-            r = geom_tools.call_tool(b, req["name"], req["args"])
+            r = geom.call_tool(b, req["name"], req["args"], pin=req.get("pin"))
             if r.get("ok"):
                 b.refresh("GEOM")
             return {"id": rid, **r}
+        if cmd == "forget":
+            r = b.forget(req["names"])
+            b.refresh("GEOM")
+            return {"id": rid, **r}
+        if cmd == "clear_study":
+            r = b.clear_study()
+            b.refresh("GEOM")
+            return {"id": rid, **r}
+        if cmd == "display":
+            return {"id": rid, **b.display(req["names"])}
+        if cmd == "hide":
+            return {"id": rid, **b.hide(req["names"])}
         if cmd == "shutdown":
             b.end_session()
             return {"id": rid, "ok": True}

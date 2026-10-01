@@ -15,13 +15,16 @@ class ServerBusy(Exception):
 
 
 class ExecutorClient:
-    def __init__(self, host: str, port: int, token: str, run_id: str):
+    def __init__(self, host: str, port: int, token: str, run_id: str,
+                 record_path: str | None = None, hold: bool = False):
+        self.record_path = record_path
         self._sock = socket.create_connection((host, port), timeout=10)
         self._f = self._sock.makefile("rwb")
         self._next_id = 1
-        self._f.write((json.dumps(
-            {"id": 0, "cmd": "hello", "token": token, "run_id": run_id}) + "\n"
-        ).encode())
+        hello = {"id": 0, "cmd": "hello", "token": token, "run_id": run_id}
+        if hold:
+            hello["hold"] = True
+        self._f.write((json.dumps(hello) + "\n").encode())
         self._f.flush()
         ready = self._recv()
         if ready.get("fatal"):
@@ -31,6 +34,7 @@ class ExecutorClient:
         assert ready.get("ready") is True
         self.mode = ready.get("mode")
         self.name_prefix = ready.get("name_prefix", "")
+        self.leftovers = ready.get("leftovers", 0)
 
     def _recv(self) -> dict:
         try:
@@ -52,7 +56,22 @@ class ExecutorClient:
         resp = self._recv()
         if resp.get("fatal"):
             raise SessionPoisoned(resp.get("error", "poisoned"))
+        if self.record_path:
+            self._record(cmd, payload, resp)
         return resp
+
+    def _record(self, cmd: str, payload: dict, resp: dict) -> None:
+        # Recorded so a run can be replayed offline against a golden result.py;
+        # a failure here must never abort the run it is only observing.
+        try:
+            import os
+
+            os.makedirs(os.path.dirname(self.record_path) or ".", exist_ok=True)
+            with open(self.record_path, "a") as f:
+                f.write(json.dumps({"cmd": cmd, "payload": payload, "response": resp},
+                                   default=str, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
 
     def run(self, code, timeout, module=None):
         return self._call("run", code=code, timeout=timeout, module=module)
@@ -72,8 +91,22 @@ class ExecutorClient:
     def list_tools(self):
         return self._call("list_tools")
 
-    def call_tool(self, name, args):
-        return self._call("call_tool", name=name, args=args)
+    def call_tool(self, name, args, pin=None):
+        if pin is None:
+            return self._call("call_tool", name=name, args=args)
+        return self._call("call_tool", name=name, args=args, pin=pin)
+
+    def forget(self, names):
+        return self._call("forget", names=names)
+
+    def clear_study(self):
+        return self._call("clear_study")
+
+    def display(self, names):
+        return self._call("display", names=names)
+
+    def hide(self, names):
+        return self._call("hide", names=names)
 
     def shutdown(self):
         return self._call("shutdown")

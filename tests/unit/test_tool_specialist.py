@@ -1,0 +1,257 @@
+from unittest.mock import MagicMock
+
+from salome_agent.modules import ModuleSpec, Terminator
+from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+
+def _resp(*calls, content=None, raw_message=None):
+    return {"tool_calls": [{"name": n, "args": a, "id": None} for n, a in calls],
+            "content": content, "raw_message": raw_message}
+
+
+def _spec(**over):
+    base = dict(
+        name="toy",
+        prompt=lambda cadence: "SYSTEM",
+        terminator=Terminator(name="done", schema={"type": "object", "properties": {}},
+                              description="finish",
+                              handle=lambda args, call_log: {"out": args, "call_log": call_log}),
+        execute=lambda client, name, args: client.call_tool(name, args),
+        render_result=lambda r: str(r),
+        tools_for=lambda client: {"work": {"name": "work", "parameters": {}, "description": "w"}},
+        no_tool_nudge="Call a tool.",
+        on_exhausted=lambda call_log, last_error: {"exhausted": True, "last_error": last_error},
+    )
+    base.update(over)
+    return ModuleSpec(**base)
+
+
+def test_terminator_name_and_handle_come_from_the_spec():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {"x": 1}))]
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert result == {"out": {"x": 1}, "call_log": [], "calls": []}
+
+
+def test_execute_comes_from_the_spec():
+    seen = []
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1})), _resp(("done", {}))]
+
+    def execute(client, name, args):
+        seen.append((name, args))
+        return {"ok": True, "records": [{"fn": "F", "args": [], "out_vars": ["v"], "publish": ["v"]}]}
+
+    result = ToolSpecialist(_spec(execute=execute)).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert seen == [("work", {"a": 1})]
+    assert result["call_log"] == [{"fn": "F", "args": [], "out_vars": ["v"], "publish": ["v"]}]
+
+
+def test_blocks_are_joined_after_the_stage_plan():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {}))]
+    ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=3,
+                                blocks=("FIRST BLOCK", "SECOND BLOCK"))
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert user.endswith("FIRST BLOCK\n\nSECOND BLOCK")
+    assert user.startswith("{'module': 'toy'}")
+
+
+def test_falsy_blocks_are_skipped():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {}))]
+    ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=3,
+                                blocks=(None, "", "ONLY"))
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert user.count("\n\n") == 1
+
+
+def test_system_prompt_comes_from_the_spec_with_the_cadence():
+    seen = []
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {}))]
+    ToolSpecialist(_spec(prompt=lambda c: seen.append(c) or f"P:{c}")).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3, verify_cadence="strict")
+    assert seen == ["strict"]
+    assert llm.chat.call_args.kwargs["messages"][0]["content"] == "P:strict"
+
+
+def test_empty_categories_means_no_load_tools_tool_is_offered():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {}))]
+    ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    offered = [t["name"] for t in llm.chat.call_args.kwargs["tools"]]
+    assert offered == ["work", "done"]
+
+
+def test_empty_risky_categories_never_nudges_a_measure():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("done", {}))]
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": True, "records": []}
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, client,
+                                         iteration_cap=3, verify_cadence="strict")
+    assert "out" in result
+    assert llm.chat.call_count == 2
+
+
+def test_no_tool_call_uses_the_spec_nudge():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(content="prose"), _resp(("done", {}))]
+    ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    second = llm.chat.call_args_list[1].kwargs["messages"]
+    assert second[-1]["content"] == "Call a tool."
+
+
+def test_iteration_cap_uses_the_spec_on_exhausted():
+    llm = MagicMock()
+    llm.chat.return_value = _resp(("work", {}))
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": False, "error": "boom"}
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, client, iteration_cap=2)
+    assert result["exhausted"] is True
+    assert result["last_error"]["message"] == "boom"
+
+
+def test_session_died_becomes_a_fatal_result():
+    from salome_agent.executor_client import SessionDied
+
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {}))]
+
+    def execute(client, name, args):
+        raise SessionDied("socket closed")
+
+    result = ToolSpecialist(_spec(execute=execute)).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert result["fatal"].startswith("SALOME agent server unavailable")
+
+
+def test_calls_trace_pairs_tool_and_args_with_records():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1}), ("work", {"a": 2})), _resp(("done", {}))]
+    rec = {"fn": "F", "args": [], "out_vars": ["v"], "publish": ["v"]}
+
+    def execute(client, name, args):
+        return {"ok": True, "records": [rec] if args["a"] == 1 else []}
+
+    result = ToolSpecialist(_spec(execute=execute)).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert result["calls"] == [{"tool": "work", "tool_args": {"a": 1}, "records": [rec]}]
+
+
+def test_seed_calls_come_first():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {}))]
+    seed = [{"tool": "old", "tool_args": {}, "records": []}]
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(),
+                                         iteration_cap=3, seed_calls=seed)
+    assert result["calls"] == seed
+
+
+def test_exhausted_result_carries_calls_when_it_carries_call_log():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1}))] * 2
+    spec = _spec(execute=lambda c, n, a: {"ok": True, "records": [{"fn": "F", "args": [],
+                                                                      "out_vars": [], "publish": None}]},
+                 on_exhausted=lambda call_log, last_error: {"call_log": call_log})
+    result = ToolSpecialist(spec).run({"module": "toy"}, llm, MagicMock(), iteration_cap=2)
+    assert len(result["calls"]) == 2
+
+
+def test_extra_terminator_ends_the_loop_with_its_own_handle():
+    from salome_agent.modules import Terminator
+
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("bail", {"why": "big"}))]
+    bail = Terminator(name="bail", schema={"type": "object", "properties": {}},
+                      description="b", handle=lambda args, call_log: {"bailed": args["why"]})
+    result = ToolSpecialist(_spec(extra_terminators=(bail,))).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert result == {"bailed": "big"}
+    names = [t["name"] for t in llm.chat.call_args.kwargs["tools"]]
+    assert names == ["work", "done", "bail"]
+
+
+def test_cancel_stops_the_loop_before_the_next_tool_call():
+    import threading
+    cancel = threading.Event()
+    seen = []
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1}), ("work", {"a": 2})), _resp(("done", {}))]
+
+    def execute(client, name, args):
+        seen.append(args["a"])
+        cancel.set()
+        return {"ok": True, "records": [{"fn": "F", "args": [], "out_vars": ["v"], "publish": ["v"]}]}
+
+    spec = _spec(execute=execute,
+                 on_exhausted=lambda call_log, last_error: {"call_log": call_log})
+    result = ToolSpecialist(spec).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=5, cancel=cancel)
+    assert seen == [1]
+    assert llm.chat.call_count == 1
+    assert len(result["call_log"]) == 1
+    assert [c["tool_args"] for c in result["calls"]] == [{"a": 1}]
+
+
+def test_cancel_already_set_skips_the_llm():
+    import threading
+    cancel = threading.Event()
+    cancel.set()
+    llm = MagicMock()
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(),
+                                         iteration_cap=5, cancel=cancel)
+    assert llm.chat.call_count == 0
+    assert result["exhausted"] is True
+
+
+def test_llm_cancelled_mid_call_ends_the_stage_with_its_calls():
+    from salome_agent.llm import LLMCancelled
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1})), LLMCancelled()]
+    spec = _spec(on_exhausted=lambda call_log, last_error: {"call_log": call_log,
+                                                            "exhausted": True})
+    result = ToolSpecialist(spec).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
+    assert result["exhausted"] is True
+    assert [c["tool_args"] for c in result["calls"]] == [{"a": 1}]
+
+
+def _in_place(recv):
+    return {"ok": True, "records": [{"fn": "SetColor", "args": [], "out_vars": [],
+                                     "publish": None, "emit": "method_call", "recv": recv}]}
+
+
+def _tool_messages(llm):
+    return [m["content"] for m in llm.chat.call_args.kwargs["messages"] if m["role"] == "tool"]
+
+
+def test_in_place_change_to_an_upstream_shape_is_flagged():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("done", {}))]
+    ToolSpecialist(_spec(execute=lambda c, n, a: _in_place("beam_1"))).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3, upstream=("beam_1",))
+    [content] = _tool_messages(llm)
+    assert "beam_1 was built in an earlier stage" in content
+
+
+def test_in_place_change_to_this_stages_own_shape_is_silent():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("done", {}))]
+    ToolSpecialist(_spec(execute=lambda c, n, a: _in_place("walls_1"))).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3, upstream=("beam_1",))
+    [content] = _tool_messages(llm)
+    assert "earlier stage" not in content
+
+
+def test_copy_that_reads_an_upstream_shape_is_silent():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("done", {}))]
+    copy = {"ok": True, "records": [{"fn": "MakeFuse",
+                                     "args": [{"kind": "ref", "value": "beam_1"}],
+                                     "out_vars": ["fuse_1"], "publish": ["fuse_1"]}]}
+    ToolSpecialist(_spec(execute=lambda c, n, a: copy)).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3, upstream=("beam_1",))
+    [content] = _tool_messages(llm)
+    assert "earlier stage" not in content

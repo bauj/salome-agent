@@ -7,7 +7,8 @@ if SalomePyQt.usePySide():
 else:
     from PyQt5.QtCore import QObject, pyqtSignal as _Signal, Qt
 
-from executor import geom_tools
+from agent_server.backend import display_names, forget_names, hide_names
+from executor import geom
 
 
 class _Job:
@@ -79,7 +80,7 @@ class GuiBackend:
 
     def begin_session(self, run_id):
         self.name_prefix = f"sa_{run_id}_" if run_id else ""
-        geom_tools.reset_counters()
+        geom.reset_counters()
         self.geom_bindings.clear()
         self.accepted_scripts = []
 
@@ -134,6 +135,36 @@ class GuiBackend:
         except Exception:
             pass
 
+    def forget(self, names):
+        def _do():
+            import libSALOME_Swig
+            sg = libSALOME_Swig.SALOMEGUI_Swig()
+            r = forget_names(self.namespace, self.geom_bindings, names, erase=sg.Erase)
+            try:
+                sg.UpdateView()
+            except Exception:
+                pass
+            return r
+        return self._invoker.run_on_main(_do, timeout=30)
+
+    def display(self, names):
+        def _do():
+            import libSALOME_Swig
+            sg = libSALOME_Swig.SALOMEGUI_Swig()
+            r = display_names(self.namespace, names, sg.Display)
+            sg.UpdateView()
+            return r
+        return self._invoker.run_on_main(_do, timeout=30)
+
+    def hide(self, names):
+        def _do():
+            import libSALOME_Swig
+            sg = libSALOME_Swig.SALOMEGUI_Swig()
+            r = hide_names(self.namespace, names, sg.Erase)
+            sg.UpdateView()
+            return r
+        return self._invoker.run_on_main(_do, timeout=30)
+
     def find_object(self, name):
         def _do():
             fo = self.namespace["find_object"]
@@ -142,6 +173,13 @@ class GuiBackend:
             except LookupError:
                 return fo(name)
         return self._invoker.run_on_main(_do, timeout=30)
+
+    def leftovers(self):
+        # the live study is the user's own; never offer to wipe it
+        return 0
+
+    def clear_study(self):
+        return {"ok": False, "error": "will not clear a live GUI study"}
 
     def poisoned(self):
         return self._poisoned

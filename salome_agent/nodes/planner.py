@@ -1,12 +1,5 @@
-from executor.geom_tools import TOOL_DESCRIPTIONS
 from salome_agent.llm import with_images
-
-
-def _geom_catalogue() -> str:
-    # Names + one-liners only (no arg schemas) so the planner knows what a
-    # single geom stage can actually do and stops over-splitting parts.
-    lines = [f"  {n} -- {d}" for n, d in TOOL_DESCRIPTIONS.items()]
-    return "geom tools available to a single geom stage:\n" + "\n".join(lines)
+from salome_agent.modules import spec_for
 
 
 _PLANNER_BASE = """You turn a natural-language SALOME request into an
@@ -37,11 +30,20 @@ together).
 operations belong to one stage; splitting breaks the object-name handoff.
 
 For an assembly you MAY give each part (or each group of identical parts)
-its own stage, plus a final stage that combines them by name. Do that when
-the parts are distinct enough to name. A car is an assembly: body, cabin,
-wheels are separate parts even though they are fused at the end. Also use
-separate stages whenever the work crosses modules (geom -> smesh -> paravis)
-or the request asks for genuinely independent deliverables.
+its own stage. Do that when the parts are distinct enough to name. A car is
+an assembly: body, cabin, wheels are separate parts. Also use separate
+stages whenever the work crosses modules (geom -> smesh -> paravis) or the
+request asks for genuinely independent deliverables.
+
+Fuse parts into one solid only when they are one piece of material (a mug
+and its handle) or the request asks for a single solid. Never fuse parts
+that should keep different colours (a red body, black wheels): an object
+shows one colour, so the fuse loses them. Leave such parts as separate
+objects.
+
+Ask only for what the user asked for: no colour, transparency or extra
+features they did not mention. Any value you fill in yourself must fit the
+others -- a fillet radius below the wall thickness it rounds.
 
 Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
@@ -62,16 +64,19 @@ marked as estimated (~) when nothing else gives one. Mention uncertainties in a
 stage's params rather than inventing detail. If reference image(s) are attached
 directly instead, read them the same way."""
 
-PLANNER_SYSTEM_PROMPT = _PLANNER_BASE + "\n\n" + _geom_catalogue()
+# The smesh and paravis one-liners stay in _PLANNER_BASE (not restructured);
+# they also appear in their spec.catalogue strings so routable() includes them.
+# Do NOT move those three lines out — the prompt's byte-identity depends on them.
+PLANNER_SYSTEM_PROMPT = _PLANNER_BASE + "\n\n" + spec_for("geom").catalogue
 
 _DETAIL_HINT = {
     "coarse": "\n\nPrefer the fewest stages: keep an assembly's parts in one "
               "stage unless they are truly independent deliverables.",
     "balanced": "",
     "fine": "\n\nFor any assembly, give EACH part (or group of identical "
-            "parts) its own stage and add a final stage that combines them. "
-            "The final result being one fused solid does not make the parts "
-            "one part. Still never split a single part's own construction.",
+            "parts) its own stage, plus a final stage that fuses them when "
+            "they are to be fused. Being fused at the end does not make the "
+            "parts one part. Still never split a single part's own construction.",
 }
 
 

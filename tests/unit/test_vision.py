@@ -35,3 +35,16 @@ def test_format_description_renders_the_main_sections():
 
 def test_format_description_tolerates_an_empty_answer():
     assert format_description({}) == "{}"
+
+
+def test_format_description_leads_with_a_2d_target_and_its_plane():
+    text = format_description({"dimensionality": "2d", "dimensionality_reason": "a lone outline",
+                               "plane": "XZ", "summary": "a gasket profile"})
+    assert text.splitlines()[0] == ("Target: 2D (a lone outline) -- a planar shape in the "
+                                    "XZ plane, build it without thickness")
+    assert "plane:" not in text
+
+
+def test_format_description_states_a_3d_target():
+    text = format_description({"dimensionality": "3D", "summary": "a bracket", "plane": None})
+    assert text.splitlines()[0] == "Target: 3D"

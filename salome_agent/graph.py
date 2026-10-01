@@ -61,6 +61,74 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
     return None
 
 
+def route_start(state: dict) -> str:
+    return "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
+
+
+def _graph_upstream(state: dict) -> list[str]:
+    from salome_agent.build_graph import BuildGraph
+
+    if not state.get("build_graph"):
+        return []
+    return BuildGraph.from_dict(state["build_graph"]).result_names()
+
+
+def _earlier_requests(state: dict, last: int = 5) -> str:
+    """A follow-up such as "retry" means nothing to the planner on its own."""
+    turns = [h for h in state.get("history") or [] if h.get("event") == "turn"][-last:]
+    if not turns:
+        return ""
+    lines = [f"- {t.get('text', '')}" + ("" if t.get("status") == "ok" else " (did not finish)")
+             for t in turns]
+    return "\n\nEarlier requests in this conversation, oldest first:\n" + "\n".join(lines)
+
+
+def _amend_node(state: dict, config: "RunnableConfig"):
+    from langgraph.types import Command
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.replay import RollbackFailed
+    from salome_agent.specialists import amend
+
+    llm = config["configurable"]["llm_client"]
+    client = config["configurable"].get("executor_client")
+    graph = BuildGraph.from_dict(state.get("build_graph"))
+    turn = state.get("turn_idx") or 0
+    log.info("amend turn %d: %s", turn + 1, state["user_request"])
+    # Created here, not in run_amend: edits already applied to the study must
+    # still reach the conversation's rollback when the LLM call fails mid-loop.
+    session = amend.AmendSession(graph, client, turn)
+    try:
+        session, outcome = amend.run_amend(
+            state["user_request"], graph, llm, client, turn,
+            state["config"]["policy"], history=state.get("history") or [],
+            selection=state.get("selection"), session=session,
+            cancel=config["configurable"].get("cancel"))
+    except RollbackFailed as e:
+        log.error("  %s", e)
+        return Command(update={"fatal": f"rollback failed: {e}", "degraded": True,
+                               "build_graph": e.graph.to_dict()}, goto="assemble")
+    except Exception as e:  # noqa: BLE001
+        msg = _llm_endpoint_fatal(e)
+        if msg is None:
+            raise
+        log.error("  %s", msg)
+        return Command(update={"fatal": msg, "build_graph": session.graph.to_dict()},
+                       goto="assemble")
+    update = {"build_graph": session.graph.to_dict(), "turn_outcome": outcome,
+              "history": session.events}
+    if "fatal" in outcome:
+        update["fatal"] = outcome["fatal"]
+        return Command(update=update, goto="assemble")
+    if "replan" in outcome:
+        names = ", ".join(session.graph.result_names()) or "(nothing yet)"
+        update["replan_context"] = (
+            f"The study already contains: {names}. Build on those objects by name; "
+            f"do not rebuild them. ({outcome['replan']})" + _earlier_requests(state))
+        log.info("  amend -> replan: %s", outcome["replan"])
+        return Command(update=update, goto="plan")
+    return Command(update=update, goto="assemble")
+
+
 def route_after_run_stage(state: dict) -> str:
     stage = state["stages"][state["stage_idx"]]
     if stage["module"] == "geom":
@@ -77,23 +145,17 @@ def route_after_verify_exec(state: dict, session_died: bool = False) -> str:
 
 
 def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
-    """Names of study objects to hand the specialist for this stage. Every
-    object published by a prior accepted stage is available; if the plan's
-    `inputs` name specific ones that actually exist, scope down to those
-    (keeps multi-stage prompts tight). Otherwise pass everything."""
+    """Names of study objects to hand the specialist for this stage: everything
+    published by a prior accepted stage.
+
+    `stage_plan["inputs"]` is deliberately not consulted — planner.py tells the
+    planner to put plain words there, never object names (it cannot know the
+    auto-generated ones), so the scoping branch this replaced never fired."""
     available: list[str] = []
     for j in range(idx):
         prior = stages.get(j)
         if prior and prior.get("status") == "ok":
             available += prior.get("result_names") or []
-    inputs = stage_plan.get("inputs") or []
-    declared = [n for n in inputs if n in available]
-    # Scope down only when EVERY declared name is a real published object.
-    # A partial match means the planner invented names (it cannot know the
-    # auto-generated ones) — hand over everything live rather than a wrong
-    # subset (GH #9).
-    if inputs and len(declared) == len(inputs):
-        return declared
     return available
 
 
@@ -126,7 +188,7 @@ def retry_context(state: dict, idx: int, client) -> dict | None:
         except Exception as e:  # noqa: BLE001 — best-effort, must not abort the retry
             log.warning("  measure(retry built) errored: %s", e)
     return {"last_error": state.get("last_error"), "hint": hint, "built": built,
-            "built_info": built_info, "call_log": call_log}
+            "built_info": built_info, "call_log": call_log, "calls": stage.get("calls") or []}
 
 
 # llm_client/executor_client are live, non-serializable objects — they live
@@ -172,13 +234,23 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     log.info("planning... (plan_detail=%s)", detail)
     snap0 = _usage_snap(llm)
     t0 = time.monotonic()
+    request = state["user_request"]
+    if state.get("replan_context"):
+        request = f"{request}\n\n{state['replan_context']}"
+    else:
+        # a first turn that was cancelled or failed rolls back, so a follow-up
+        # "retry" is planned from scratch and must still see what was asked
+        request += _earlier_requests(state)
     try:
         description = state.get("image_description")
         # The vision agent's description replaces the raw images for the planner;
         # they are only passed through if no description was produced.
-        stage_plans = plan(state["user_request"], llm, detail,
-                           images=None if description else state.get("reference_images"),
-                           image_description=description)
+        image_kwargs = {}
+        if description:
+            image_kwargs["image_description"] = description
+        elif state.get("reference_images"):
+            image_kwargs["images"] = state["reference_images"]
+        stage_plans = plan(request, llm, detail, **image_kwargs)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -186,6 +258,12 @@ def _plan_node(state: dict, config: "RunnableConfig"):
         log.error("%s", msg)
         return Command(update={"fatal": msg}, goto="assemble")
     log.info("plan: %d stage(s)", len(stage_plans))
+    if not stage_plans:
+        question = ("I could not work out what to build from that. "
+                    "What should I make?")
+        return Command(update={"plan": [], "stages": {}, "stage_idx": 0,
+                               "turn_outcome": {"question": question, "summary": None}},
+                       goto="assemble")
     for i, p in enumerate(stage_plans):
         log.info("  stage %d/%d [%s] %s", i + 1, len(stage_plans), p["module"],
                  p.get("intent", ""))
@@ -217,41 +295,60 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     stage = dict(stages[idx])
     update: dict = {}
 
-    if module == "geom":
-        from salome_agent.specialists.geom import run_geom_specialist
+    from salome_agent.modules import MODULES, spec_for
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+    import salome_agent.specialists.geom  # noqa: F401 — registers GEOM_SPEC
+    import salome_agent.specialists.script_modules  # noqa: F401 — registers the script specs
 
-        upstream_info = None
-        upstream = select_upstream(stage_plan, state["stages"], idx)
-        if upstream and client is not None:
-            try:
-                m = client.call_tool("measure", {"names": upstream})
-                if m.get("ok"):
-                    upstream_info = m.get("measurements")
-                else:
-                    log.warning("  measure(upstream) failed: %s", m.get("error"))
-            except Exception as e:  # noqa: BLE001 — best-effort, must not abort the stage
-                log.warning("  measure(upstream) errored: %s", e)
-        tool_selection = state["config"]["policy"].get("tool_selection", "hints")
-        verify_cadence = state["config"]["policy"].get("verify_cadence", "final")
+    if module not in MODULES:
+        return Command(update={"fatal": f"planner produced unknown module {module!r}"},
+                       goto="assemble")
+
+    spec = spec_for(module)
+    upstream = _graph_upstream(state) + select_upstream(stage_plan, state["stages"], idx)
+    blocks = []
+    if spec.render_upstream is not None:
+        block = spec.render_upstream(client, upstream)
+        if block:
+            blocks.append(block)
+    if module == "geom":
+        # smesh/paravis never see the image description: it only feeds CAD construction
+        if state.get("image_description"):
+            from salome_agent.specialists.geom import image_block
+            blocks.append(image_block(state["image_description"]))
         retry = retry_context(state, idx, client)
-        try:
-            result = run_geom_specialist(stage_plan, llm, client, cap,
-                                         upstream=upstream_info,
-                                         tool_selection=tool_selection,
-                                         verify_cadence=verify_cadence,
-                                         image_description=state.get("image_description"),
-                                         retry=retry,
-                                         seed_call_log=(retry or {}).get("call_log"))
-        except Exception as e:  # noqa: BLE001
-            msg = _llm_endpoint_fatal(e)
-            if msg is None:
-                raise
-            log.error("  %s", msg)
-            return Command(update={"fatal": msg}, goto="assemble")
-        if "fatal" in result:
-            log.error("  %s", result["fatal"])
-            return Command(update={"fatal": result["fatal"]}, goto="assemble")
+        seed = (retry or {}).get("call_log")
+        seed_calls = (retry or {}).get("calls")
+    else:
+        retry = {"last_error": state.get("last_error")}
+        seed = None
+        seed_calls = None
+    policy = state["config"]["policy"]
+    try:
+        result = ToolSpecialist(spec).run(
+            stage_plan, llm, client, cap, blocks=tuple(blocks),
+            tool_selection=policy.get("tool_selection", "hints"),
+            verify_cadence=policy.get("verify_cadence", "final"),
+            retry=retry, seed_call_log=seed, seed_calls=seed_calls,
+            cancel=config["configurable"].get("cancel"), upstream=upstream)
+    except Exception as e:  # noqa: BLE001
+        msg = _llm_endpoint_fatal(e)
+        if msg is None:
+            raise
+        log.error("  %s", msg)
+        return Command(update={"fatal": msg}, goto="assemble")
+    if "fatal" in result:
+        log.error("  %s", result["fatal"])
+        return Command(update={"fatal": result["fatal"]}, goto="assemble")
+    if "script" in result:
+        stage["script"] = result["script"]
+        if result.get("warning"):
+            log.warning("  %s specialist: %s", module, result["warning"])
+        log.info("  %s specialist produced a %d-char script", module,
+                 len(result["script"] or ""))
+    else:
         stage["call_log"] = result.get("call_log")
+        stage["calls"] = result.get("calls")
         if "result_names" in result:
             stage["status"] = "ok"
             stage["result_names"] = result["result_names"]
@@ -262,32 +359,6 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             stage["status"] = "failed"
             update["last_error"] = result.get("last_error")
             log.warning("  geom specialist failed: %s", result.get("last_error"))
-    else:
-        from salome_agent.specialists.base import run_specialist
-        from salome_agent.specialists.paravis import PARAVIS_SYSTEM_PROMPT
-        from salome_agent.specialists.smesh import SMESH_SYSTEM_PROMPT
-
-        system_prompt = {"smesh": SMESH_SYSTEM_PROMPT, "paravis": PARAVIS_SYSTEM_PROMPT}.get(module)
-        tools = {}
-        if client is not None:
-            tools = {
-                "api_introspect": lambda name: str(client.introspect([name])),
-                "list_study": lambda: str(client.list_study()),
-            }
-        upstream = select_upstream(stage_plan, state["stages"], idx)
-        try:
-            result = run_specialist(stage_plan, llm, tools, cap, system_prompt=system_prompt,
-                                    upstream_names=upstream, last_error=state.get("last_error"))
-        except Exception as e:  # noqa: BLE001
-            msg = _llm_endpoint_fatal(e)
-            if msg is None:
-                raise
-            log.error("  %s", msg)
-            return Command(update={"fatal": msg}, goto="assemble")
-        stage["script"] = result["script"]
-        if result.get("warning"):
-            log.warning("  %s specialist: %s", module, result["warning"])
-        log.info("  %s specialist produced a %d-char script", module, len(result["script"] or ""))
 
     if snap0 is not None:
         stage["timing"] = _accum_timing(
@@ -392,13 +463,17 @@ def _skip_node(state: dict):
 
 def _assemble_node(state: dict):
     from langgraph.types import Command
-    from salome_agent.nodes.assembler import assemble
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.nodes.assembler import commit_stages, render_script
 
     log.info("assembling result.py")
-    return Command(update={"final_script": assemble(state)}, goto="report")
+    graph = commit_stages(BuildGraph.from_dict(state.get("build_graph")), state)
+    return Command(update={"final_script": render_script(graph, state["run_id"]),
+                           "build_graph": graph.to_dict()}, goto="report")
 
 
 def _report_node(state: dict, config: "RunnableConfig"):
+    import json
     import os
 
     from langgraph.graph import END
@@ -412,8 +487,13 @@ def _report_node(state: dict, config: "RunnableConfig"):
     os.makedirs(run_dir, exist_ok=True)
     with open(os.path.join(run_dir, "result.py"), "w") as f:
         f.write(state.get("final_script") or "")
-    with open(os.path.join(run_dir, "report.md"), "w") as f:
-        f.write(report_text)
+    if state.get("build_graph") is not None:
+        with open(os.path.join(run_dir, "build_graph.json"), "w") as f:
+            json.dump(state["build_graph"], f, indent=1)
+    turn = state.get("turn_idx") or 0
+    mode = "a" if turn > 0 else "w"
+    with open(os.path.join(run_dir, "report.md"), mode) as f:
+        f.write(f"\n\n# Turn {turn + 1}\n\n{report_text}" if turn > 0 else report_text)
     return Command(update={"report": report_text}, goto=END)
 
 
@@ -426,6 +506,7 @@ def build_graph(batch: bool):
     g = StateGraph(RunState)
     g.add_node("describe_image", _describe_image_node)
     g.add_node("plan", _plan_node)
+    g.add_node("amend", _amend_node)
     g.add_node("plan_gate", plan_gate)
     g.add_node("run_stage", _run_stage_node)
     g.add_node("verify_static", _verify_static_node)
@@ -435,5 +516,7 @@ def build_graph(batch: bool):
     g.add_node("skip", _skip_node)
     g.add_node("assemble", _assemble_node)
     g.add_node("report", _report_node)
-    g.add_edge(START, "describe_image")
+    # a first turn goes through describe_image, which hands over to plan
+    # straight away when there is no reference image
+    g.add_conditional_edges(START, route_start, {"plan": "describe_image", "amend": "amend"})
     return g.compile(checkpointer=MemorySaver())

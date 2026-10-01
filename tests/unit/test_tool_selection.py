@@ -1,5 +1,5 @@
 from salome_agent.specialists.tool_selection import (
-    CORE_TOOLS, hint_tool_names, initial_offered, resolve_load,
+    CORE_TOOLS, hint_tool_names, initial_offered, resolve_load, suggest_tool_names,
 )
 
 ALL = {"make_box", "make_cylinder", "translate", "set_color", "fuse", "cut",
@@ -49,3 +49,12 @@ def test_resolve_load_ignores_unknown_names_and_categories():
 
 def test_core_tools_includes_get_subshapes():
     assert "get_subshapes" in CORE_TOOLS
+
+
+def test_suggest_tool_names_finds_the_real_name_for_a_partial_guess():
+    assert suggest_tool_names("thick_solid", DEFS) == ["make_thick_solid"]
+    assert suggest_tool_names("make_cylindre", DEFS) == ["make_cylinder"]
+
+
+def test_suggest_tool_names_returns_nothing_for_an_unrelated_guess():
+    assert suggest_tool_names("ghost", DEFS) == []

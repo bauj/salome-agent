@@ -27,10 +27,10 @@ def _fake_server(port_box, responses, *, hello=None):
     srv.close()
 
 
-def _connect(box):
+def _connect(box, **kw):
     while not box:
         pass
-    return ExecutorClient("127.0.0.1", box[0], "tok", "run1")
+    return ExecutorClient("127.0.0.1", box[0], "tok", "run1", **kw)
 
 
 def test_run_returns_result():
@@ -100,4 +100,44 @@ def test_hello_fatal_raises_session_poisoned():
         pass
     with pytest.raises(SessionPoisoned):
         ExecutorClient("127.0.0.1", box[0], "tok", "run1")
+    t.join()
+
+
+def test_record_path_appends_one_json_line_per_call(tmp_path):
+    path = tmp_path / "exec_trace.jsonl"
+    box = []
+    t = threading.Thread(target=_fake_server,
+                         args=(box, [{"id": 1, "ok": True, "records": []}]),
+                         daemon=True)
+    t.start()
+    client = _connect(box, record_path=str(path))
+    client.call_tool("make_box", {"dx": 1, "dy": 2, "dz": 3})
+    t.join()
+
+    lines = [json.loads(l) for l in path.read_text().splitlines()]
+    assert lines[-1]["cmd"] == "call_tool"
+    assert lines[-1]["payload"] == {"name": "make_box", "args": {"dx": 1, "dy": 2, "dz": 3}}
+    assert lines[-1]["response"]["ok"] is True
+
+
+def test_hello_leftovers_and_clear_study():
+    box = []
+    t = threading.Thread(target=_fake_server,
+                         args=(box, [{"id": 1, "ok": True, "removed": 3}]),
+                         kwargs={"hello": {"ready": True, "proto": 1, "mode": "headless",
+                                           "name_prefix": "sa_run1_", "leftovers": 3}})
+    t.start()
+    client = _connect(box)
+    assert client.leftovers == 3
+    assert client.clear_study() == {"id": 1, "ok": True, "removed": 3}
+    t.join()
+
+
+def test_hello_without_leftovers_defaults_to_zero():
+    box = []
+    t = threading.Thread(target=_fake_server, args=(box, []))
+    t.start()
+    client = _connect(box)
+    assert client.leftovers == 0
+    client.close()
     t.join()

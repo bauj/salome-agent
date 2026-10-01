@@ -1,4 +1,5 @@
-from typing import Annotated, Literal, Optional, TypedDict
+from typing import Annotated, Literal, Optional
+from typing_extensions import TypedDict, NotRequired
 import operator
 
 
@@ -6,7 +7,12 @@ class StagePlan(TypedDict):
     module: Literal["geom", "smesh", "paravis"]
     intent: str
     params: dict
+    # Plain-words description of what this stage needs, never object names
+    # (planner.py). paravis reads the MED file path from it.
     inputs: list[str]
+    # Optional planner hint: the geom tool names this stage expects to use
+    # (task 193). Absent on smesh/paravis stages.
+    tools: NotRequired[list[str]]
 
 
 class StageError(TypedDict):
@@ -21,6 +27,9 @@ class StageRecord(TypedDict, total=False):
     status: Literal["pending", "ok", "failed", "skipped"]
     script: Optional[str]
     call_log: Optional[list[dict]]
+    # Task 5's per-call trace: [{tool, tool_args, records}] — what a build
+    # node is made from. None for script modules.
+    calls: Optional[list[dict]]
     static_retries: int
     exec_retries: int
     # {wall, llm_s, core_s, exec_s, turns, in_tok, out_tok} — accumulated
@@ -58,3 +67,11 @@ class RunState(TypedDict):
     report: Optional[str]
     fatal: Optional[str]
     aborted: Optional[bool]
+    build_graph: Optional[dict]
+
+    # agentic chat (task 194) — absent in one-shot runs
+    turn_idx: int
+    selection: Optional[list]
+    turn_outcome: Optional[dict]
+    replan_context: Optional[str]
+    degraded: Optional[bool]

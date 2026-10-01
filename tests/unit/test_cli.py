@@ -137,3 +137,13 @@ def test_main_returns_1_on_abort(tmp_path, monkeypatch):
         "salome_agent.runner.run_request",
         lambda request, config, **kw: RunResult(kw["run_id"], "/x", {"aborted": True}, 1))
     assert cli.main(["x", "--no-session", "--config", str(cfg)]) == 1
+
+
+def test_chat_with_batch_is_an_error(capsys):
+    from salome_agent.cli import main
+    assert main(["a box", "--chat", "--batch"]) == 2
+
+
+def test_chat_with_no_session_is_an_error(capsys):
+    from salome_agent.cli import main
+    assert main(["a box", "--chat", "--no-session"]) == 2
