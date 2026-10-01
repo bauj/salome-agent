@@ -46,6 +46,20 @@ def test_ok_turn_commits_graph_and_snapshot(conv, monkeypatch):
     assert conv.history[-1]["event"] == "turn" and conv.history[-1]["status"] == "ok"
 
 
+def test_turn_hands_its_images_to_the_graph(conv, monkeypatch):
+    seen = []
+
+    def fake(app, inp, cfg, mapper, llm, on_event, on_gate, cancel):
+        seen.append(inp["reference_images"])
+        return {**inp, "build_graph": _graph_with(1).to_dict()}
+
+    monkeypatch.setattr(conv_mod, "drive", fake)
+    conv.turn("like this", images=["data:image/png;base64,AAAA"], on_event=lambda e: None,
+              on_gate=None)
+    conv.turn("taller", on_event=lambda e: None, on_gate=None)
+    assert seen == [["data:image/png;base64,AAAA"], None]
+
+
 def test_failed_turn_rolls_back_via_sync(conv, monkeypatch):
     conv.graph = _graph_with(1); conv.turn_idx = 1
     bad = _graph_with(2)

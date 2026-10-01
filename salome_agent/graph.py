@@ -62,6 +62,11 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
 
 
 def route_start(state: dict) -> str:
+    """"plan" goes through describe_image first, so a follow-up turn that
+    brings reference images is routed there too; describe_image hands it on to
+    amend."""
+    if state.get("reference_images"):
+        return "plan"
     return "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
 
 
@@ -97,12 +102,14 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
     session = amend.AmendSession(graph, client, turn)
+    description = state.get("image_description")
+    extra = {"image_description": description} if description else {}
     try:
         session, outcome = amend.run_amend(
             state["user_request"], graph, llm, client, turn,
             state["config"]["policy"], history=state.get("history") or [],
             selection=state.get("selection"), session=session,
-            cancel=config["configurable"].get("cancel"))
+            cancel=config["configurable"].get("cancel"), **extra)
     except RollbackFailed as e:
         log.error("  %s", e)
         return Command(update={"fatal": f"rollback failed: {e}", "degraded": True,
@@ -202,8 +209,9 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
     from salome_agent.nodes.vision import describe_images, format_description
 
     images = state.get("reference_images")
+    after = "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
     if not images:
-        return Command(goto="plan")
+        return Command(goto=after)
     llm = config["configurable"]["llm_client"]
     log.info("describing %d reference image(s)...", len(images))
     snap0 = _usage_snap(llm)
@@ -222,7 +230,7 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
     if snap0 is not None:
         vt = _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0)
         log.info("  vision timing: wall=%.1fs llm=%.1fs", vt["wall"], vt["llm_s"])
-    return Command(update=update, goto="plan")
+    return Command(update=update, goto=after)
 
 
 def _plan_node(state: dict, config: "RunnableConfig"):

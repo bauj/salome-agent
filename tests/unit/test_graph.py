@@ -398,6 +398,20 @@ def test_describe_image_node_stores_the_description_for_the_planner():
     assert "an L-bracket" in cmd.update["image_description"]
 
 
+def test_describe_image_node_hands_a_follow_up_turn_to_amend():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.return_value = {"summary": "a handle"}
+    state = {"user_request": "x", "turn_idx": 1,
+             "reference_images": ["data:image/png;base64,AAAA"]}
+    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "amend" and "a handle" in cmd.update["image_description"]
+    cmd = graph._describe_image_node({"user_request": "x", "turn_idx": 1},
+                                     {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "amend"
+
+
 def test_describe_image_node_turns_endpoint_error_into_a_clean_fatal():
     from salome_agent import graph
 
