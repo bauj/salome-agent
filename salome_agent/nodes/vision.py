@@ -75,6 +75,13 @@ def describe_images(request: str, images: list[str], llm) -> dict:
     )
 
 
+def _as_list(value) -> list:
+    """The schema asks for lists; a model may answer a lone string or object."""
+    if value is None or value == "":
+        return []
+    return value if isinstance(value, list) else [value]
+
+
 def format_description(desc: dict) -> str:
     """Render the vision agent's JSON as a readable text block for the planner."""
     if not isinstance(desc, dict) or not desc:
@@ -90,13 +97,19 @@ def format_description(desc: dict) -> str:
         lines.append(target)
     if desc.get("summary"):
         lines.append(f"Summary: {desc['summary']}")
-    for v in desc.get("views") or []:
+    for v in _as_list(desc.get("views")):
+        if not isinstance(v, dict):
+            lines.append(f"View: {v}")
+            continue
         lines.append(f"Image {v.get('image', '?')} ({v.get('view', 'unknown')}): "
                      f"{v.get('shows', '')}")
-    parts = desc.get("parts") or []
+    parts = _as_list(desc.get("parts"))
     if parts:
         lines.append("Parts:")
     for p in parts:
+        if not isinstance(p, dict):
+            lines.append(f"  - {p}")
+            continue
         bits = [f"{p.get('name', '?')} -- {p.get('shape', '?')}"]
         if p.get("dimensions"):
             bits.append(f"dimensions {json.dumps(p['dimensions'], ensure_ascii=False)}")
@@ -107,16 +120,17 @@ def format_description(desc: dict) -> str:
         lines.append("  - " + "; ".join(bits))
     if desc.get("dimensions_read"):
         lines.append("Dimensions read from the image(s): "
-                     + "; ".join(str(d) for d in desc["dimensions_read"]))
+                     + "; ".join(str(d) for d in _as_list(desc["dimensions_read"])))
     if desc.get("proportions"):
         lines.append(f"Proportions: {desc['proportions']}")
     if desc.get("symmetry"):
         lines.append(f"Symmetry / patterns: {desc['symmetry']}")
     if desc.get("uncertainties"):
-        lines.append("Uncertainties: " + "; ".join(str(u) for u in desc["uncertainties"]))
+        lines.append("Uncertainties: " + "; ".join(str(u) for u in _as_list(desc["uncertainties"])))
     known = {"dimensionality", "dimensionality_reason", "plane", "summary", "views", "parts", "dimensions_read", "proportions",
              "symmetry", "uncertainties"}
     for k, v in desc.items():
         if k not in known:
             lines.append(f"{k}: {v}")
-    return "\n".join(lines)
+    # never empty: the planner would get no description at all
+    return "\n".join(lines) or json.dumps(desc, ensure_ascii=False)

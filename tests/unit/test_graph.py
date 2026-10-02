@@ -396,6 +396,7 @@ def test_describe_image_node_stores_the_description_for_the_planner():
     cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
     assert cmd.goto == "plan"
     assert "an L-bracket" in cmd.update["image_description"]
+    assert cmd.update["reference_images"] is None
 
 
 def test_describe_image_node_hands_a_follow_up_turn_to_amend():
@@ -428,8 +429,8 @@ def test_plan_node_hands_the_description_not_the_images_to_the_planner(monkeypat
 
     seen = {}
 
-    def fake_plan(request, llm, detail="balanced", images=None, image_description=None):
-        seen.update(images=images, image_description=image_description)
+    def fake_plan(request, llm, detail="balanced", image_description=None):
+        seen.update(image_description=image_description)
         return [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]
 
     monkeypatch.setattr(planner, "plan", fake_plan)
@@ -437,7 +438,7 @@ def test_plan_node_hands_the_description_not_the_images_to_the_planner(monkeypat
              "reference_images": ["data:image/png;base64,AAAA"],
              "image_description": "Summary: a box"}
     graph._plan_node(state, {"configurable": {"llm_client": MagicMock()}})
-    assert seen == {"images": None, "image_description": "Summary: a box"}
+    assert seen == {"image_description": "Summary: a box"}
 
 
 def test_select_upstream_always_returns_every_available_name():

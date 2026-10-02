@@ -1,4 +1,3 @@
-from salome_agent.llm import with_images
 from salome_agent.modules import spec_for
 
 
@@ -61,8 +60,7 @@ shape your stage breakdown. Several views described together are ONE object, not
 separate parts. Prefer explicit numeric dimensions given in the text request, then
 dimensions the description says were read from the image; only fall back to values
 marked as estimated (~) when nothing else gives one. Mention uncertainties in a
-stage's params rather than inventing detail. If reference image(s) are attached
-directly instead, read them the same way."""
+stage's params rather than inventing detail."""
 
 # The smesh and paravis one-liners stay in _PLANNER_BASE (not restructured);
 # they also appear in their spec.catalogue strings so routable() includes them.
@@ -89,14 +87,13 @@ def blank_stages(stage_plans: list[dict]) -> dict:
 
 
 def plan(request: str, llm, detail: str = "balanced",
-        images: list[str] | None = None,
-        image_description: str | None = None) -> list[dict]:
+         image_description: str | None = None) -> list[dict]:
     system = PLANNER_SYSTEM_PROMPT + _DETAIL_HINT.get(detail, "")
     if image_description:
         request = f"{request}\n\nImage description:\n{image_description}"
     response = llm.chat(
         messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": with_images(request, images)}],
+                  {"role": "user", "content": request}],
         module="planner",
     )
     return response["stages"]
