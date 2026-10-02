@@ -1,3 +1,4 @@
+import math
 import subprocess
 import sys
 import tempfile
@@ -87,6 +88,89 @@ class TestPrimitiveTools:
                                    {"points": ["0,0,0", "10,0,0", "10,10,0", "0,10,5"]})
         assert r["ok"] is False
         assert "same plane" in r["error"]
+
+
+class TestProfileTools:
+    """make_arc / make_wire / make_face_from_wires on real GEOM."""
+
+    @staticmethod
+    def _out(result):
+        assert result["ok"] is True, result.get("error")
+        return result["records"][-1]["out_vars"][0]
+
+    @staticmethod
+    def _props(client, name):
+        return client.call_tool("basic_properties", {"shape": name})["properties"]
+
+    def test_quarter_arc_by_centre_and_its_reverse(self, agent_client):
+        """Default = the shorter way round, whatever the order of start and end."""
+        fwd = agent_client.call_tool("make_arc", {"center": "0,0,0", "start": "10,0,0",
+                                                  "end": "0,10,0"})
+        rev = agent_client.call_tool("make_arc", {"center": "0,0,0", "start": "10,0,0",
+                                                  "end": "0,10,0", "reverse": True})
+        assert fwd["ok"] and rev["ok"], (fwd.get("error"), rev.get("error"))
+        assert fwd["arc"]["length"] == pytest.approx(5 * math.pi, rel=1e-6)   # the short way
+        assert rev["arc"]["length"] == pytest.approx(15 * math.pi, rel=1e-6)
+        for r in (fwd, rev):
+            assert {tuple(r["arc"][k]) for k in ("start", "end")} == {(10, 0, 0), (0, 10, 0)}
+        swapped = agent_client.call_tool("make_arc", {"center": "0,0,0", "start": "0,10,0",
+                                                      "end": "10,0,0"})
+        assert swapped["arc"]["length"] == pytest.approx(5 * math.pi, rel=1e-6)
+
+    def test_slot_profile_extrudes_to_the_right_volume(self, agent_client):
+        """20 long, 10 wide slot with semicircular ends, 3 thick."""
+        c = agent_client.call_tool
+        edges = [
+            self._out(c("make_line", {"pnt1": "0,-5,0", "pnt2": "20,-5,0"})),
+            self._out(c("make_arc", {"start": "20,-5,0", "through": "25,0,0", "end": "20,5,0"})),
+            self._out(c("make_line", {"pnt1": "20,5,0", "pnt2": "0,5,0"})),
+            self._out(c("make_arc", {"start": "0,5,0", "through": "-5,0,0", "end": "0,-5,0"})),
+        ]
+        wire = c("make_wire", {"edges": edges})
+        assert wire["closed"] is True
+        face = c("make_face_from_wires", {"wires": [self._out(wire)]})
+        assert face["area"] == pytest.approx(200 + 25 * math.pi, rel=1e-6)
+        solid = self._out(c("make_prism", {"base": self._out(face), "dx": 0, "dy": 0, "dz": 3}))
+        assert self._props(agent_client, solid)["volume"] == \
+            pytest.approx(3 * (200 + 25 * math.pi), rel=1e-6)
+        faces = c("explode", {"shape": solid, "sub_type": "face"})["records"][0]["out_vars"]
+        assert len(faces) == 6
+
+    def test_plate_with_a_round_hole(self, agent_client):
+        c = agent_client.call_tool
+        corners = ["0,0,0", "40,0,0", "40,40,0", "0,40,0"]
+        edges = [self._out(c("make_line", {"pnt1": a, "pnt2": b}))
+                 for a, b in zip(corners, corners[1:] + corners[:1])]
+        outer = self._out(c("make_wire", {"edges": edges}))
+        hole = self._out(c("make_circle", {"center": "20,20,0", "normal": "0,0,1", "radius": 5}))
+        face = c("make_face_from_wires", {"wires": [outer, hole]})
+        assert face["ok"] is True, face.get("error")
+        assert face["area"] == pytest.approx(1600 - 25 * math.pi, rel=1e-6)
+
+    def test_a_gap_is_a_clear_error(self, agent_client):
+        c = agent_client.call_tool
+        a = self._out(c("make_line", {"pnt1": "0,0,0", "pnt2": "10,0,0"}))
+        b = self._out(c("make_line", {"pnt1": "10.5,0,0", "pnt2": "10,10,0"}))
+        r = c("make_wire", {"edges": [a, b]})
+        assert r["ok"] is False
+        assert "0.5 apart" in r["error"]
+
+    def test_open_wire_cannot_make_a_face(self, agent_client):
+        c = agent_client.call_tool
+        a = self._out(c("make_line", {"pnt1": "0,0,0", "pnt2": "10,0,0"}))
+        b = self._out(c("make_line", {"pnt1": "10,0,0", "pnt2": "10,10,0"}))
+        wire = c("make_wire", {"edges": [a, b]})
+        assert wire["closed"] is False
+        r = c("make_face_from_wires", {"wires": [self._out(wire)]})
+        assert r["ok"] is False and "open" in r["error"]
+
+    def test_non_planar_wire_is_refused(self, agent_client):
+        c = agent_client.call_tool
+        pts = ["0,0,0", "10,0,0", "10,10,0", "0,10,5"]
+        edges = [self._out(c("make_line", {"pnt1": a, "pnt2": b}))
+                 for a, b in zip(pts, pts[1:] + pts[:1])]
+        r = c("make_face_from_wires", {"wires": [self._out(c("make_wire", {"edges": edges}))]})
+        assert r["ok"] is False and "one plane" in r["error"]
 
 
 class TestBasicObjectTools:

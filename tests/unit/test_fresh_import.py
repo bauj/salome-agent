@@ -40,7 +40,7 @@ def test_geom_tools_registers_all_tools_in_a_fresh_interpreter():
     code = (
         "import json\n"
         "from executor import geom\n"
-        "assert len(geom.TOOLS) == 45, len(geom.TOOLS)\n"
+        "assert len(geom.TOOLS) == 48, len(geom.TOOLS)\n"
         "names = [t['name'] for t in geom.list_tools()]\n"
         "print(json.dumps(names))\n"
     )
