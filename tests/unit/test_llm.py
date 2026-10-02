@@ -1092,3 +1092,125 @@ def test_images_are_redacted_from_the_trace_and_the_token_estimate(monkeypatch, 
     assert "A" * 100 not in entry
     part = json.loads(entry)["request"]["messages"][0]["content"][1]
     assert part["image_url"]["url"] == f"<image, {len(uri)} chars>"
+
+
+# --- task 278: interrupted calls keep their reasoning ------------------------
+
+_THINK = 'data: {"choices": [{"delta": {"reasoning_content": "hmm "}}]}'
+
+
+def _trace_lines(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_budget_overrun_writes_an_incomplete_trace_entry(tmp_path, monkeypatch):
+    ticks = iter(range(0, 100_000, 10))
+    monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=[_THINK] * 50))
+    from salome_agent.llm import StreamBudgetExceeded
+    trace = tmp_path / "llm_trace.jsonl"
+    client = LLMClient("http://x/v1", "", "auto", request_timeout=30, trace_path=str(trace))
+    with pytest.raises(StreamBudgetExceeded):
+        client.chat(messages=[{"role": "user", "content": "x"}])
+    [entry] = _trace_lines(trace)
+    resp = entry["response"]
+    assert "total budget" in resp["incomplete"]
+    assert resp["message"]["reasoning_content"].startswith("hmm")
+    assert resp["frames"] >= 1 and resp["elapsed_s"] > 0
+    assert entry["request"]["messages"] == [{"role": "user", "content": "x"}]
+
+
+def test_cancel_writes_an_incomplete_trace_entry(tmp_path, monkeypatch):
+    import threading
+    cancel = threading.Event()
+
+    class _Resp(_FakeResp):
+        def iter_lines(self, chunk_size=512, decode_unicode=False):
+            for i in range(10):
+                if i == 3:
+                    cancel.set()
+                yield _THINK
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", lambda *a, **k: _Resp(None))
+    trace = tmp_path / "llm_trace.jsonl"
+    client = LLMClient("http://x/v1", "", "auto", trace_path=str(trace))
+    client.cancel = cancel
+    with pytest.raises(LLMCancelled):
+        client.chat(messages=[{"role": "user", "content": "x"}])
+    [entry] = _trace_lines(trace)
+    assert "cancelled" in entry["response"]["incomplete"]
+    assert entry["response"]["message"]["reasoning_content"] == "hmm hmm hmm "
+
+
+def test_dropped_attempt_is_traced_then_the_retry(tmp_path, monkeypatch):
+    streams = iter([
+        [_THINK, 'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", '
+                 '"function": {"name": "mk", "arguments": "{\\"a\\""}}]}}]}'],
+        ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+         "data: [DONE]"],
+    ])
+
+    class _Resp(_FakeResp):
+        def __init__(self, lines):
+            super().__init__(None, lines=lines)
+
+        def iter_lines(self, chunk_size=512, decode_unicode=False):
+            yield from self._lines
+            if "[DONE]" not in self._lines[-1]:
+                raise requests.ConnectionError("connection reset")
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", lambda *a, **k: _Resp(next(streams)))
+    monkeypatch.setattr("salome_agent.llm.time.sleep", lambda s: None)
+    trace = tmp_path / "llm_trace.jsonl"
+    out = LLMClient("http://x/v1", "", "auto", trace_path=str(trace)).chat(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert out["content"] == "ok"
+    first, second = _trace_lines(trace)
+    assert "connection reset" in first["response"]["incomplete"]
+    assert first["response"]["attempt"] == 1
+    partial = first["response"]["message"]
+    assert partial["reasoning_content"] == "hmm "
+    assert partial["tool_calls"][0]["function"] == {"name": "mk", "arguments": '{"a"'}
+    assert "incomplete" not in second["response"]
+    assert second["response"]["message"]["content"] == "ok"
+
+
+def test_live_file_gets_reasoning_and_content_as_they_stream(tmp_path, monkeypatch):
+    lines = [_THINK, _THINK,
+             'data: {"choices": [{"delta": {"content": "{\\"stages\\": []}"}, '
+             '"finish_reason": "stop"}]}',
+             "data: [DONE]"]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    client = LLMClient("http://x/v1", "", "auto", trace_path=str(tmp_path / "llm_trace.jsonl"))
+    client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
+    live = (tmp_path / "llm_live.txt").read_text()
+    assert "planner" in live and "attempt 1" in live
+    assert "hmm hmm " in live and '{"stages": []}' in live
+    assert live.index("hmm") < live.index("stages")
+    assert "finish=stop" in live
+
+
+def test_live_file_marks_a_cut_call(tmp_path, monkeypatch):
+    ticks = iter(range(0, 100_000, 10))
+    monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=[_THINK] * 50))
+    from salome_agent.llm import StreamBudgetExceeded
+    client = LLMClient("http://x/v1", "", "auto", request_timeout=30,
+                       trace_path=str(tmp_path / "llm_trace.jsonl"))
+    with pytest.raises(StreamBudgetExceeded):
+        client.chat(messages=[{"role": "user", "content": "x"}])
+    live = (tmp_path / "llm_live.txt").read_text()
+    assert "hmm" in live and "incomplete" in live
+
+
+def test_no_trace_path_writes_no_live_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=[_THINK] * 3))
+    with pytest.raises(Exception):
+        LLMClient("http://x/v1", "", "auto", max_retries=0).chat(
+            messages=[{"role": "user", "content": "x"}])
+    assert list(tmp_path.iterdir()) == []
