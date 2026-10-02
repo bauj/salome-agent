@@ -488,6 +488,98 @@ def _check_part(part, dim, ids, err):
             err(f"ops[{k}].with must name another part ({', '.join(sorted(ids))})")
 
 
+_COUNT = re.compile(r"(?<![\w.])(\d+)\s*[xX×](?!\w)")
+_SIZE = re.compile(r"(?<!\w)(R|Ø|⌀)\s*(\d+(?:\.\d+)?)")
+# A drawing gives arcs, fillets and slot ends as R, round holes as Ø.
+_RADIUS_KINDS = ("outline corners/arcs", "slot ends")
+_DIAMETER_KINDS = ("round holes", "hole features")
+
+
+def _outline_radii(outline, plane, found):
+    cur = parse_point(outline.get("start"))
+    for seg in outline.get("segments") or []:
+        if not isinstance(seg, dict):
+            return
+        to = parse_point(seg.get("to"))
+        if cur is None or to is None:
+            return
+        if parse_num(seg.get("fillet")):
+            found.append((parse_num(seg["fillet"]), 1, "outline corners/arcs"))
+        c, t = parse_point(seg.get("center")), parse_point(seg.get("through"))
+        if c is not None:
+            found.append((math.dist(cur, c), 1, "outline corners/arcs"))
+        elif t is not None:
+            circle = _circumcircle(_flat(cur, plane), _flat(t, plane), _flat(to, plane))
+            if circle:
+                found.append((circle[1], 1, "outline corners/arcs"))
+        cur = to
+
+
+def _spec_radii(parts):
+    """Every (radius, how many, kind) the spec draws; None when some feature of
+    unknown count (a fillet on named edges) makes a tally meaningless."""
+    found, unknown = [], set()
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        base = part.get("base") if isinstance(part.get("base"), dict) else {}
+        prof = base.get("profile")
+        if base.get("kind") == "profile" and isinstance(prof, dict):
+            plane = base.get("plane") if base.get("plane") in PLANE_AXES else "XY"
+            _outline_radii(prof, plane, found)
+            for hole in prof.get("holes") or []:
+                if not isinstance(hole, dict):
+                    continue
+                if isinstance(hole.get("slot"), dict) and parse_num(hole["slot"].get("width")):
+                    found.append((parse_num(hole["slot"]["width"]) / 2, 2, "slot ends"))
+                elif "segments" in hole:
+                    _outline_radii(hole, plane, found)
+                elif parse_num(hole.get("radius")):
+                    found.append((parse_num(hole["radius"]), 1, "round holes"))
+        feats = [f for f in part.get("features") or [] if isinstance(f, dict)]
+        copies = {}
+        for f in feats:
+            if f.get("type") == "pattern" and isinstance(f.get("of"), int) \
+                    and isinstance(f.get("count"), int):
+                copies[f["of"]] = copies.get(f["of"], 1) * f["count"]
+        for j, f in enumerate(feats, 1):
+            if f.get("type") == "hole" and parse_num(f.get("diameter")):
+                found.append((parse_num(f["diameter"]) / 2, copies.get(j, 1), "hole features"))
+            elif f.get("type") == "fillet" and parse_num(f.get("radius")):
+                unknown.add(round(parse_num(f["radius"]), 2))
+    return found, unknown
+
+
+def _check_callout_counts(spec, parts, err):
+    """A counted callout ("R9 - 4X", "3X Ø30") must match how many features of
+    that radius the spec draws (slot ends, holes, outline corners and arcs)."""
+    found, unknown = _spec_radii(parts)
+    for d in spec.get("dimensions_read") or []:
+        text = d.get("text") if isinstance(d, dict) else None
+        if not isinstance(text, str):
+            continue
+        counts, sizes = _COUNT.findall(text), _SIZE.findall(text)
+        if len(counts) != 1 or len(sizes) != 1:
+            continue
+        n = int(counts[0])
+        sym, val = sizes[0]
+        r = float(val) / (1 if sym == "R" else 2)
+        if round(r, 2) in unknown:
+            continue
+        kinds = _RADIUS_KINDS if sym == "R" else _DIAMETER_KINDS
+        match = [(k, kind) for rad, k, kind in found
+                 if kind in kinds and abs(rad - r) <= 0.05]
+        have = sum(k for k, _ in match)
+        if not match or have == n:
+            continue
+        tally = {}
+        for k, kind in match:
+            tally[kind] = tally.get(kind, 0) + k
+        listed = ", ".join(f"{k} {kind}" for kind, k in tally.items())
+        err(f'the drawing reads "{text}" ({n} features of {sym}{val}) but the spec draws '
+            f"{have} ({listed}); re-read that callout and give every one of them")
+
+
 def validate_spec(spec) -> list[tuple[str | None, str]]:
     """Mechanical checks of a vision spec; [] when it is sound. Each error is
     (part id or None, message)."""
@@ -517,6 +609,7 @@ def validate_spec(spec) -> list[tuple[str | None, str]]:
             continue
         seen.add(pid)
         _check_part(part, dim, ids, lambda m, pid=pid: errs.append((pid, m)))
+    _check_callout_counts(spec, parts, lambda m: errs.append((None, m)))
     return errs
 
 
