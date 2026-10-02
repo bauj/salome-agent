@@ -1076,3 +1076,19 @@ def test_length_finish_reason_warns_about_truncation(monkeypatch, caplog):
     LLMClient("http://x/v1", "k", "m", ssl_cert_file="").chat(
         messages=[{"role": "user", "content": "hi"}])
     assert "cut off" in caplog.text and "2700" in caplog.text
+
+
+def test_images_are_redacted_from_the_trace_and_the_token_estimate(monkeypatch, tmp_path):
+    import json
+
+    uri = "data:image/png;base64," + "A" * 40000
+    body = {"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    trace = tmp_path / "llm_trace.jsonl"
+    client = LLMClient("http://x/v1", "k", "m", ssl_cert_file="", trace_path=str(trace))
+    client.chat(messages=[{"role": "user", "content": with_images("look", [uri])}])
+    assert client.usage["approx_prompt_tokens"] < 1000
+    entry = trace.read_text()
+    assert "A" * 100 not in entry
+    part = json.loads(entry)["request"]["messages"][0]["content"][1]
+    assert part["image_url"]["url"] == f"<image, {len(uri)} chars>"
