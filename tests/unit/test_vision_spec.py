@@ -1,6 +1,10 @@
 import copy
+import json
 
-from salome_agent.nodes.vision_spec import parse_num, parse_point, validate_spec
+from salome_agent.nodes.vision_spec import (all_conflicts, amend_block, attach_conflicts,
+                                            compact_spec, format_errors, parse_num, parse_point,
+                                            part_ids, parts_block, stage_part_ids,
+                                            unclaimed_parts, validate_spec)
 
 
 def p1_spec():
@@ -183,3 +187,90 @@ def test_validator_does_not_mutate_the_spec():
     before = copy.deepcopy(spec)
     validate_spec(spec)
     assert spec == before
+import json
+
+from salome_agent.nodes.vision_spec import (all_conflicts, amend_block, attach_conflicts,
+                                            compact_spec, format_errors, part_ids, parts_block,
+                                            stage_part_ids, unclaimed_parts)
+
+
+def test_format_errors_lists_each_with_its_part():
+    assert format_errors([("P1", "bad arc"), (None, "no parts")]) == "- P1: bad arc\n- no parts"
+
+
+def test_attach_conflicts_puts_errors_on_their_part():
+    spec = box_spec()
+    out = attach_conflicts(spec, [("P2", "lid too big"), (None, "datum unclear")])
+    assert out["parts"][1]["conflicts"] == ["lid too big"]
+    assert out["conflicts"] == ["datum unclear"]
+    assert "conflicts" not in spec["parts"][1]
+    assert all_conflicts(out) == ["datum unclear", "P2: lid too big"]
+
+
+def test_attach_conflicts_wraps_a_non_object_answer():
+    out = attach_conflicts(["a box"], [(None, "the spec must be a JSON object")])
+    assert out == {"summary": '["a box"]', "parts": [],
+                   "conflicts": ["the spec must be a JSON object"]}
+    assert compact_spec(out).startswith("Reference image spec")
+
+
+def test_compact_spec_summarises_each_part_without_its_numbers():
+    text = compact_spec(p1_spec())
+    assert text.startswith("Reference image spec")
+    assert "Target: 2D in the XY plane" in text
+    assert "- P1 plate: profile in XY, flat face, 192 x 230, 7 holes" in text
+    assert "55.426" not in text
+
+
+def test_compact_spec_flags_an_assumed_2d_target():
+    spec = p1_spec()
+    spec["dimensionality"] = {"value": "2d", "assumed": True, "reason": "single outline"}
+    assert "Target: 2D in the XY plane (assumed: single outline)" in compact_spec(spec)
+
+
+def test_compact_spec_names_primitive_approx_features_and_conflicts():
+    spec = attach_conflicts(box_spec(), [("P1", "hole off the face")])
+    text = compact_spec(spec)
+    assert '- P1 block: box {"dx": "~40", "dy": "~30", "dz": 10}; features: 1 hole, 1 pattern; 1 conflict' in text
+    assert '- P2 lid: approx. rounded cap {"d": "~30"}' in text
+
+
+def test_parts_block_carries_exact_json_of_the_listed_parts_only():
+    text = parts_block(box_spec(), ["P2"])
+    assert '"id": "P2"' in text and '"id": "P1"' not in text
+    assert "Target: 3D" in text
+    data = json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert data == [box_spec()["parts"][1]]
+
+
+def test_parts_block_keeps_estimated_coordinates_verbatim():
+    assert '"origin": "~0,0,0"' in parts_block(box_spec(), ["P1"])
+
+
+def test_amend_block_has_summary_and_all_parts():
+    text = amend_block(box_spec())
+    assert "a block with a hole" in text
+    assert '"id": "P1"' in text and '"id": "P2"' in text
+
+
+def test_part_ids_reads_a_bare_string():
+    assert part_ids({"parts": "P1"}) == ["P1"]
+    assert part_ids({"parts": ["P1", "P2"]}) == ["P1", "P2"]
+    assert part_ids({}) == []
+
+
+def test_stage_part_ids_uses_the_stage_list():
+    plan = [{"module": "geom", "parts": ["P1"]}, {"module": "geom", "parts": ["P2"]},
+            {"module": "geom"}]
+    assert stage_part_ids(plan, 1, box_spec()) == ["P2"]
+    assert stage_part_ids(plan, 2, box_spec()) == []
+
+
+def test_stage_part_ids_falls_back_to_every_part_when_no_stage_lists_any():
+    plan = [{"module": "geom"}, {"module": "geom"}]
+    assert stage_part_ids(plan, 1, box_spec()) == ["P1", "P2"]
+
+
+def test_unclaimed_parts():
+    assert unclaimed_parts([{"module": "geom", "parts": ["P1"]}], box_spec()) == ["P2"]
+    assert unclaimed_parts([{"module": "geom"}], box_spec()) == []
