@@ -17,6 +17,9 @@ from executor.geom.sketch import (  # noqa: F401
     tool_make_line, tool_make_plane, tool_make_circle, tool_make_polygon_face,
     tool_make_arc, tool_make_wire, tool_make_face_from_wires,
 )
+from executor.geom.curves import (  # noqa: F401
+    tool_make_ellipse, tool_make_polyline, tool_make_curve, tool_make_profile_face,
+)
 from executor.geom.swept import (  # noqa: F401
     tool_make_prism, tool_make_revolution, tool_make_pipe,
     tool_make_thick_solid, tool_make_filling,
