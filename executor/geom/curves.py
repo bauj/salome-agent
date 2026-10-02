@@ -221,6 +221,7 @@ class _Tracer:
         self.g = executor.namespace["geompy"]
         self.known: list = []     # (coords, vertex name) of points this call made or used
         self.used: list = []      # every point the outer outline uses, for its plane
+        self.fillets: list = []   # (corner coords, radius) to round once the face exists
 
     def point(self, arg, coords=None):
         coords = coords or _coords(self.ex, arg)
@@ -317,6 +318,11 @@ class _Tracer:
                 raise
             except Exception as e:
                 raise _ProfileError(f"{where}: {e}") from e
+            if "fillet" in seg:
+                r = seg["fillet"]
+                if isinstance(r, bool) or not isinstance(r, (int, float)) or r <= 0:
+                    raise _ProfileError(f"{where}: `fillet` must be a positive radius")
+                self.fillets.append((to_c, float(r)))
             self.used.append(to_c)
             cur_n, cur_c = to_n, to_c
         closed_with_line = math.dist(cur_c, start_c) > _SAME
@@ -339,6 +345,40 @@ class _Tracer:
         return name, closed_with_line
 
 
+def _fillet_corners(executor, face, name, wires, fillets, records):
+    """Round the traced corners with MakeFillet2D, one call per radius, so OCC
+    finds the tangent points. Records the plain face and each step; the last
+    shape gets `name`. Returns (shape, error)."""
+    geompy = executor.namespace["geompy"]
+    radii = list(dict.fromkeys(r for _, r in fillets))
+    names = [_next_name(executor, "face") for _ in radii] + [name]
+    shapes = [face]
+    for i, r in enumerate(radii):
+        corners = [c for c, rr in fillets if rr == r]
+        verts = geompy.SubShapeAll(shapes[-1], geompy.ShapeType["VERTEX"])
+        ids = []
+        for c in corners:
+            match = [v for v in verts if math.dist(geompy.PointCoordinates(v), c) <= 1e-6]
+            if not match:
+                return None, f"make_profile_face: no corner left at {_fmt_point(c)} to fillet"
+            ids.append(geompy.GetSubShapeID(shapes[-1], match[0]))
+        try:
+            shapes.append(geompy.MakeFillet2D(shapes[-1], r, ids))
+        except Exception as e:
+            where = ", ".join(_fmt_point(c) for c in corners)
+            return None, (f"make_profile_face: fillet {r:g} at {where} failed ({e}): the radius "
+                          "is too big for the segments meeting there, or they already join smoothly")
+        records.append({"fn": "MakeFillet2D", "args": [_ref(names[i]), _lit(r), _lit(ids)],
+                        "out_vars": [names[i + 1]], "publish": None})
+    records.insert(len(records) - len(radii),
+                   {"fn": "MakeFaceWires", "args": [_refs(wires), _lit(1)],
+                    "out_vars": [names[0]], "publish": None})
+    records[-1]["publish"] = [name]
+    for n, shape in zip(names[:-1], shapes[:-1]):
+        executor.geom_bindings[n] = shape
+    return shapes[-1], None
+
+
 _POINT = {"type": "string", "description": "point name or \"x,y,z\""}
 _OUTLINE = {"type": "object", "properties": {
     "start": _POINT,
@@ -347,7 +387,8 @@ _OUTLINE = {"type": "object", "properties": {
         "center": {"type": "string", "description": "circular arc about this centre (shorter way round)"},
         "reverse": {"type": "boolean", "default": False, "description": "centre arc: the longer way round"},
         "through": {"type": "string", "description": "circular arc through this point"},
-        "via": {"type": "array", "items": {"type": "string"}, "description": "smooth curve through these points"}},
+        "via": {"type": "array", "items": {"type": "string"}, "description": "smooth curve through these points"},
+        "fillet": {"type": "number", "description": "round the corner at `to` with this radius"}},
         "required": ["to"]}}},
     "required": ["start", "segments"]}
 
@@ -357,7 +398,10 @@ _OUTLINE = {"type": "object", "properties": {
                    'starting where the previous one ends and ending at its `to`: a straight line, '
                    'or a circular arc with `center` (shorter way round, `reverse` for the longer; '
                    'for a half circle give `through` instead) or `through` (a point on the arc), '
-                   'or a smooth curve through `via` points. If the last `to` is not back at `start` '
+                   'or a smooth curve through `via` points. `fillet` rounds the corner at a segment\'s '
+                   '`to` with a tangent arc of that radius: give corners as drawn and the tool '
+                   'finds the tangent points (end the last segment at `start` to round that one). '
+                   'If the last `to` is not back at `start` '
                    'a straight line closes it. `holes`: outlines of the same form, '
                    '{"center", "radius"} circles, or {"wire": name} of a closed wire. The outline and '
                    'each hole may run either way round. Builds edges, wire and '
@@ -428,9 +472,10 @@ def tool_make_profile_face(executor, args: dict):
     if error:
         return {"ok": False, "error": error}
     name = _next_name(executor, "face")
+    face, error = _fillet_corners(executor, face, name, wires, tracer.fillets, records)
+    if error:
+        return {"ok": False, "error": error}
     _publish(executor, face, name)
-    records.append({"fn": "MakeFaceWires", "args": [_refs(wires), _lit(1)],
-                    "out_vars": [name], "publish": [name]})
     result = {"ok": True, "records": records, "sanity": {"ok": True},
               "area": round(geompy.BasicProperties(face)[1], 6)}
     if closed_by_line:

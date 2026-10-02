@@ -548,6 +548,10 @@
                   "type": "string"
                 },
                 "description": "smooth curve through these points"
+              },
+              "fillet": {
+                "type": "number",
+                "description": "round the corner at `to` with this radius"
               }
             },
             "required": [
@@ -593,6 +597,10 @@
                         "type": "string"
                       },
                       "description": "smooth curve through these points"
+                    },
+                    "fillet": {
+                      "type": "number",
+                      "description": "round the corner at `to` with this radius"
                     }
                   },
                   "required": [
@@ -622,7 +630,7 @@
         "segments"
       ]
     },
-    "description": "Planar face from an outline traced from `start` through `segments`, each starting where the previous one ends and ending at its `to`: a straight line, or a circular arc with `center` (shorter way round, `reverse` for the longer; for a half circle give `through` instead) or `through` (a point on the arc), or a smooth curve through `via` points. If the last `to` is not back at `start` a straight line closes it. `holes`: outlines of the same form, {\"center\", \"radius\"} circles, or {\"wire\": name} of a closed wire. The outline and each hole may run either way round. Builds edges, wire and face in one call: prefer it to make_line/make_arc/make_wire/make_face_from_wires for a whole outline. Extrude it with make_prism or revolve it with make_revolution.",
+    "description": "Planar face from an outline traced from `start` through `segments`, each starting where the previous one ends and ending at its `to`: a straight line, or a circular arc with `center` (shorter way round, `reverse` for the longer; for a half circle give `through` instead) or `through` (a point on the arc), or a smooth curve through `via` points. `fillet` rounds the corner at a segment's `to` with a tangent arc of that radius: give corners as drawn and the tool finds the tangent points (end the last segment at `start` to round that one). If the last `to` is not back at `start` a straight line closes it. `holes`: outlines of the same form, {\"center\", \"radius\"} circles, or {\"wire\": name} of a closed wire. The outline and each hole may run either way round. Builds edges, wire and face in one call: prefer it to make_line/make_arc/make_wire/make_face_from_wires for a whole outline. Extrude it with make_prism or revolve it with make_revolution.",
     "category": "sketch"
   },
   {

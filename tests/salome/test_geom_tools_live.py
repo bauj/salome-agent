@@ -1,4 +1,5 @@
 import math
+import re
 import subprocess
 import sys
 import tempfile
@@ -262,6 +263,54 @@ class TestCurveTools:
         assert face["ok"] is True, face.get("error")
         assert face["closed_with_line"] == ["outline"]
         assert face["area"] > 50
+
+    CORNER = 1 - math.pi / 4     # area a fillet of radius 1 takes off a right-angle corner
+
+    def test_fillet_convex_corner(self, agent_client):
+        face = agent_client.call_tool("make_profile_face", {"start": "0,0,0", "segments": [
+            {"to": "10,0,0", "fillet": 2}, {"to": "10,10,0"}, {"to": "0,10,0"}, {"to": "0,0,0"}]})
+        assert face["ok"] is True, face.get("error")
+        assert face["area"] == pytest.approx(100 - 4 * self.CORNER, rel=1e-6)
+
+    def test_fillet_concave_corner_and_its_replay(self, agent_client):
+        """L-shape whose inner corner gets material added; result.py rebuilds the same face."""
+        from salome_agent.codegen import generate
+        face = agent_client.call_tool("make_profile_face", {"start": "0,0,0", "segments": [
+            {"to": "20,0,0"}, {"to": "20,10,0"}, {"to": "10,10,0", "fillet": 3},
+            {"to": "10,20,0"}, {"to": "0,20,0", "fillet": 2}, {"to": "0,0,0", "fillet": 3}]})
+        assert face["ok"] is True, face.get("error")
+        area = 300 + 9 * self.CORNER - 4 * self.CORNER - 9 * self.CORNER
+        assert face["area"] == pytest.approx(area, rel=1e-6)
+        name = self._out(face)
+        script = re.sub(rf"\b{name}\b", "replayed_face", generate(face["records"], [name]))
+        r = agent_client.run(script + "\nprint(geompy.BasicProperties(replayed_face)[1])",
+                             timeout=30)
+        assert float(r["stdout"].split()[-1]) == pytest.approx(area, rel=1e-6)
+
+    def test_fillet_p1_outline(self, agent_client):
+        """The p1.png plate: top half disc, waist with concave R20 corners, bottom half disc."""
+        face = agent_client.call_tool("make_profile_face", {"start": "96,0,0", "segments": [
+            {"to": "-96,0,0", "through": "0,96,0"}, {"to": "-54,0,0", "fillet": 20},
+            {"to": "-54,-80,0"}, {"to": "54,-80,0", "through": "0,-134,0"},
+            {"to": "54,0,0", "fillet": 20}, {"to": "96,0,0"}]})
+        assert face["ok"] is True, face.get("error")
+        area = math.pi * (96 ** 2 + 54 ** 2) / 2 + 108 * 80 + 2 * 400 * self.CORNER
+        assert face["area"] == pytest.approx(area, rel=1e-6)
+
+    def test_fillet_line_arc_corner(self, agent_client):
+        plain = {"start": "0,0,0", "segments": [{"to": "20,0,0"}, {"to": "0,20,0", "center": "0,0,0"}]}
+        rounded = {"start": "0,0,0", "segments": [{"to": "20,0,0", "fillet": 3},
+                                                   {"to": "0,20,0", "center": "0,0,0"}]}
+        a = agent_client.call_tool("make_profile_face", plain)["area"]
+        r = agent_client.call_tool("make_profile_face", rounded)
+        assert r["ok"] is True, r.get("error")
+        assert a - 3 * 9 * self.CORNER < r["area"] < a   # the arc bends into the corner: more than a square corner's 9C
+
+    def test_fillet_too_big_names_the_corner(self, agent_client):
+        r = agent_client.call_tool("make_profile_face", {"start": "0,0,0", "segments": [
+            {"to": "10,0,0", "fillet": 50}, {"to": "10,10,0"}, {"to": "0,10,0"}]})
+        assert r["ok"] is False
+        assert "[10.0, 0.0, 0.0]" in r["error"] and "50" in r["error"]
 
     def test_wrong_arc_end_names_the_right_one(self, agent_client):
         r = agent_client.call_tool("make_profile_face", {"start": "10,0,0", "segments": [
