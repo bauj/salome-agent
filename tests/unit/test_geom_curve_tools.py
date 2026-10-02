@@ -222,14 +222,15 @@ class TestMakeProfileFace:
     SQUARE = [{"to": "10,0,0"}, {"to": "10,10,0"}, {"to": "0,10,0"}, {"to": "0,0,0"}]
 
     def _fillet_geompy(self):
-        """Face vertices = the square's corners; MakeFillet2D returns a new face
+        """Wire vertices = the square's corners; MakeFillet1D returns a new wire
         that keeps them (enough for the id lookup of a second radius)."""
         g = _geompy()
         corners = [("V", 0.0, 0.0, 0.0), ("V", 10.0, 0.0, 0.0),
                    ("V", 10.0, 10.0, 0.0), ("V", 0.0, 10.0, 0.0)]
         g.SubShapeAll.side_effect = lambda shape, kind: corners if kind == 7 else []
         g.GetSubShapeID.side_effect = lambda shape, v: 10 + corners.index(v)
-        g.MakeFillet2D.side_effect = lambda face, r, ids: f"FILLET{r}"
+        g.MakeWire.return_value = "WIRE"
+        g.MakeFillet1D.side_effect = lambda wire, r, ids: f"W{r}"
         return g
 
     def test_fillet_rounds_the_corner_at_to(self):
@@ -237,28 +238,28 @@ class TestMakeProfileFace:
         segs[0]["fillet"] = 2
         g, ex, r = self._run({"start": "0,0,0", "segments": segs}, self._fillet_geompy())
         assert r["ok"] is True, r.get("error")
-        g.MakeFillet2D.assert_called_once_with("FACE", 2.0, [11])
-        assert _fns(r)[-2:] == ["MakeFaceWires", "MakeFillet2D"]
-        assert r["records"][-2]["publish"] is None
+        g.MakeFillet1D.assert_called_once_with("WIRE", 2.0, [11])
+        assert g.MakeFaceWires.call_args.args[0] == ["W2.0"]
+        assert _fns(r)[-3:] == ["MakeWire", "MakeFillet1D", "MakeFaceWires"]
         assert r["records"][-1]["publish"] == ["face_1"]
-        assert ex.geom_bindings["face_1"] == "FILLET2.0"
 
     def test_fillets_grouped_by_radius(self):
         segs = [dict(s) for s in self.SQUARE]
         segs[0]["fillet"], segs[1]["fillet"], segs[3]["fillet"] = 2, 3, 2
         g, _, r = self._run({"start": "0,0,0", "segments": segs}, self._fillet_geompy())
         assert r["ok"] is True, r.get("error")
-        calls = [c.args for c in g.MakeFillet2D.call_args_list]
-        assert calls == [("FACE", 2.0, [11, 10]), ("FILLET2.0", 3.0, [12])]
+        calls = [c.args for c in g.MakeFillet1D.call_args_list]
+        assert calls == [("WIRE", 2.0, [11, 10]), ("W2.0", 3.0, [12])]
 
-    def test_fillet_in_a_hole(self):
+    def test_fillet_in_a_hole_rounds_only_that_wire(self):
         g = self._fillet_geompy()
         _, _, r = self._run({"start": "-5,-5,0", "segments": [
             {"to": "15,-5,0"}, {"to": "15,15,0"}, {"to": "-5,15,0"}],
             "holes": [{"start": "0,0,0", "segments": [
                 {"to": "10,0,0"}, {"to": "10,10,0", "fillet": 1}, {"to": "0,10,0"}]}]}, g)
         assert r["ok"] is True, r.get("error")
-        g.MakeFillet2D.assert_called_once_with("FACE", 1.0, [12])
+        g.MakeFillet1D.assert_called_once_with("WIRE", 1.0, [12])
+        assert g.MakeFaceWires.call_args.args[0] == ["WIRE", "W1.0"]
 
     @pytest.mark.parametrize("bad", [0, -1, "big"])
     def test_bad_fillet_radius(self, bad):
@@ -269,7 +270,7 @@ class TestMakeProfileFace:
 
     def test_fillet_occ_failure_names_the_corner(self):
         g = self._fillet_geompy()
-        g.MakeFillet2D.side_effect = RuntimeError("Fillet2D failed")
+        g.MakeFillet1D.side_effect = RuntimeError("Fillet1D failed")
         segs = [dict(s) for s in self.SQUARE]
         segs[1]["fillet"] = 20
         _, _, r = self._run({"start": "0,0,0", "segments": segs}, g)
@@ -282,7 +283,8 @@ class TestMakeProfileFace:
         segs[0]["fillet"] = 2
         _, _, r = self._run({"start": "0,0,0", "segments": segs}, self._fillet_geompy())
         code = generate(r["records"], ["face_1"])
-        assert "face_1 = geompy.MakeFillet2D(face_2, 2.0, [11])" in code
+        assert "wire_2 = geompy.MakeFillet1D(wire_1, 2.0, [11])" in code
+        assert "face_1 = geompy.MakeFaceWires([wire_2], 1)" in code
 
     def test_codegen(self):
         from salome_agent.codegen import generate

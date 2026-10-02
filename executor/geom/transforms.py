@@ -1,6 +1,7 @@
 import math
 
 from executor.geom.helpers import (
+    _check_shape,
     tool, _next_name, _publish, _resolve_axis, _resolve_plane, _resolve_point,
 )
 from executor.geom.results import _shape_info
@@ -14,7 +15,7 @@ def tool_translate(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
     result = geompy.MakeTranslation(shape, args["dx"], args["dy"], args["dz"])
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"translate: CheckShape failed ({msg})"}
     name = _next_name(executor, "tr")
@@ -45,7 +46,7 @@ def tool_rotate(executor, args: dict):
     axis = _resolve_axis(executor, args["axis"], records)
     angle_rad = math.radians(args["angle_deg"])
     result = geompy.MakeRotation(shape, executor.geom_bindings[axis], angle_rad)
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"rotate: CheckShape failed ({msg})"}
     name = _next_name(executor, "rot")
@@ -91,7 +92,7 @@ def tool_mirror(executor, args: dict):
         fn = "MakeMirrorByPlane"
         entity_ref = plane
 
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"mirror: CheckShape failed ({msg})"}
     name = _next_name(executor, "mir")
@@ -135,7 +136,7 @@ def tool_scale(executor, args: dict):
                      {"kind": "literal", "value": args["factor_y"]},
                      {"kind": "literal", "value": args["factor_z"]}]
 
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"scale: CheckShape failed ({msg})"}
     name = _next_name(executor, "scale")
@@ -185,7 +186,7 @@ def tool_multi_translate(executor, args: dict):
                      {"kind": "literal", "value": args["step"]},
                      {"kind": "literal", "value": args["count"]}]
 
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"multi_translate: CheckShape failed ({msg})"}
     name = _next_name(executor, "mtr")
@@ -229,7 +230,7 @@ def tool_multi_rotate(executor, args: dict):
                      {"kind": "ref", "value": axis},
                      {"kind": "literal", "value": args["count"]}]
 
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"multi_rotate: CheckShape failed ({msg})"}
     name = _next_name(executor, "mrot")
@@ -255,7 +256,7 @@ def tool_offset_shape(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
     result = geompy.MakeOffset(shape, args["offset"])
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"offset_shape: CheckShape failed ({msg})"}
     name = _next_name(executor, "off")
@@ -290,7 +291,7 @@ def tool_position(executor, args: dict):
     marker_name = _next_name(executor, "lcs")
     _publish(executor, marker, marker_name)
     result = geompy.MakePosition(shape, None, marker)
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"position: CheckShape failed ({msg})"}
     name = _next_name(executor, "pos")
@@ -352,7 +353,7 @@ def tool_align(executor, args: dict):
         have = _extent(s_info["bbox"], axis, c["my"])
         delta[axis] = round(want - have, 6)
     result = geompy.MakeTranslation(shape, delta["x"], delta["y"], delta["z"])
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"align: CheckShape failed ({msg})"}
     name = _next_name(executor, "tr")

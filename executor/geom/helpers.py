@@ -58,6 +58,17 @@ def _resolve(executor, arg: ArgRef):
     raise ValueError(f"unknown ArgRef kind {arg['kind']!r}")
 
 
+def _check_shape(geompy, shape) -> tuple:
+    """(is_valid, message) from CheckShape with the geometry check. That check
+    can die in CORBA (MARSHAL_InvalidEnumValue) on an invalid shape; the
+    topology-only check still reports what is wrong."""
+    try:
+        return geompy.CheckShape(shape, True, 1)
+    except Exception as e:
+        is_valid, msg = geompy.CheckShape(shape, False, 1)
+        return is_valid, f"{msg}\n(geometry check failed: {e}; topology checked only)".strip()
+
+
 def _publish(executor, shape, name: str):
     geompy = executor.namespace["geompy"]
     geompy.addToStudy(shape, name)

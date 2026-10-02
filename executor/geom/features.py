@@ -1,4 +1,4 @@
-from executor.geom.helpers import tool, _check_sub_ids, _next_name, _publish
+from executor.geom.helpers import _check_shape, tool, _check_sub_ids, _next_name, _publish
 from executor.geom.results import _select_subshapes
 
 
@@ -130,7 +130,7 @@ def tool_fillet_edges(executor, args: dict):
         return {"ok": False, "error": f"fillet_edges: MakeFillet failed ({e}); {advice}"}
     # theReturnStatus=1 -> (isValid, description); the default (0) returns
     # a bare bool, which broke unpacking here until caught in testing.
-    is_valid, msg = geompy.CheckShape(filleted, True, 1)
+    is_valid, msg = _check_shape(geompy, filleted)
     if not is_valid:
         # Not published yet at this point, so there is nothing to clean
         # up — the invariant decision 16 wants (no orphan survives a
@@ -174,7 +174,7 @@ def tool_chamfer_edges(executor, args: dict):
     except Exception as e:  # noqa: BLE001 — geompy/CORBA errors are opaque; add context
         return {"ok": False, "error": f"chamfer_edges: MakeChamferEdges failed ({e}); "
                 f"try smaller distances or check the edge ids"}
-    is_valid, msg = geompy.CheckShape(chamfered, True, 1)
+    is_valid, msg = _check_shape(geompy, chamfered)
     if not is_valid:
         return {"ok": False, "error": f"chamfer_edges: CheckShape failed on result ({msg})"}
     name = _next_name(executor, "chamfer")
