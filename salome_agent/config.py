@@ -11,8 +11,13 @@ REQUIRED = [("llm", "base_url"), ("llm", "model")]
 LLM_KNOWN_KEYS = {
     "base_url", "api_key", "ssl_cert_file", "model", "temperature", "timeout",
     "json_retries", "max_retries", "extra_headers", "extra_body", "module_extra_body",
-    "vision_fix_retries",
+    "vision_fix_retries", "modules",
 }
+
+# llm.modules.<module> keys: each one replaces the shared llm value of the same
+# name on that module's calls (see llm.LLMClient).
+MODULE_LLM_KEYS = {"base_url", "api_key", "model", "ssl_cert_file", "temperature",
+                   "timeout", "extra_headers", "extra_body"}
 
 
 class ConfigError(Exception):
@@ -29,4 +34,8 @@ def load_config(path: str) -> dict:
     for key in unknown:
         log.warning("unknown key llm.%s in config -- ignored (typo? "
                     "known keys: %s)", key, ", ".join(sorted(LLM_KNOWN_KEYS)))
+    for module, override in (config.get("llm", {}).get("modules") or {}).items():
+        for key in sorted(set(override or {}) - MODULE_LLM_KEYS):
+            log.warning("unknown key llm.modules.%s.%s in config -- ignored (typo? "
+                        "known keys: %s)", module, key, ", ".join(sorted(MODULE_LLM_KEYS)))
     return config

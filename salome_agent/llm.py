@@ -202,6 +202,34 @@ def _parse_json_content(content: str):
         f"LLM did not return parseable JSON ({first_err}). Raw content:\n{content}")
 
 
+def _cert_verify(ssl_cert_file: str):
+    """requests `verify`: a CA-bundle path, else True (default: verify against
+    the system trust store — never "" / False, which disables TLS checks).
+    Checked here so a bad path fails at startup, not on the first request."""
+    if not ssl_cert_file:
+        return True
+    cert_path = os.path.realpath(os.path.expanduser(ssl_cert_file))
+    if not os.path.isfile(cert_path):
+        raise FileNotFoundError(f"SSL certificate file not found: {cert_path}")
+    return cert_path
+
+
+class _Endpoint:
+    """Where and how one call is sent: URL, key, model and the per-request knobs."""
+
+    def __init__(self, base_url, api_key, model, verify, temperature,
+                 request_timeout, extra_headers, extra_body):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.verify = verify
+        self.temperature = temperature
+        self.request_timeout = request_timeout
+        self.stream_read_timeout = min(request_timeout, _STREAM_READ_GAP_CAP)
+        self.extra_headers = extra_headers
+        self.extra_body = extra_body
+
+
 class LLMClient:
     """Minimal wrapper over any OpenAI-compatible tool-calling chat endpoint
     (spec §9/decision 10 — provider-agnostic, configured by endpoint+key+model).
@@ -223,7 +251,8 @@ class LLMClient:
                  temperature: float = 0, request_timeout: float = 120,
                  trace_path: str | None = None, extra_headers: dict | None = None,
                  extra_body: dict | None = None, json_retries: int = 2,
-                 module_extra_body: dict | None = None, max_retries: int = 2):
+                 module_extra_body: dict | None = None, max_retries: int = 2,
+                 modules: dict | None = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -239,15 +268,7 @@ class LLMClient:
         # reasoning_effort sit on the planner only while the specialist loops
         # (geom/smesh/paravis) — many calls per stage — run without it.
         self.module_extra_body = module_extra_body or {}
-        # requests `verify`: a CA-bundle path, else True (default: verify against
-        # the system trust store — never "" / False, which disables TLS checks).
-        # Checked here so a bad path fails at startup, not on the first request.
-        self.ssl_cert_file = True
-        if ssl_cert_file:
-            cert_path = os.path.realpath(os.path.expanduser(ssl_cert_file))
-            if not os.path.isfile(cert_path):
-                raise FileNotFoundError(f"SSL certificate file not found: {cert_path}")
-            self.ssl_cert_file = cert_path
+        self.ssl_cert_file = _cert_verify(ssl_cert_file)
         self.temperature = temperature
         # Total wall-clock budget for one streamed round-trip.
         self.request_timeout = request_timeout
@@ -262,6 +283,12 @@ class LLMClient:
         # 502/503/504) get this many retries after the first attempt, with
         # exponential backoff. Bump it for a flaky free-tier endpoint.
         self.max_retries = max_retries
+        # modules: {"<module>": {<config.MODULE_LLM_KEYS subset>}} — that module's calls
+        # go to its own endpoint/model (e.g. a better drawing reader for vision);
+        # keys left out keep the shared value. Its extra_body, when given, wins
+        # over module_extra_body.
+        self._endpoints = {name: self._build_endpoint(name, override or {})
+                           for name, override in (modules or {}).items()}
         # -vv: append one JSON line per round-trip (request + raw response +
         # whatever reasoning key the provider returns) so tool-selection can be
         # inspected after the run.
@@ -388,7 +415,7 @@ class LLMClient:
             self._live = None
 
     def _consume_stream(self, resp, t0: float, prose: bool = False,
-                        partial: dict | None = None
+                        partial: dict | None = None, budget: float | None = None
                         ) -> tuple[dict, dict | None, str | None, float | None]:
         """Reassemble an SSE `data:` stream into one provider `message` dict
         (plus usage / finish_reason / time-to-first-token). `content` and
@@ -416,7 +443,8 @@ class LLMClient:
         finish = usage = ttft = None
         frames = 0
         done = False
-        deadline = t0 + self.request_timeout
+        budget = self.request_timeout if budget is None else budget
+        deadline = t0 + budget
         # chunk_size=None: iter_lines() with a fixed size uses read(amt)
         # "read exactly amt bytes" semantics and blocks until the buffer fills
         # or the stream ends — a slow token trickle then stalls. None yields
@@ -428,7 +456,7 @@ class LLMClient:
             self._check_cancel()
             if time.monotonic() > deadline:
                 raise StreamBudgetExceeded(
-                    f"LLM stream ran past the {self.request_timeout:g}s total "
+                    f"LLM stream ran past the {budget:g}s total "
                     f"budget (llm.timeout) — backend still emitting after "
                     f"{frames} frame(s); treating as a runaway generation")
             if not raw:
@@ -502,33 +530,34 @@ class LLMClient:
         return _assemble_message(partial), usage, finish, ttft
 
     def _round_trip(self, payload: dict, tool_names: list[str] | None,
-                    extra_body: dict | None = None, module: str | None = None) -> dict:
+                    ep: _Endpoint | None = None, module: str | None = None) -> dict:
         """One streamed POST to /chat/completions (with transient-failure
         retries) — returns the reassembled provider `message` object."""
         self._stream_event(type="start", module=module)
         try:
-            return self._round_trip_attempts(payload, tool_names, extra_body, module)
+            return self._round_trip_attempts(payload, tool_names,
+                                             ep or self.endpoint(module), module)
         finally:
             self._stream_event(type="end")
 
     def _round_trip_attempts(self, payload: dict, tool_names: list[str] | None,
-                             extra_body: dict | None, module: str | None = None) -> dict:
-        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        headers.update(self.extra_headers)
+                             ep: _Endpoint, module: str | None = None) -> dict:
+        headers = {"Authorization": f"Bearer {ep.api_key}"} if ep.api_key else {}
+        headers.update(ep.extra_headers)
         payload = {**payload, "stream": True,
                    "stream_options": {"include_usage": True}}
         log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
-                  self.model, len(payload["messages"]), tool_names or "-", self.request_timeout)
+                  ep.model, len(payload["messages"]), tool_names or "-", ep.request_timeout)
         messages = redact_images(payload["messages"])
         approx_in = self._approx_tokens({**payload, "messages": messages})
         self.usage["approx_prompt_tokens"] += approx_in
-        trace_request = {"model": self.model, "temperature": self.temperature,
+        trace_request = {"model": ep.model, "temperature": ep.temperature,
                          "tools": tool_names or [], "approx_input_tokens": approx_in,
                          "messages": messages}
-        if extra_body is None:
-            extra_body = self.extra_body
-        if extra_body:
-            trace_request["extra_body"] = extra_body
+        if ep.base_url != self.base_url:
+            trace_request["base_url"] = ep.base_url
+        if ep.extra_body:
+            trace_request["extra_body"] = ep.extra_body
         self._trace_prompt(trace_request)
         t0 = time.monotonic()
         attempts = self.max_retries + 1
@@ -536,9 +565,9 @@ class LLMClient:
             resp = None
             self._check_cancel()
             try:
-                resp = requests.post(f"{self.base_url}/chat/completions", json=payload,
-                                     headers=headers, verify=self.ssl_cert_file,
-                                     timeout=(_CONNECT_TIMEOUT, self.stream_read_timeout),
+                resp = requests.post(f"{ep.base_url}/chat/completions", json=payload,
+                                     headers=headers, verify=ep.verify,
+                                     timeout=(_CONNECT_TIMEOUT, ep.stream_read_timeout),
                                      stream=True)
                 # A fast gateway error (proxy up, model backend down/overloaded)
                 # crashes the planner/specialist node otherwise — retry with backoff.
@@ -567,7 +596,8 @@ class LLMClient:
                 self._live_open(module, attempt)
                 try:
                     message, usage, finish, ttft = self._consume_stream(
-                        resp, t0, prose=bool(tool_names), partial=partial)
+                        resp, t0, prose=bool(tool_names), partial=partial,
+                        budget=ep.request_timeout)
                 except BaseException as e:
                     self._trace_incomplete(trace_request, attempt, t0, partial, e)
                     self._live_close()
@@ -611,16 +641,34 @@ class LLMClient:
                         u.get("prompt_tokens", "?"), u.get("completion_tokens", "?"))
         return message
 
+    def _build_endpoint(self, module: str | None, override: dict) -> _Endpoint:
+        def pick(key, shared):
+            return override[key] if key in override else shared
+        extra_body = self.module_extra_body.get(module, self.extra_body)
+        verify = (_cert_verify(override["ssl_cert_file"]) if "ssl_cert_file" in override
+                  else self.ssl_cert_file)
+        return _Endpoint(pick("base_url", self.base_url), pick("api_key", self.api_key),
+                         pick("model", self.model), verify,
+                         pick("temperature", self.temperature),
+                         pick("timeout", self.request_timeout),
+                         pick("extra_headers", self.extra_headers),
+                         pick("extra_body", extra_body))
+
+    def endpoint(self, module: str | None = None) -> _Endpoint:
+        if module in self._endpoints:
+            return self._endpoints[module]
+        return self._build_endpoint(module, {})
+
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              module: str | None = None) -> dict:
         # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
         # real per-tool schema, not just a bare name, so the LLM knows each
         # arg's name/type/required-ness instead of guessing.
-        # module: routes to module_extra_body[module] when present, else the
-        # shared extra_body.
-        extra_body = self.module_extra_body.get(module, self.extra_body)
-        payload = {"model": self.model, "messages": list(messages),
-                   "temperature": self.temperature, **extra_body}
+        # module: routes to llm.modules[module] (endpoint/model override) and
+        # module_extra_body[module] when present, else the shared settings.
+        ep = self.endpoint(module)
+        payload = {"model": ep.model, "messages": list(messages),
+                   "temperature": ep.temperature, **ep.extra_body}
         if tools:
             payload["tools"] = [
                 {"type": "function", "function": {
@@ -637,7 +685,7 @@ class LLMClient:
         tool_names = [t["name"] for t in tools] if tools else None
 
         if tools:
-            message = self._round_trip(payload, tool_names, extra_body, module)
+            message = self._round_trip(payload, tool_names, ep, module)
             calls = message.get("tool_calls") or []
             content = message.get("content") or ""
             log.debug("LLM tool_calls=%s%s",
@@ -662,7 +710,7 @@ class LLMClient:
         # will not parse, hand the model its own answer plus the exact parser
         # error and re-ask, up to json_retries times (GH #6).
         for attempt in range(self.json_retries + 1):
-            message = self._round_trip(payload, None, extra_body, module)
+            message = self._round_trip(payload, None, ep, module)
             content = message.get("content")
             try:
                 return _parse_json_content(content)

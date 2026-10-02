@@ -81,7 +81,8 @@ cp config.example.json config.json
     "max_retries": 2,
     "extra_headers": {},
     "extra_body": {},
-    "module_extra_body": {}
+    "module_extra_body": {},
+    "modules": {}
   },
   "salome": {
     "root": "/path/to/your/SALOME"
@@ -120,6 +121,7 @@ Any OpenAI-compatible `/chat/completions` endpoint. Requests are streamed (SSE).
 | `extra_headers` | `{}` | Extra HTTP headers sent verbatim on every request. In a string value `{run_id}` is replaced with the run's id — for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`. |
 | `extra_body` | `{}` | Extra top-level fields merged into every request's JSON body, next to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider body params such as `{"reasoning_effort": "high"}`; whether the provider honours a field is up to the provider. |
 | `module_extra_body` | `{}` | `{"planner" \| "geom" \| "smesh" \| "paravis": {...}}` — a body sent *instead of* `extra_body` (full replacement, not a merge) on that module's calls. Lets an expensive knob sit on the planner only, e.g. `{"planner": {"reasoning_effort": "high"}}`, while the many specialist calls run without it. |
+| `modules` | `{}` | `{"vision" \| "planner" \| "geom" \| "smesh" \| "paravis": {...}}` — sends that module's calls to their own endpoint and/or model. Each entry may set `base_url`, `api_key`, `model`, `ssl_cert_file`, `temperature`, `timeout`, `extra_headers`, `extra_body`; a key left out keeps the shared `llm` value. Its `extra_body`, when set, wins over `module_extra_body`. E.g. a stronger drawing reader for images only: `{"vision": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "api_key": "...", "model": "gemini-3-pro-preview"}}`. |
 
 #### `policy` — how a run behaves
 
@@ -201,8 +203,9 @@ description — not as separate parts. Explicit numeric dimensions in the text r
 win, then dimensions read from the image; values the vision agent had to estimate are
 marked `~`. smesh/paravis stages don't see the images — it only feeds CAD construction.
 
-The vision call is tagged `module="vision"`, so `llm.module_extra_body` can give it its own
-request body (e.g. a different `reasoning_effort`) like the other modules.
+The vision call is tagged `module="vision"`, so `llm.modules.vision` can send it to a
+different model or endpoint (one that reads drawings better) and `llm.module_extra_body` can
+give it its own request body (e.g. a different `reasoning_effort`) like the other modules.
 
 The agent will:
 
