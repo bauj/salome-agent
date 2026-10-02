@@ -116,7 +116,7 @@ def initial_state(request: str, config: dict, client, run_id: str, batch: bool,
                   reference_images: list[str] | None = None) -> dict:
     return {
         "user_request": request, "reference_images": reference_images,
-        "image_description": None, "config": {**config, "batch": batch},
+        "image_spec": None, "config": {**config, "batch": batch},
         "session": _session_handle(client), "plan": [], "plan_approved": False,
         "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
         "study_ns": "salome_agent_run", "final_script": None, "report": None,

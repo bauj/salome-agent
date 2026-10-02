@@ -110,7 +110,8 @@ def test_follow_up_with_images_is_described_then_amended(tmp_path, monkeypatch):
     from salome_agent.specialists import amend as amend_mod
 
     monkeypatch.setattr(vision_mod, "describe_images",
-                        lambda request, images, llm: {"summary": "a D-shaped handle"})
+                        lambda request, images, llm, fix_retries=2: {"summary": "a D-shaped handle",
+                                                                      "parts": []})
     seen = {}
 
     def fake_run_amend(text, graph, llm, client, turn, policy, **kw):
@@ -125,6 +126,7 @@ def test_follow_up_with_images_is_described_then_amended(tmp_path, monkeypatch):
                             "executor_client": None}}
     out = app.invoke(state, config=cfg)
     assert "a D-shaped handle" in seen["image_description"]
+    assert seen["image_description"].startswith("Reference image spec")
     assert out["turn_outcome"]["summary"] == "ok"
 
 

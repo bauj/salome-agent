@@ -75,13 +75,15 @@ need a tool that is not in your list, call load_tools with specific tool
 `names` or whole `categories` (primitive, sketch, swept, boolean, transform,
 feature, display, query) to add them, then call the tool you wanted.
 
-If your first message includes a "Description of the user's reference image(s)"
-block, treat it as the visual target for the geometry you build: match the
-proportions, shape and relative placement it gives. You do not see the images
-themselves, only that description. Use explicit numeric dimensions from the
-request/params first, then dimensions the description says were read from the
-image; values marked with "~" are estimates. If a stage-level dimension is
-missing, estimate it from the description rather than inventing detail."""
+If your first message includes a "Reference image spec" block, an image-analysis
+agent read it from the user's reference image(s) (you do not see the images): the
+exact data of the part(s) this stage builds, as JSON. Build from it as given: a
+"profile" base goes into make_profile_face unchanged, then make_prism for
+"extrude" or make_revolution for "revolve"; "placement" gives where the part sits
+and which way it faces. Values written "~N" are estimates; plain numbers were read
+from the image. "conflicts" name values that disagree: build anyway and let the
+tool errors tell you which value fits. Explicit dimensions in the stage's params
+win over the spec."""
 
 # policy.verify_cadence — how hard the specialist is pushed to self-check
 # shape placement. shape_info rides on every ok result for free; the question
@@ -187,28 +189,19 @@ def run_geom_specialist(stage_plan: dict, llm, client, iteration_cap: int,
                         retry: dict | None = None,
                         seed_call_log: list[dict] | None = None,
                         seed_calls: list[dict] | None = None,
-                        image_description: str | None = None) -> dict:
+                        reference_block: str | None = None) -> dict:
     """Kept as the geom entry point for the existing tests and callers; the
     loop itself is generic now."""
     blocks = []
     if upstream:
         blocks.append(_upstream_block(upstream))
-    if image_description:
-        blocks.append(image_block(image_description))
+    if reference_block:
+        blocks.append(reference_block)
     return ToolSpecialist(GEOM_SPEC).run(
         stage_plan, llm, client, iteration_cap, blocks=tuple(blocks),
         tool_selection=tool_selection, verify_cadence=verify_cadence,
         retry=retry, seed_call_log=seed_call_log, seed_calls=seed_calls,
         upstream=tuple(upstream or ()))
-
-
-def image_block(image_description: str) -> str:
-    """The vision agent's description of the user's reference image(s), as a
-    block of the geom stage's first message."""
-    return ("Description of the user's reference image(s), written by an "
-            "image-analysis agent (you do not see the images themselves). Use it "
-            "for proportions and placement; the stage's own params win over it:\n"
-            + image_description)
 
 
 def _retry_block(retry: dict) -> str:
