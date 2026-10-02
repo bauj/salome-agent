@@ -71,3 +71,14 @@ def test_llm_modules_is_known_and_its_unknown_subkeys_warn(tmp_path, caplog):
     assert "unknown key llm.modules in config" not in caplog.text
     assert "llm.modules.vision.base-url" in caplog.text
     assert "llm.modules.vision.model" not in caplog.text
+
+
+def test_llm_modules_entries_must_be_objects(tmp_path):
+    import pytest
+    from salome_agent.config import ConfigError
+
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({
+        "llm": {"base_url": "http://x", "model": "m", "modules": {"vision": ["big"]}}}))
+    with pytest.raises(ConfigError, match="llm.modules.vision"):
+        load_config(str(cfg_path))

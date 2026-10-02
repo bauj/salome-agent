@@ -108,3 +108,25 @@ def test_describe_images_tells_the_model_each_image_pixel_size():
     text = llm.chat.call_args.kwargs["messages"][1]["content"][0]["text"]
     assert "image 1: 510 x 550 px" in text
     assert "image 2" not in text
+
+
+def test_image_size_survives_truncated_and_garbage_headers():
+    import random
+    import struct
+    from salome_agent.nodes.vision import image_size
+
+    heads = [_png(510, 550),
+             b"\xff\xd8\xff\xe0" + struct.pack(">H", 4) + b"JF\xff\xc0" + struct.pack(">HBHH", 11, 8, 3, 6),
+             b"GIF89a" + struct.pack("<HH", 1, 2),
+             b"BM" + b"\x00" * 16 + struct.pack("<ii", 3, 4),
+             b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 7 + struct.pack("<HH", 1, 1)]
+    rng = random.Random(0)
+    for head in heads:
+        for cut in range(len(head)):
+            image_size(_uri(head[:cut]))
+        for _ in range(50):
+            junk = bytearray(head)
+            junk[rng.randrange(len(junk))] = rng.randrange(256)
+            image_size(_uri(bytes(junk) + bytes(rng.randrange(256) for _ in range(8))))
+    for _ in range(200):
+        image_size(_uri(bytes(rng.randrange(256) for _ in range(rng.randrange(40)))))

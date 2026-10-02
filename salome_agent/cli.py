@@ -147,9 +147,11 @@ def build_llm(config: dict, request_timeout: float | None = None,
     module_extra_body = llm_config.get("module_extra_body") or {}
     # modules: {"<module>": {base_url, api_key, model, ...}} — that module's
     # calls go to its own endpoint/model; omitted keys keep the shared value.
-    modules = {name: {**o, "extra_headers": headers(o["extra_headers"])}
-               if "extra_headers" in (o or {}) else (o or {})
-               for name, o in (llm_config.get("modules") or {}).items()}
+    modules = {}
+    for name, override in (llm_config.get("modules") or {}).items():
+        modules[name] = dict(override or {})
+        if "extra_headers" in modules[name]:
+            modules[name]["extra_headers"] = headers(modules[name]["extra_headers"])
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
                      temperature=llm_config.get("temperature", 0),

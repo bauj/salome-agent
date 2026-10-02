@@ -34,8 +34,13 @@ def load_config(path: str) -> dict:
     for key in unknown:
         log.warning("unknown key llm.%s in config -- ignored (typo? "
                     "known keys: %s)", key, ", ".join(sorted(LLM_KNOWN_KEYS)))
-    for module, override in (config.get("llm", {}).get("modules") or {}).items():
-        for key in sorted(set(override or {}) - MODULE_LLM_KEYS):
+    modules = config.get("llm", {}).get("modules") or {}
+    if not isinstance(modules, dict):
+        raise ConfigError('llm.modules must be an object {"<module>": {...}}')
+    for module, override in modules.items():
+        if not isinstance(override, dict):
+            raise ConfigError(f"llm.modules.{module} must be an object")
+        for key in sorted(set(override) - MODULE_LLM_KEYS):
             log.warning("unknown key llm.modules.%s.%s in config -- ignored (typo? "
                         "known keys: %s)", module, key, ", ".join(sorted(MODULE_LLM_KEYS)))
     return config
