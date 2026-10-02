@@ -1,4 +1,4 @@
-from executor.geom.helpers import tool, _next_name, _publish
+from executor.geom.helpers import _check_shape, tool, _next_name, _publish
 
 
 def _colour(shape):
@@ -52,7 +52,7 @@ def tool_fuse(executor, args: dict):
     else:
         result = geompy.MakeFuseList(shapes)
         fn = "MakeFuseList"
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"fuse: CheckShape failed ({msg})"}
     name = _next_name(executor, "fuse")
@@ -96,7 +96,7 @@ def tool_cut(executor, args: dict):
         args_list = [{"kind": "ref", "value": args["main"]},
                      {"kind": "list", "value": [{"kind": "ref", "value": t} for t in args["tools"]]}]
 
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"cut: CheckShape failed ({msg})"}
     name = _next_name(executor, "cut")
@@ -121,7 +121,7 @@ def tool_common(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shapes = [executor.geom_bindings[s] for s in args["shapes"]]
     result = geompy.MakeCommonList(shapes)
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"common: CheckShape failed ({msg})"}
     name = _next_name(executor, "common")
@@ -147,7 +147,7 @@ def tool_partition(executor, args: dict):
     shapes = [executor.geom_bindings[s] for s in args["shapes"]]
     tools = [executor.geom_bindings[t] for t in args.get("tools", [])]
     result = geompy.MakePartition(shapes, tools)
-    is_valid, msg = geompy.CheckShape(result, True, 1)
+    is_valid, msg = _check_shape(geompy, result)
     if not is_valid:
         return {"ok": False, "error": f"partition: CheckShape failed ({msg})"}
     name = _next_name(executor, "part")

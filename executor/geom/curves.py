@@ -221,7 +221,6 @@ class _Tracer:
         self.g = executor.namespace["geompy"]
         self.known: list = []     # (coords, vertex name) of points this call made or used
         self.used: list = []      # every point the outer outline uses, for its plane
-        self.fillets: list = []   # (corner coords, radius) to round once the face exists
 
     def point(self, arg, coords=None):
         coords = coords or _coords(self.ex, arg)
@@ -249,7 +248,7 @@ class _Tracer:
         start_n, start_c = self.point(outline["start"])
         cur_n, cur_c = start_n, start_c
         self.used.append(start_c)
-        edges = []
+        edges, fillets = [], []
         for i, seg in enumerate(segments, 1):
             where = f"{label} segment {i}"
             if not isinstance(seg, dict) or "to" not in seg:
@@ -322,7 +321,7 @@ class _Tracer:
                 r = seg["fillet"]
                 if isinstance(r, bool) or not isinstance(r, (int, float)) or r <= 0:
                     raise _ProfileError(f"{where}: `fillet` must be a positive radius")
-                self.fillets.append((to_c, float(r)))
+                fillets.append((to_c, float(r)))
             self.used.append(to_c)
             cur_n, cur_c = to_n, to_c
         closed_with_line = math.dist(cur_c, start_c) > _SAME
@@ -342,41 +341,35 @@ class _Tracer:
         b[name] = wire
         self.records.append({"fn": "MakeWire", "args": [_refs(edges), _lit(tolerance)],
                              "out_vars": [name], "publish": None})
-        return name, closed_with_line
+        return self.fillet(name, fillets, label), closed_with_line
 
-
-def _fillet_corners(executor, face, name, wires, fillets, records):
-    """Round the traced corners with MakeFillet2D, one call per radius, so OCC
-    finds the tangent points. Records the plain face and each step; the last
-    shape gets `name`. Returns (shape, error)."""
-    geompy = executor.namespace["geompy"]
-    radii = list(dict.fromkeys(r for _, r in fillets))
-    names = [_next_name(executor, "face") for _ in radii] + [name]
-    shapes = [face]
-    for i, r in enumerate(radii):
-        corners = [c for c, rr in fillets if rr == r]
-        verts = geompy.SubShapeAll(shapes[-1], geompy.ShapeType["VERTEX"])
-        ids = []
-        for c in corners:
-            match = [v for v in verts if math.dist(geompy.PointCoordinates(v), c) <= 1e-6]
-            if not match:
-                return None, f"make_profile_face: no corner left at {_fmt_point(c)} to fillet"
-            ids.append(geompy.GetSubShapeID(shapes[-1], match[0]))
-        try:
-            shapes.append(geompy.MakeFillet2D(shapes[-1], r, ids))
-        except Exception as e:
-            where = ", ".join(_fmt_point(c) for c in corners)
-            return None, (f"make_profile_face: fillet {r:g} at {where} failed ({e}): the radius "
-                          "is too big for the segments meeting there, or they already join smoothly")
-        records.append({"fn": "MakeFillet2D", "args": [_ref(names[i]), _lit(r), _lit(ids)],
-                        "out_vars": [names[i + 1]], "publish": None})
-    records.insert(len(records) - len(radii),
-                   {"fn": "MakeFaceWires", "args": [_refs(wires), _lit(1)],
-                    "out_vars": [names[0]], "publish": None})
-    records[-1]["publish"] = [name]
-    for n, shape in zip(names[:-1], shapes[:-1]):
-        executor.geom_bindings[n] = shape
-    return shapes[-1], None
+    def fillet(self, name: str, fillets: list, label: str) -> str:
+        """Round the wire's corners with MakeFillet1D, one call per radius, so OCC
+        finds the tangent points. On the wire, not the face: MakeFillet2D on a
+        face with holes merges every boundary into one (invalid) wire."""
+        b = self.ex.geom_bindings
+        for r in dict.fromkeys(r for _, r in fillets):
+            corners = [c for c, rr in fillets if rr == r]
+            verts = self.g.SubShapeAll(b[name], self.g.ShapeType["VERTEX"])
+            ids = []
+            for c in corners:
+                match = [v for v in verts if math.dist(self.g.PointCoordinates(v), c) <= 1e-6]
+                if not match:
+                    raise _ProfileError(f"{label}: no corner left at {_fmt_point(c)} to fillet")
+                ids.append(self.g.GetSubShapeID(b[name], match[0]))
+            try:
+                shape = self.g.MakeFillet1D(b[name], r, ids)
+            except Exception as e:
+                where = ", ".join(_fmt_point(c) for c in corners)
+                raise _ProfileError(f"{label}: fillet {r:g} at {where} failed ({e}): the radius "
+                                    "is too big for the segments meeting there, or they already "
+                                    "join smoothly") from e
+            out = _next_name(self.ex, "wire")
+            b[out] = shape
+            self.records.append({"fn": "MakeFillet1D", "args": [_ref(name), _lit(r), _lit(ids)],
+                                 "out_vars": [out], "publish": None})
+            name = out
+        return name
 
 
 _POINT = {"type": "string", "description": "point name or \"x,y,z\""}
@@ -472,10 +465,9 @@ def tool_make_profile_face(executor, args: dict):
     if error:
         return {"ok": False, "error": error}
     name = _next_name(executor, "face")
-    face, error = _fillet_corners(executor, face, name, wires, tracer.fillets, records)
-    if error:
-        return {"ok": False, "error": error}
     _publish(executor, face, name)
+    records.append({"fn": "MakeFaceWires", "args": [_refs(wires), _lit(1)],
+                    "out_vars": [name], "publish": [name]})
     result = {"ok": True, "records": records, "sanity": {"ok": True},
               "area": round(geompy.BasicProperties(face)[1], 6)}
     if closed_by_line:

@@ -287,15 +287,55 @@ class TestCurveTools:
                              timeout=30)
         assert float(r["stdout"].split()[-1]) == pytest.approx(area, rel=1e-6)
 
-    def test_fillet_p1_outline(self, agent_client):
-        """The p1.png plate: top half disc, waist with concave R20 corners, bottom half disc."""
+    def _valid_with_wires(self, client, face, wires):
+        """Area is integrated along the boundary, so it can be right on a broken
+        face: also check validity and that every outline is its own wire."""
+        name = self._out(face)
+        assert client.call_tool("check_shape", {"shape": name})["ok"] is True
+        got = client.call_tool("get_subshapes", {"shape": name, "sub_type": "wire", "where": "all"})
+        assert len(got["ids"]) == wires
+
+    def test_fillet_p1_plate(self, agent_client):
+        """The p1.png plate: top half disc, waist with concave R20 corners, bottom half
+        disc, the round holes and both curved slots (pitch R35, 18 wide, 120 deg each)."""
+        c = math.cos(math.radians(60))
+        s = math.sin(math.radians(60))
+
+        def slot(side):
+            p = lambda r, sgn: f"{side * r * c},{-80 + sgn * r * s},0"
+            # each R9 end cap bulges past the slot's end angle (+-60 deg about (0,-80))
+            cap = lambda sgn: f"{side * (35 * c - 9 * s)},{-80 + sgn * (35 * s + 9 * c)},0"
+            return {"start": p(26, -1), "segments": [
+                {"to": p(26, 1), "center": "0,-80,0"},
+                {"to": p(44, 1), "through": cap(1)},
+                {"to": p(44, -1), "center": "0,-80,0"},
+                {"to": p(26, -1), "through": cap(-1)}]}
+
+        holes = [{"center": "0,0,0", "radius": 25}, {"center": "0,-80,0", "radius": 20}]
+        holes += [{"center": f"{64 * math.cos(math.radians(a))},{64 * math.sin(math.radians(a))},0",
+                   "radius": 15} for a in (30, 90, 150)]
         face = agent_client.call_tool("make_profile_face", {"start": "96,0,0", "segments": [
             {"to": "-96,0,0", "through": "0,96,0"}, {"to": "-54,0,0", "fillet": 20},
             {"to": "-54,-80,0"}, {"to": "54,-80,0", "through": "0,-134,0"},
-            {"to": "54,0,0", "fillet": 20}, {"to": "96,0,0"}]})
+            {"to": "54,0,0", "fillet": 20}, {"to": "96,0,0"}],
+            "holes": holes + [slot(1), slot(-1)]})
         assert face["ok"] is True, face.get("error")
-        area = math.pi * (96 ** 2 + 54 ** 2) / 2 + 108 * 80 + 2 * 400 * self.CORNER
+        outline = math.pi * (96 ** 2 + 54 ** 2) / 2 + 108 * 80 + 2 * 400 * self.CORNER
+        slots = 2 * (35 * 2 * math.pi / 3 * 18 + 81 * math.pi)
+        area = outline - math.pi * (25 ** 2 + 20 ** 2 + 3 * 15 ** 2) - slots
         assert face["area"] == pytest.approx(area, rel=1e-6)
+        self._valid_with_wires(agent_client, face, 8)
+
+    def test_fillet_in_a_hole_keeps_its_own_wire(self, agent_client):
+        face = agent_client.call_tool("make_profile_face", {"start": "0,0,0", "segments": [
+            {"to": "40,0,0", "fillet": 2}, {"to": "40,20,0"}, {"to": "0,20,0"}],
+            "holes": [{"center": "10,10,0", "radius": 3},
+                      {"start": "25,5,0", "segments": [{"to": "35,5,0", "fillet": 1},
+                                                       {"to": "35,15,0"}, {"to": "25,15,0"}]}]})
+        assert face["ok"] is True, face.get("error")
+        area = 800 - 4 * self.CORNER - 9 * math.pi - (100 - self.CORNER)
+        assert face["area"] == pytest.approx(area, rel=1e-6)
+        self._valid_with_wires(agent_client, face, 3)
 
     def test_fillet_line_arc_corner(self, agent_client):
         plain = {"start": "0,0,0", "segments": [{"to": "20,0,0"}, {"to": "0,20,0", "center": "0,0,0"}]}
