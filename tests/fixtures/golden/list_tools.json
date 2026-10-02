@@ -323,7 +323,84 @@
         "points"
       ]
     },
-    "description": "Planar face bounded by a closed polygon through `points` (3 or more corners, in order; the last joins back to the first). Extrude it with make_prism for a gable roof, wedge or any prismatic profile.",
+    "description": "Planar face bounded by a closed polygon through `points` (3 or more corners, in order; the last joins back to the first). Extrude it with make_prism for a gable roof, wedge or any prismatic profile. Straight sides only: for an outline with arcs use make_line + make_arc, make_wire, make_face_from_wires.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_arc",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "string",
+          "description": "start point"
+        },
+        "end": {
+          "type": "string",
+          "description": "end point (centre form: sets the direction only)"
+        },
+        "center": {
+          "type": "string",
+          "description": "centre point (centre form)"
+        },
+        "through": {
+          "type": "string",
+          "description": "a point the arc passes through, between start and end (3-point form)"
+        },
+        "reverse": {
+          "type": "boolean",
+          "default": false,
+          "description": "centre form: take the longer way round"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ]
+    },
+    "description": "A circular arc edge, in one of two forms: `center` + `start` + `end` (radius = centre to start; `end` only sets the direction the arc stops at; it takes the shorter way round, `reverse` the longer; for a half circle use the other form) or `start` + `through` + `end` (the arc passes through all three). Points are names or \"x,y,z\". The result gives the arc's real end points and length: start the next segment there. Chain arcs and make_line segments with make_wire, then make_face_from_wires.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_wire",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "edges or wires, each touching the next"
+        }
+      },
+      "required": [
+        "edges"
+      ]
+    },
+    "description": "Join edges (make_line, make_arc, ... segments) end to end into one wire. The result says whether it is closed; a closed wire can be made into a face with make_face_from_wires.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_face_from_wires",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "wires": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "outer contour first, then holes"
+        }
+      },
+      "required": [
+        "wires"
+      ]
+    },
+    "description": "Planar face bounded by closed wires: the first is the outer contour, any others are holes (make_wire results, or a make_circle edge for a round hole). Extrude it with make_prism or revolve it with make_revolution.",
     "category": "sketch"
   },
   {

@@ -12,6 +12,18 @@ CORE_TOOLS = frozenset({
     "make_box", "fuse", "cut", "translate", "align",
 })
 
+# A 2D profile needs all of these: offering one of the trigger tools offers the set.
+PROFILE_TOOLS = frozenset({
+    "make_line", "make_arc", "make_circle", "make_wire", "make_face_from_wires",
+})
+_PROFILE_TRIGGERS = frozenset({"make_arc", "make_wire", "make_face_from_wires"})
+
+
+def _with_companions(names: set[str], all_tool_names) -> set[str]:
+    if names & _PROFILE_TRIGGERS:
+        names |= PROFILE_TOOLS & set(all_tool_names)
+    return names
+
 
 def hint_tool_names(stage_plan: dict) -> list[str]:
     """Geom tool names the planner expects this stage to use.
@@ -32,7 +44,8 @@ def hint_tool_names(stage_plan: dict) -> list[str]:
 
 def initial_offered(stage_plan: dict, all_tool_names: set[str]) -> set[str]:
     """CORE_TOOLS plus any planner-hinted names that are real geom tools."""
-    return set(CORE_TOOLS) | {n for n in hint_tool_names(stage_plan) if n in all_tool_names}
+    hinted = {n for n in hint_tool_names(stage_plan) if n in all_tool_names}
+    return set(CORE_TOOLS) | _with_companions(hinted, all_tool_names)
 
 
 def resolve_load(names, categories, all_defs: dict[str, dict]) -> set[str]:
@@ -44,7 +57,7 @@ def resolve_load(names, categories, all_defs: dict[str, dict]) -> set[str]:
     want = {n for n in (names or []) if n in all_defs}
     cats = set(categories or [])
     want |= {n for n, d in all_defs.items() if d.get("category") in cats}
-    return want
+    return _with_companions(want, all_defs)
 
 
 def suggest_tool_names(name: str, all_defs: dict[str, dict]) -> list[str]:

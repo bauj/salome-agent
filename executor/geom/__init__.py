@@ -15,6 +15,7 @@ from executor.geom.primitives import (  # noqa: F401
 from executor.geom.sketch import (  # noqa: F401
     tool_make_face, tool_make_disk, tool_make_point, tool_make_vector,
     tool_make_line, tool_make_plane, tool_make_circle, tool_make_polygon_face,
+    tool_make_arc, tool_make_wire, tool_make_face_from_wires,
 )
 from executor.geom.swept import (  # noqa: F401
     tool_make_prism, tool_make_revolution, tool_make_pipe,
