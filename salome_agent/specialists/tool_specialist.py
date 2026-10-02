@@ -2,7 +2,8 @@ import json
 
 from salome_agent.codegen import _reachable, _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
-from salome_agent.llm import LLMCancelled, assistant_tool_turn, continuity_fields
+from salome_agent.llm import (LLMCancelled, ReasoningBudgetExceeded, assistant_tool_turn,
+                              continuity_fields)
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec
 from salome_agent.specialists.tool_selection import (
@@ -181,6 +182,9 @@ class ToolSpecialist:
         # finish_stage is checked once: a clean stage closes on the first call,
         # an odd one is reopened with a report and closes on the next (task 217).
         audited = False
+        # A call cut for deliberating past llm.reasoning_budget is re-asked once
+        # with a "decide now" nudge; a second cut in a row ends the stage.
+        overran = False
         shape_infos: dict[str, dict] = {}
         n_seed_calls = len(calls)
         # Per-stage tool retrieval: offer CORE_TOOLS + the planner's hints, not the
@@ -228,6 +232,20 @@ class ToolSpecialist:
             except LLMCancelled:
                 log.info("  %s stage: cancelled mid-call", spec.name)
                 return _with_calls(spec.on_exhausted(call_log, last_error), calls)
+            except ReasoningBudgetExceeded as e:
+                if overran:
+                    log.warning("  %s stage: %s again after the nudge; giving up", spec.name, e)
+                    return _with_calls(spec.on_exhausted(
+                        call_log, f"stage ended: reasoning budget exceeded twice ({e})"), calls)
+                log.warning("  %s stage: %s; nudging it to decide", spec.name, e)
+                overran = True
+                messages.append({"role": "user", "content": (
+                    f"You spent ~{e.tokens} tokens deliberating without acting, and that "
+                    "answer was discarded. Pick the most likely reading, state it in one "
+                    "sentence, and make your tool call now. Tool results will tell you "
+                    "if it was wrong.")})
+                continue
+            overran = False
             if response.get("content"):
                 log.debug("    LLM reasoning: %s", response["content"])
             tool_calls = response["tool_calls"]
