@@ -495,6 +495,17 @@ def test_module_override_sends_its_calls_to_its_own_endpoint_and_model(monkeypat
     assert planner["headers"]["Authorization"] == "Bearer k1"
 
 
+def test_module_override_on_another_host_does_not_inherit_credentials(monkeypatch):
+    seen = _capture_request(monkeypatch)
+    LLMClient("http://shared/v1", "k1", "small", extra_headers={"X-Token": "t"},
+              extra_body={"reasoning_effort": "high"},
+              modules={"vision": {"base_url": "http://other/v1", "model": "big"}}).chat(
+        messages=[{"role": "user", "content": "x"}], module="vision")
+    req = seen[0]
+    assert req["headers"] == {}
+    assert "reasoning_effort" not in req["payload"]
+
+
 def test_module_override_keeps_shared_values_it_leaves_out(monkeypatch):
     seen = _capture_request(monkeypatch)
     LLMClient("http://shared/v1", "k1", "small", temperature=0.3,
