@@ -1,3 +1,4 @@
+import json
 import time
 
 import requests
@@ -102,8 +103,10 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
     session = amend.AmendSession(graph, client, turn)
-    description = state.get("image_description")
-    extra = {"image_description": description} if description else {}
+    extra = {}
+    if state.get("image_spec"):
+        from salome_agent.nodes.vision_spec import amend_block
+        extra = {"image_description": amend_block(state["image_spec"])}
     try:
         session, outcome = amend.run_amend(
             state["user_request"], graph, llm, client, turn,
@@ -206,29 +209,29 @@ def retry_context(state: dict, idx: int, client) -> dict | None:
 
 def _describe_image_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
-    from salome_agent.nodes.vision import describe_images, format_description
+    from salome_agent.nodes.vision import describe_images
 
     images = state.get("reference_images")
     after = "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
     if not images:
         return Command(goto=after)
     llm = config["configurable"]["llm_client"]
+    retries = ((state.get("config") or {}).get("llm") or {}).get("vision_fix_retries", 2)
     log.info("describing %d reference image(s)...", len(images))
     snap0 = _usage_snap(llm)
     t0 = time.monotonic()
     try:
-        desc = describe_images(state["user_request"], images, llm)
+        spec = describe_images(state["user_request"], images, llm, fix_retries=retries)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
             raise
         log.error("%s", msg)
         return Command(update={"fatal": msg}, goto="assemble")
-    text = format_description(desc)
-    log.info("image description:\n%s", text)
+    log.info("image spec:\n%s", json.dumps(spec, ensure_ascii=False, indent=1))
     # only this node reads the images; the checkpointer would otherwise carry
     # the base64 through every later step
-    update = {"image_description": text, "reference_images": None}
+    update = {"image_spec": spec, "reference_images": None}
     if snap0 is not None:
         vt = _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0)
         log.info("  vision timing: wall=%.1fs llm=%.1fs", vt["wall"], vt["llm_s"])
@@ -252,8 +255,8 @@ def _plan_node(state: dict, config: "RunnableConfig"):
         # "retry" is planned from scratch and must still see what was asked
         request += _earlier_requests(state)
     try:
-        description = state.get("image_description")
-        extra = {"image_description": description} if description else {}
+        image_spec = state.get("image_spec")
+        extra = {"image_spec": image_spec} if image_spec else {}
         stage_plans = plan(request, llm, detail, **extra)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
@@ -316,10 +319,13 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         if block:
             blocks.append(block)
     if module == "geom":
-        # smesh/paravis never see the image description: it only feeds CAD construction
-        if state.get("image_description"):
-            from salome_agent.specialists.geom import image_block
-            blocks.append(image_block(state["image_description"]))
+        # smesh/paravis never see the image spec: it only feeds CAD construction
+        image_spec = state.get("image_spec")
+        if image_spec:
+            from salome_agent.nodes.vision_spec import parts_block, stage_part_ids
+            ids = stage_part_ids(state["plan"], idx, image_spec)
+            if ids:
+                blocks.append(parts_block(image_spec, ids))
         retry = retry_context(state, idx, client)
         seed = (retry or {}).get("call_log")
         seed_calls = (retry or {}).get("calls")

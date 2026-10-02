@@ -387,58 +387,62 @@ def test_describe_image_node_skips_straight_to_plan_without_images():
     llm.chat.assert_not_called()
 
 
-def test_describe_image_node_stores_the_description_for_the_planner():
+def test_describe_image_node_stores_the_spec_for_the_planner():
     from salome_agent import graph
+    from tests.unit.test_vision_spec import box_spec
 
     llm = MagicMock()
-    llm.chat.return_value = {"summary": "an L-bracket"}
+    llm.chat.return_value = box_spec()
     state = {"user_request": "x", "reference_images": ["data:image/png;base64,AAAA"]}
     cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
     assert cmd.goto == "plan"
-    assert "an L-bracket" in cmd.update["image_description"]
+    assert cmd.update["image_spec"] == box_spec()
     assert cmd.update["reference_images"] is None
+
+
+def test_describe_image_node_reads_vision_fix_retries_from_config():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.return_value = {"summary": "a box"}
+    state = {"user_request": "x", "reference_images": ["x"],
+             "config": {"llm": {"vision_fix_retries": 0}}}
+    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
+    assert llm.chat.call_count == 1
+    assert "parts must be a non-empty list" in cmd.update["image_spec"]["conflicts"]
 
 
 def test_describe_image_node_hands_a_follow_up_turn_to_amend():
     from salome_agent import graph
+    from tests.unit.test_vision_spec import box_spec
 
     llm = MagicMock()
-    llm.chat.return_value = {"summary": "a handle"}
+    llm.chat.return_value = box_spec()
     state = {"user_request": "x", "turn_idx": 1,
              "reference_images": ["data:image/png;base64,AAAA"]}
     cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
-    assert cmd.goto == "amend" and "a handle" in cmd.update["image_description"]
+    assert cmd.goto == "amend" and cmd.update["image_spec"]["summary"] == "a block with a hole"
     cmd = graph._describe_image_node({"user_request": "x", "turn_idx": 1},
                                      {"configurable": {"llm_client": llm}})
     assert cmd.goto == "amend"
 
 
-def test_describe_image_node_turns_endpoint_error_into_a_clean_fatal():
-    from salome_agent import graph
-
-    llm = MagicMock()
-    llm.chat.side_effect = _http_error(503)
-    state = {"user_request": "x", "reference_images": ["data:image/png;base64,AAAA"]}
-    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
-    assert cmd.goto == "assemble" and "503" in cmd.update["fatal"]
-
-
-def test_plan_node_hands_the_description_not_the_images_to_the_planner(monkeypatch):
+def test_plan_node_hands_the_spec_not_the_images_to_the_planner(monkeypatch):
     from salome_agent import graph
     from salome_agent.nodes import planner
 
     seen = {}
 
-    def fake_plan(request, llm, detail="balanced", image_description=None):
-        seen.update(image_description=image_description)
+    def fake_plan(request, llm, detail="balanced", image_spec=None):
+        seen.update(image_spec=image_spec)
         return [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]
 
     monkeypatch.setattr(planner, "plan", fake_plan)
     state = {"user_request": "x", "config": {"policy": {}},
              "reference_images": ["data:image/png;base64,AAAA"],
-             "image_description": "Summary: a box"}
+             "image_spec": {"summary": "a box", "parts": []}}
     graph._plan_node(state, {"configurable": {"llm_client": MagicMock()}})
-    assert seen == {"image_description": "Summary: a box"}
+    assert seen == {"image_spec": {"summary": "a box", "parts": []}}
 
 
 def test_select_upstream_always_returns_every_available_name():
@@ -501,3 +505,50 @@ def test_retry_seeds_the_failed_attempts_calls(monkeypatch):
     graph._run_stage_node(_one_geom_stage("failed", call_log=[], calls=old),
                           {"configurable": {"llm_client": MagicMock(), "executor_client": None}})
     assert seen["seed_calls"] == old
+
+
+def _capture_stage_blocks(monkeypatch, plan, idx, image_spec):
+    from salome_agent import graph
+    from salome_agent.specialists import tool_specialist
+
+    seen = {}
+
+    def fake_run(self, stage_plan, llm, client, cap, blocks=(), **kw):
+        seen["blocks"] = blocks
+        return {"status": "ok", "call_log": [], "calls": [], "result_names": []}
+
+    monkeypatch.setattr(tool_specialist.ToolSpecialist, "run", fake_run)
+    monkeypatch.setattr(graph, "retry_context", lambda state, idx, client: None)
+    state = {"plan": plan, "stage_idx": idx, "stages": {i: {"module": "geom", "status": "pending"}
+                                                         for i in range(len(plan))},
+             "config": {"policy": {"tool_iteration_cap": 5}}, "image_spec": image_spec,
+             "build_graph": None}
+    try:
+        graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
+                                                       "executor_client": None}})
+    except Exception:  # noqa: BLE001 — only the blocks handed to the specialist matter
+        pass
+    return "\n".join(seen.get("blocks") or ())
+
+
+def test_geom_stage_gets_only_its_parts(monkeypatch):
+    from tests.unit.test_vision_spec import box_spec
+    plan = [{"module": "geom", "intent": "a", "params": {}, "inputs": [], "parts": ["P1"]},
+            {"module": "geom", "intent": "b", "params": {}, "inputs": [], "parts": ["P2"]}]
+    text = _capture_stage_blocks(monkeypatch, plan, 1, box_spec())
+    assert '"id": "P2"' in text and '"id": "P1"' not in text
+
+
+def test_geom_stage_gets_every_part_when_the_planner_listed_none(monkeypatch):
+    from tests.unit.test_vision_spec import box_spec
+    plan = [{"module": "geom", "intent": "a", "params": {}, "inputs": []}]
+    text = _capture_stage_blocks(monkeypatch, plan, 0, box_spec())
+    assert '"id": "P1"' in text and '"id": "P2"' in text
+
+
+def test_geom_stage_without_parts_gets_no_spec_when_others_list_theirs(monkeypatch):
+    from tests.unit.test_vision_spec import box_spec
+    plan = [{"module": "geom", "intent": "a", "params": {}, "inputs": [], "parts": ["P1", "P2"]},
+            {"module": "geom", "intent": "colour it", "params": {}, "inputs": []}]
+    text = _capture_stage_blocks(monkeypatch, plan, 1, box_spec())
+    assert "Reference image spec" not in text

@@ -467,6 +467,115 @@ def test_build_llm_reads_module_extra_body():
     assert build_llm(cfg).module_extra_body == {"geom": {}}
 
 
+def _capture_request(monkeypatch):
+    seen = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        seen.append({"url": url, "payload": json, "headers": headers, "timeout": timeout})
+        return _FakeResp({"choices": [{"finish_reason": "stop", "message": {
+            "role": "assistant", "content": '{"a": 1}'}}]})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    return seen
+
+
+def test_module_override_sends_its_calls_to_its_own_endpoint_and_model(monkeypatch):
+    seen = _capture_request(monkeypatch)
+    client = LLMClient("http://shared/v1", "k1", "small",
+                       modules={"vision": {"base_url": "http://other/v1/",
+                                           "api_key": "k2", "model": "big"}})
+    client.chat(messages=[{"role": "user", "content": "x"}], module="vision")
+    client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
+    vision, planner = seen
+    assert vision["url"] == "http://other/v1/chat/completions"
+    assert vision["payload"]["model"] == "big"
+    assert vision["headers"]["Authorization"] == "Bearer k2"
+    assert planner["url"] == "http://shared/v1/chat/completions"
+    assert planner["payload"]["model"] == "small"
+    assert planner["headers"]["Authorization"] == "Bearer k1"
+
+
+def test_module_override_on_another_host_does_not_inherit_credentials(monkeypatch):
+    seen = _capture_request(monkeypatch)
+    LLMClient("http://shared/v1", "k1", "small", extra_headers={"X-Token": "t"},
+              extra_body={"reasoning_effort": "high"},
+              modules={"vision": {"base_url": "http://other/v1", "model": "big"}}).chat(
+        messages=[{"role": "user", "content": "x"}], module="vision")
+    req = seen[0]
+    assert req["headers"] == {}
+    assert "reasoning_effort" not in req["payload"]
+
+
+def test_module_override_keeps_shared_values_it_leaves_out(monkeypatch):
+    seen = _capture_request(monkeypatch)
+    LLMClient("http://shared/v1", "k1", "small", temperature=0.3,
+              extra_headers={"X-Run": "r"}, extra_body={"reasoning_effort": "high"},
+              modules={"vision": {"model": "big"}}).chat(
+        messages=[{"role": "user", "content": "x"}], module="vision")
+    req = seen[0]
+    assert req["url"] == "http://shared/v1/chat/completions"
+    assert req["payload"]["model"] == "big"
+    assert req["payload"]["temperature"] == 0.3
+    assert req["payload"]["reasoning_effort"] == "high"
+    assert req["headers"] == {"Authorization": "Bearer k1", "X-Run": "r"}
+
+
+def test_module_override_extra_body_wins_over_module_extra_body(monkeypatch):
+    seen = _capture_request(monkeypatch)
+    LLMClient("http://x/v1", "", "auto",
+              module_extra_body={"vision": {"reasoning_effort": "low"}},
+              modules={"vision": {"extra_body": {"reasoning_effort": "high"}}}).chat(
+        messages=[{"role": "user", "content": "x"}], module="vision")
+    assert seen[0]["payload"]["reasoning_effort"] == "high"
+
+
+def test_module_override_without_extra_body_uses_module_extra_body(monkeypatch):
+    seen = _capture_request(monkeypatch)
+    LLMClient("http://x/v1", "", "auto", extra_body={"reasoning_effort": "high"},
+              module_extra_body={"vision": {"reasoning_effort": "low"}},
+              modules={"vision": {"model": "big"}}).chat(
+        messages=[{"role": "user", "content": "x"}], module="vision")
+    assert seen[0]["payload"]["reasoning_effort"] == "low"
+
+
+def test_module_override_timeout_sets_its_read_gap(monkeypatch):
+    seen = _capture_request(monkeypatch)
+    LLMClient("http://x/v1", "", "auto", request_timeout=600,
+              modules={"vision": {"timeout": 20}}).chat(
+        messages=[{"role": "user", "content": "x"}], module="vision")
+    assert seen[0]["timeout"][1] == 20
+
+
+def test_module_override_bad_cert_fails_at_startup(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        LLMClient("http://x/v1", "", "auto",
+                  modules={"vision": {"ssl_cert_file": str(tmp_path / "nope.pem")}})
+
+
+def test_trace_records_the_module_model_and_base_url(monkeypatch, tmp_path):
+    _capture_request(monkeypatch)
+    trace = tmp_path / "t.jsonl"
+    LLMClient("http://x/v1", "", "small", trace_path=str(trace),
+              modules={"vision": {"base_url": "http://other/v1", "model": "big"}}).chat(
+        messages=[{"role": "user", "content": "x"}], module="vision")
+    req = json.loads(trace.read_text().splitlines()[0])["request"]
+    assert req["model"] == "big"
+    assert req["base_url"] == "http://other/v1"
+
+
+def test_build_llm_reads_modules_and_fills_run_id_in_their_headers(monkeypatch):
+    from salome_agent.cli import build_llm
+
+    seen = _capture_request(monkeypatch)
+    cfg = {"llm": {"base_url": "http://x/v1", "model": "small",
+                   "modules": {"vision": {"model": "big",
+                                          "extra_headers": {"X-Session": "{run_id}"}}}}}
+    build_llm(cfg, run_id="abc").chat(
+        messages=[{"role": "user", "content": "x"}], module="vision")
+    assert seen[0]["payload"]["model"] == "big"
+    assert seen[0]["headers"]["X-Session"] == "abc"
+
+
 def test_chat_uses_tool_choice_auto(monkeypatch):
     captured = {}
 

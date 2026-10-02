@@ -269,7 +269,15 @@ class TestMakeProfileFace:
         _, _, r = self._run({"start": "0,0,0", "segments": [{"to": "10,0,0"}, {"to": "0,10,5"}]}, g)
         assert r["ok"] is False and "one plane" in r["error"]
 
-    SQUARE = [{"to": "10,0,0"}, {"to": "10,10,0"}, {"to": "0,10,0"}, {"to": "0,0,0"}]
+    def test_compound_face_says_holes_overlap_not_plane(self):
+        g = _geompy()
+        g.KindOfShape.return_value = ["COMPOUND"]
+        _, _, r = self._run({**self._SQUARE, "holes": [{"center": "5,5,0", "radius": 1}]}, g)
+        assert r["ok"] is False
+        assert "holes overlap each other or cross the outline" in r["error"]
+        assert "one plane" not in r["error"]
+
+    SQUARE =[{"to": "10,0,0"}, {"to": "10,10,0"}, {"to": "0,10,0"}, {"to": "0,0,0"}]
 
     def _fillet_geompy(self):
         """Wire vertices = the square's corners; MakeFillet1D returns a new wire
