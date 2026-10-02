@@ -735,7 +735,11 @@ def parts_block(spec: dict, ids: list[str]) -> str:
     """A geom stage's view: its parts' exact JSON."""
     chosen = [p for p in _parts(spec) if p.get("id") in ids]
     lines = ["Reference image spec for this stage's part(s), read from the user's "
-             "image(s) by an image-analysis agent (you do not see the images):"]
+             "image(s) by an image-analysis agent (you do not see the images). "
+             "The JSON is what you build; the summary, dimensions, uncertainties and "
+             "conflicts are context. Where they disagree with the JSON, build the JSON "
+             "as given and say in one sentence what you assumed -- do not try to "
+             "reconcile them before your first tool call:"]
     lines += _context_lines(spec)
     lines.append("```json\n" + json.dumps(chosen, ensure_ascii=False, indent=1) + "\n```")
     return "\n".join(lines)

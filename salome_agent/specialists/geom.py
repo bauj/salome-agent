@@ -82,8 +82,8 @@ exact data of the part(s) this stage builds, as JSON. Build from it as given: a
 "extrude" or make_revolution for "revolve"; "placement" gives where the part sits
 and which way it faces. Values written "~N" are estimates; plain numbers were read
 from the image. "conflicts" name values that disagree: build anyway and let the
-tool errors tell you which value fits. Explicit dimensions in the stage's params
-win over the spec."""
+tool errors tell you which value fits. If the spec's prose and its data disagree,
+the data wins. Explicit dimensions in the stage's params win over the spec."""
 
 # policy.verify_cadence — how hard the specialist is pushed to self-check
 # shape placement. shape_info rides on every ok result for free; the question
