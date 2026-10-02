@@ -38,8 +38,11 @@ object:
   "views": [{"image": 1-based image number, "view": "front|top|side|isometric|
              section|plan|detail|photo|unknown", "shows": what it contributes}],
   "dimensions_read": [{"text": a dimension, annotation or scale exactly as
-                       written, with its unit, "means": what it measures -- what
-                       each extension line sits on, or the feature it labels}],
+                       written, with its unit, "means": what it measures or the
+                       feature it labels; for a linear dimension also
+                       "from": what the first extension line sits on and
+                       "to": what the second one sits on (a centre, an edge,
+                       a tangent point)}],
   "datum": the origin and axes every coordinate below uses, e.g. "O = centre of
            the big bore; +X right, +Y up, +Z towards the viewer",
   "parts": [one entry per part, see below],
@@ -92,6 +95,9 @@ Rules:
 - Write "dimensions_read" first. Every number in "parts" is one of those values,
   derived from them, or an estimate written as a string with "~", e.g. "~40"
   (also inside points: "~40,0,0").
+- Place centres from their dimensions: when a linear dimension runs from one
+  centre to another, it is centre-to-centre, so the second centre is exactly that
+  far from the first; size the outline around the centres afterwards.
 - Millimetres throughout; convert a drawing in another unit and say so in
   dimensions_read.
 - For "2d", never invent a thickness or height; for "3d", give the depth of every

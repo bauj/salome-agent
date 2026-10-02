@@ -56,3 +56,9 @@ def test_prompt_asks_for_dimensions_read_before_parts_and_profiles_as_drawn():
     assert '"kind": "profile"' in p and '"kind": "approx"' in p
     assert "the tool finds the tangent points" in p
     assert '"assumed": true' in p
+
+
+def test_prompt_makes_every_linear_dimension_name_both_ends():
+    p = VISION_SYSTEM_PROMPT
+    assert '"from": what the first extension line sits on' in p
+    assert "centre-to-centre" in p
