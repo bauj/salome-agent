@@ -53,3 +53,8 @@ def test_salome_root_is_optional(tmp_path):
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text(json.dumps({"llm": {"base_url": "http://x", "model": "m"}}))
     assert load_config(str(cfg_path))["llm"]["model"] == "m"
+
+
+def test_vision_fix_retries_is_a_known_llm_key():
+    from salome_agent.config import LLM_KNOWN_KEYS
+    assert "vision_fix_retries" in LLM_KNOWN_KEYS
