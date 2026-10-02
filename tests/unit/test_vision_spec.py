@@ -320,3 +320,53 @@ def test_arc_that_is_not_tangent_to_its_lines_is_kept():
     segs[1:3] = [{"to": "-74,0,0"}, {"to": "-54,-20,0", "center": "-54,0,0"},
                  {"to": "-54,-80,0"}]
     assert validate_spec(spec) == []
+
+
+def p1_with_callouts(*texts):
+    spec = p1_spec()
+    spec["dimensions_read"] += [{"text": t, "means": "callout"} for t in texts]
+    return spec
+
+
+def test_counted_callouts_that_match_the_spec_pass():
+    assert validate_spec(p1_with_callouts("Ø30 - 3X", "R9 - 4X", "2X R20")) == []
+
+
+def test_slot_ends_short_of_a_counted_radius_are_flagged():
+    spec = p1_with_callouts("R9 - 4X")
+    holes = spec["parts"][0]["base"]["profile"]["holes"]
+    del holes[6]
+    holes[5]["slot"].update(from_angle=150, to_angle=30)
+    out = msgs(validate_spec(spec))
+    assert len(out) == 1
+    assert '"R9 - 4X"' in out[0] and "4 features of R9" in out[0]
+    assert "2 slot ends" in out[0]
+
+
+def test_round_holes_short_of_a_counted_diameter_are_flagged():
+    spec = p1_with_callouts("3X Ø30")
+    del spec["parts"][0]["base"]["profile"]["holes"][2]
+    out = msgs(validate_spec(spec))
+    assert len(out) == 1 and "3 features of Ø30" in out[0] and "2 round holes" in out[0]
+
+
+def test_outline_fillets_and_arcs_count_toward_a_radius():
+    spec = p1_with_callouts("R20 - 3X")
+    out = msgs(validate_spec(spec))
+    assert len(out) == 1 and "2 outline corners/arcs" in out[0]
+
+
+def test_pattern_multiplies_a_hole_feature():
+    spec = box_spec()
+    spec["dimensions_read"] = [{"text": "Ø8 - 3X", "means": "holes"}]
+    assert validate_spec(spec) == []
+    spec["dimensions_read"] = [{"text": "Ø8 - 4X", "means": "holes"}]
+    assert "4 features of Ø8" in msgs(validate_spec(spec))[0]
+
+
+def test_counted_callouts_are_skipped_when_they_cannot_be_counted():
+    spec = p1_with_callouts("R5 - 4X", "Ø30 - 3X THRU, Ø40 CBORE", "R20 TYP")
+    assert validate_spec(spec) == []
+    spec = p1_with_callouts("R20 - 6X")
+    spec["parts"][0]["features"] = [{"type": "fillet", "radius": 20, "where": "top edges"}]
+    assert validate_spec(spec) == []
