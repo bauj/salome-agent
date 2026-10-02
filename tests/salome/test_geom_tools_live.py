@@ -173,6 +173,84 @@ class TestProfileTools:
         assert r["ok"] is False and "one plane" in r["error"]
 
 
+class TestCurveTools:
+    """make_ellipse / make_polyline / make_curve / make_profile_face on real GEOM."""
+
+    _out = staticmethod(TestProfileTools._out)
+    _props = staticmethod(TestProfileTools._props)
+    # Ramanujan's perimeter of the 10 x 5 ellipse
+    ELLIPSE_LENGTH = math.pi * (3 * 15 - math.sqrt(35 * 25))
+
+    def test_full_ellipse_and_its_face(self, agent_client):
+        c = agent_client.call_tool
+        r = c("make_ellipse", {"center": "0,0,0", "normal": "0,0,1", "r_major": 10,
+                               "r_minor": 5, "major_dir": "1,0,0"})
+        # BasicProperties measures a closed ellipse ~0.13% long (bbox and face area are exact)
+        assert r["ellipse"]["length"] == pytest.approx(self.ELLIPSE_LENGTH, rel=2e-3)
+        face = c("make_face_from_wires", {"wires": [self._out(r)]})
+        assert face["ok"] is True, face.get("error")
+        assert face["area"] == pytest.approx(50 * math.pi, rel=1e-6)
+
+    def test_quarter_ellipse_either_way_round(self, agent_client):
+        for start, end in (("10,0,0", "0,5,0"), ("0,5,0", "10,0,0")):
+            r = agent_client.call_tool("make_ellipse", {"center": "0,0,0", "start": start,
+                                                        "end": end})
+            assert r["ok"] is True, r.get("error")
+            assert r["ellipse"]["length"] == pytest.approx(self.ELLIPSE_LENGTH / 4, rel=1e-4)
+            assert {tuple(r["ellipse"][k]) for k in ("start", "end")} == {(10, 0, 0), (0, 5, 0)}
+
+    def test_open_polyline(self, agent_client):
+        r = agent_client.call_tool("make_polyline", {"points": ["0,0,0", "10,0,0", "10,10,0"]})
+        assert r["ok"] is True, r.get("error")
+        assert r["length"] == pytest.approx(20)
+
+    @pytest.mark.parametrize("args", [
+        {"points": ["0,0,0", "5,3,0", "10,0,0"]},
+        {"points": ["0,0,0", "5,3,0", "10,0,0"], "kind": "bezier"},
+        {"points": ["0,0,0", "10,0,0"], "start_tangent": "0,1,0", "end_tangent": "0,-1,0"},
+    ])
+    def test_curve_ends_on_its_end_points(self, agent_client, args):
+        r = agent_client.call_tool("make_curve", args)
+        assert r["ok"] is True, r.get("error")
+        assert {tuple(r["curve"][k]) for k in ("start", "end")} == {(0, 0, 0), (10, 0, 0)}
+        assert r["curve"]["length"] > 10
+
+    def test_rounded_plate_with_a_hole_extrudes_to_the_right_volume(self, agent_client):
+        """20 x 10 plate, corner radius 2, round hole r 2 in the middle, 3 thick."""
+        c = agent_client.call_tool
+        face = c("make_profile_face", {"start": "2,0,0", "segments": [
+            {"to": "18,0,0"}, {"to": "20,2,0", "center": "18,2,0"},
+            {"to": "20,8,0"}, {"to": "18,10,0", "center": "18,8,0"},
+            {"to": "2,10,0"}, {"to": "0,8,0", "center": "2,8,0"},
+            {"to": "0,2,0"}, {"to": "2,0,0", "center": "2,2,0"}],
+            "holes": [{"center": "10,5,0", "radius": 2}]})
+        assert face["ok"] is True, face.get("error")
+        assert "closed_with_line" not in face
+        assert face["area"] == pytest.approx(184, rel=1e-6)
+        solid = self._out(c("make_prism", {"base": self._out(face), "dx": 0, "dy": 0, "dz": 3}))
+        assert self._props(agent_client, solid)["volume"] == pytest.approx(3 * 184, rel=1e-6)
+
+    def test_slot_by_through_arcs(self, agent_client):
+        face = agent_client.call_tool("make_profile_face", {"start": "0,-5,0", "segments": [
+            {"to": "20,-5,0"}, {"to": "20,5,0", "through": "25,0,0"},
+            {"to": "0,5,0"}, {"to": "0,-5,0", "through": "-5,0,0"}]})
+        assert face["ok"] is True, face.get("error")
+        assert face["area"] == pytest.approx(200 + 25 * math.pi, rel=1e-6)
+
+    def test_spline_side_closed_by_a_line(self, agent_client):
+        face = agent_client.call_tool("make_profile_face", {"start": "0,0,0", "segments": [
+            {"to": "10,0,0"}, {"to": "0,10,0", "via": ["8,6,0", "4,9,0"]}]})
+        assert face["ok"] is True, face.get("error")
+        assert face["closed_with_line"] == ["outline"]
+        assert face["area"] > 50
+
+    def test_wrong_arc_end_names_the_right_one(self, agent_client):
+        r = agent_client.call_tool("make_profile_face", {"start": "10,0,0", "segments": [
+            {"to": "0,12,0", "center": "0,0,0"}]})
+        assert r["ok"] is False
+        assert "[0.0, 10.0, 0.0]" in r["error"]
+
+
 class TestBasicObjectTools:
     """Test basic geometry objects."""
 

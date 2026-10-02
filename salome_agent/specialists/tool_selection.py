@@ -15,6 +15,7 @@ CORE_TOOLS = frozenset({
 # A 2D profile needs all of these: offering one of the trigger tools offers the set.
 PROFILE_TOOLS = frozenset({
     "make_line", "make_arc", "make_circle", "make_wire", "make_face_from_wires",
+    "make_profile_face",
 })
 _PROFILE_TRIGGERS = frozenset({"make_arc", "make_wire", "make_face_from_wires"})
 
