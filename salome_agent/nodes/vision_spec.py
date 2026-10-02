@@ -328,6 +328,48 @@ def _check_dims(dims, where, err):
             err(f'{where}.{k} must be a number or "~N"')
 
 
+def _check_fillet_arcs(outline, plane, where, err):
+    """A centre arc tangent to the straight lines on both sides is a rounded
+    corner: make_profile_face takes it as the corner plus "fillet", which spares
+    the geom stage working out the arc itself."""
+    start = parse_point(outline["start"])
+    pts = [_flat(start, plane)] + [_flat(parse_point(s["to"]), plane) for s in outline["segments"]]
+    segs = list(outline["segments"])
+    if math.dist(pts[-1], pts[0]) > TOL:
+        segs.append({"to": outline["start"]})
+        pts.append(pts[0])
+    n = len(segs)
+
+    def straight(i):
+        return not any(segs[i % n].get(k) is not None for k in ("center", "through", "via"))
+
+    def unit(a, b):
+        d = math.dist(a, b)
+        return None if d < TOL else ((b[0] - a[0]) / d, (b[1] - a[1]) / d)
+
+    for k, seg in enumerate(segs):
+        if seg.get("center") is None or not straight(k - 1) or not straight(k + 1):
+            continue
+        c = _flat(parse_point(seg["center"]), plane)
+        a, b = pts[k], pts[k + 1]
+        before = unit(pts[k - 1] if k else pts[-2], a)
+        after = unit(b, pts[(k + 2) % len(pts)] if k + 2 < len(pts) else pts[1])
+        ra, rb = unit(c, a), unit(c, b)
+        if None in (before, after, ra, rb):
+            continue
+        if abs(before[0] * ra[0] + before[1] * ra[1]) > 0.02 or \
+                abs(after[0] * rb[0] + after[1] * rb[1]) > 0.02:
+            continue
+        cross = before[0] * after[1] - before[1] * after[0]
+        if abs(cross) < 1e-6:
+            continue
+        t = ((b[0] - a[0]) * after[1] - (b[1] - a[1]) * after[0]) / cross
+        corner = (a[0] + t * before[0], a[1] + t * before[1])
+        err(f"{where} segment {k + 1}: this arc rounds the corner at {_fmt(corner)} between two "
+            f'straight lines; end the line before it at that corner with "fillet": '
+            f"{math.dist(c, a):g} and drop the arc")
+
+
 def _check_profile_base(base, dim, err):
     plane = base.get("plane")
     if plane not in PLANE_AXES:
@@ -359,6 +401,8 @@ def _check_profile_base(base, dim, err):
         err(m)
     if not pts:
         return
+    if not outline_errors:
+        _check_fillet_arcs(prof, plane, "base.profile", err)
     box = _box(pts)
     regions = []
     for h, hole in enumerate(prof.get("holes") or [], 1):

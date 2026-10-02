@@ -301,3 +301,22 @@ def test_slot_crossing_the_outline():
     spec = p1_spec()
     spec["parts"][0]["base"]["profile"]["holes"][5]["slot"]["radius"] = 48
     assert any("holes[6]: the hole crosses the outline by " in m for m in msgs(validate_spec(spec)))
+
+
+def test_tangent_corner_arc_must_be_given_as_a_fillet():
+    spec = p1_spec()
+    segs = spec["parts"][0]["base"]["profile"]["segments"]
+    segs[1:3] = [{"to": "-74,0,0"}, {"to": "-54,-20,0", "center": "-74,-20,0"},
+                 {"to": "-54,-80,0"}]
+    (_, msg), = validate_spec(spec)
+    assert msg == ('base.profile segment 3: this arc rounds the corner at (-54, 0) between two '
+                   'straight lines; end the line before it at that corner with "fillet": 20 '
+                   'and drop the arc')
+
+
+def test_arc_that_is_not_tangent_to_its_lines_is_kept():
+    spec = p1_spec()
+    segs = spec["parts"][0]["base"]["profile"]["segments"]
+    segs[1:3] = [{"to": "-74,0,0"}, {"to": "-54,-20,0", "center": "-54,0,0"},
+                 {"to": "-54,-80,0"}]
+    assert validate_spec(spec) == []
