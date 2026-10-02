@@ -13,6 +13,9 @@ class StagePlan(TypedDict):
     # Optional planner hint: the geom tool names this stage expects to use
     # (task 193). Absent on smesh/paravis stages.
     tools: NotRequired[list[str]]
+    # Optional: the vision spec part ids this stage builds (task 286); the stage
+    # is handed those parts' exact data.
+    parts: NotRequired[list[str]]
 
 
 class StageError(TypedDict):

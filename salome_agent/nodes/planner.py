@@ -1,4 +1,8 @@
+import json
+
+from salome_agent.logs import log
 from salome_agent.modules import spec_for
+from salome_agent.nodes.vision_spec import compact_spec, part_ids
 
 
 _PLANNER_BASE = """You turn a natural-language SALOME request into an
@@ -62,14 +66,15 @@ Module scope:
   contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
   Only use paravis when the request involves a results/field/MED file.
 
-If the request comes with an "Image description" block, it was written by an
-image-analysis agent from the user's reference image(s) -- treat it as the visual
-target: use the parts it lists, their approximate proportions and placement to
-shape your stage breakdown. Several views described together are ONE object, not
-separate parts. Prefer explicit numeric dimensions given in the text request, then
-dimensions the description says were read from the image; only fall back to values
-marked as estimated (~) when nothing else gives one. Mention uncertainties in a
-stage's params rather than inventing detail."""
+If the request comes with a "Reference image spec" block, an image-analysis
+agent read it from the user's reference image(s): one entry per part, each with
+an id (P1, P2, ...). Shape your stages around those parts and give every stage
+that builds one of them a "parts" list of their ids, e.g. "parts": ["P1"]; that
+stage is handed the part's exact data. Never restate a part's numbers in intent
+or params -- refer to it by id. Several views described together are ONE object,
+not separate parts. Explicit numeric dimensions in the text request still win:
+put those in params. Mention listed uncertainties or conflicts in a stage's
+params rather than inventing detail."""
 
 # The smesh and paravis one-liners stay in _PLANNER_BASE (not restructured);
 # they also appear in their spec.catalogue strings so routable() includes them.
@@ -96,13 +101,32 @@ def blank_stages(stage_plans: list[dict]) -> dict:
 
 
 def plan(request: str, llm, detail: str = "balanced",
-         image_description: str | None = None) -> list[dict]:
+         image_spec: dict | None = None) -> list[dict]:
     system = PLANNER_SYSTEM_PROMPT + _DETAIL_HINT.get(detail, "")
-    if image_description:
-        request = f"{request}\n\nImage description:\n{image_description}"
-    response = llm.chat(
-        messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": request}],
-        module="planner",
-    )
-    return response["stages"]
+    if image_spec:
+        request = f"{request}\n\n{compact_spec(image_spec)}"
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": request}]
+    stages = llm.chat(messages=messages, module="planner")["stages"]
+    if image_spec:
+        stages = _check_parts(stages, image_spec, llm, messages)
+    return stages
+
+
+def _check_parts(stages: list[dict], image_spec: dict, llm, messages: list[dict]) -> list[dict]:
+    """Stages may only list spec part ids: an unknown one is sent back once, then
+    dropped."""
+    known = [p.get("id") for p in image_spec.get("parts") or [] if isinstance(p, dict)]
+    unknown = sorted({i for s in stages for i in part_ids(s)} - set(known))
+    if unknown:
+        log.warning("planner listed unknown part id(s) %s; asking again", ", ".join(unknown))
+        messages = messages + [
+            {"role": "assistant", "content": json.dumps({"stages": stages}, ensure_ascii=False)},
+            {"role": "user", "content":
+                f'Unknown part id(s) {", ".join(unknown)} in "parts"; the parts are '
+                f'{", ".join(known)}. Answer with the whole corrected JSON plan.'}]
+        stages = llm.chat(messages=messages, module="planner")["stages"]
+    for s in stages:
+        if "parts" in s:
+            s["parts"] = [i for i in part_ids(s) if i in known]
+    return stages
