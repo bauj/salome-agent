@@ -10,6 +10,22 @@ from salome_agent.logs import log
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
+def redact_images(messages: list[dict]) -> list[dict]:
+    """`messages` with each image_url data URI swapped for a short placeholder,
+    for the token estimate and the trace (a base64 image is ~100k chars)."""
+    out = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            content = [{"type": "image_url", "image_url": {
+                           "url": f"<image, {len(p['image_url'].get('url', ''))} chars>"}}
+                       if p.get("type") == "image_url" else p
+                       for p in content]
+            m = {**m, "content": content}
+        out.append(m)
+    return out
+
+
 def with_images(text: str, image_data_uris: list[str] | None):
     """Build a chat message `content` value: plain text, or an OpenAI-compatible
     multimodal parts list (text + one image_url part per reference image)."""
@@ -440,11 +456,12 @@ class LLMClient:
                    "stream_options": {"include_usage": True}}
         log.debug("LLM request: model=%s, %d message(s), tools=%s, timeout=%ss",
                   self.model, len(payload["messages"]), tool_names or "-", self.request_timeout)
-        approx_in = self._approx_tokens(payload)
+        messages = redact_images(payload["messages"])
+        approx_in = self._approx_tokens({**payload, "messages": messages})
         self.usage["approx_prompt_tokens"] += approx_in
         trace_request = {"model": self.model, "temperature": self.temperature,
                          "tools": tool_names or [], "approx_input_tokens": approx_in,
-                         "messages": payload["messages"]}
+                         "messages": messages}
         if extra_body is None:
             extra_body = self.extra_body
         if extra_body:
