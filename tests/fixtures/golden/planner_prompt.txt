@@ -57,8 +57,7 @@ shape your stage breakdown. Several views described together are ONE object, not
 separate parts. Prefer explicit numeric dimensions given in the text request, then
 dimensions the description says were read from the image; only fall back to values
 marked as estimated (~) when nothing else gives one. Mention uncertainties in a
-stage's params rather than inventing detail. If reference image(s) are attached
-directly instead, read them the same way.
+stage's params rather than inventing detail.
 
 geom tools available to a single geom stage:
   make_box -- Axis-aligned solid box with one corner at the origin, extending +X/+Y/+Z by dx/dy/dz.

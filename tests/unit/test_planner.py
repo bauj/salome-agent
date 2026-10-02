@@ -64,19 +64,6 @@ def test_plan_detail_hint_appended_to_system_prompt():
     assert system.startswith("You turn a natural-language SALOME request")
 
 
-def test_plan_forwards_reference_images_as_multimodal_content():
-    llm = MagicMock()
-    llm.chat.return_value = {"stages": []}
-    plan("make a box like this", llm, images=["data:image/png;base64,AAAA",
-                                              "data:image/bmp;base64,BBBB"])
-    user_content = llm.chat.call_args.kwargs["messages"][1]["content"]
-    assert user_content == [
-        {"type": "text", "text": "make a box like this"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-        {"type": "image_url", "image_url": {"url": "data:image/bmp;base64,BBBB"}},
-    ]
-
-
 def test_plan_without_image_sends_plain_text_content():
     llm = MagicMock()
     llm.chat.return_value = {"stages": []}

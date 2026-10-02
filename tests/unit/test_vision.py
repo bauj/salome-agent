@@ -48,3 +48,15 @@ def test_format_description_leads_with_a_2d_target_and_its_plane():
 def test_format_description_states_a_3d_target():
     text = format_description({"dimensionality": "3D", "summary": "a bracket", "plane": None})
     assert text.splitlines()[0] == "Target: 3D"
+
+
+def test_format_description_tolerates_entries_of_the_wrong_type():
+    text = format_description({"views": ["front", "top"], "parts": "a plate",
+                               "uncertainties": "hole depth"})
+    assert "View: front" in text and "View: top" in text
+    assert "  - a plate" in text
+    assert "Uncertainties: hole depth" in text
+
+
+def test_format_description_never_returns_an_empty_string():
+    assert format_description({"summary": "", "parts": []}) == '{"summary": "", "parts": []}'

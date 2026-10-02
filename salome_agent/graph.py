@@ -226,7 +226,9 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
         return Command(update={"fatal": msg}, goto="assemble")
     text = format_description(desc)
     log.info("image description:\n%s", text)
-    update = {"image_description": text}
+    # only this node reads the images; the checkpointer would otherwise carry
+    # the base64 through every later step
+    update = {"image_description": text, "reference_images": None}
     if snap0 is not None:
         vt = _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0)
         log.info("  vision timing: wall=%.1fs llm=%.1fs", vt["wall"], vt["llm_s"])
@@ -251,14 +253,8 @@ def _plan_node(state: dict, config: "RunnableConfig"):
         request += _earlier_requests(state)
     try:
         description = state.get("image_description")
-        # The vision agent's description replaces the raw images for the planner;
-        # they are only passed through if no description was produced.
-        image_kwargs = {}
-        if description:
-            image_kwargs["image_description"] = description
-        elif state.get("reference_images"):
-            image_kwargs["images"] = state["reference_images"]
-        stage_plans = plan(request, llm, detail, **image_kwargs)
+        extra = {"image_description": description} if description else {}
+        stage_plans = plan(request, llm, detail, **extra)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
