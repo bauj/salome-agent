@@ -208,6 +208,56 @@ class TestMakeProfileFace:
         assert r["closed_with_line"] == ["outline", "hole 1"]
         assert _fns(r).count("MakeWire") == 2
 
+    _SQUARE = {"start": "-100,-150,0", "segments": [
+        {"to": "100,-150,0"}, {"to": "100,50,0"}, {"to": "-100,50,0"}]}
+
+    def _arc_points(self, g):
+        return [tuple(round(v, 6) for v in c.args[1][1:]) for c in g.MakeArc.call_args_list]
+
+    def test_arc_slot_is_traced_for_the_model(self):
+        g, _, r = self._run({**self._SQUARE, "holes": [{"slot": {
+            "center": "0,-80,0", "radius": 35, "width": 18, "from_angle": -60, "to_angle": 60}}]})
+        assert r["ok"] is True, r.get("error")
+        assert [f for f in _fns(r) if f not in ("MakeVertex", "MakeLineTwoPnt")] == [
+            "MakeWire", "MakeArc", "MakeArc", "MakeArc", "MakeArc", "MakeWire", "MakeFaceWires"]
+        c, s = 0.5, 3 ** 0.5 / 2
+        assert set(self._arc_points(g)) == {
+            (44.0, -80.0, 0.0), (26.0, -80.0, 0.0),
+            (round(35 * c - 9 * s, 6), round(-80 + 35 * s + 9 * c, 6), 0.0),
+            (round(35 * c - 9 * s, 6), round(-80 - 35 * s - 9 * c, 6), 0.0)}
+
+    def test_arc_slot_runs_counter_clockwise_from_from_angle(self):
+        g, _, r = self._run({**self._SQUARE, "holes": [{"slot": {
+            "center": "0,-80,0", "radius": 35, "width": 18, "from_angle": 120, "to_angle": 240}}]})
+        assert r["ok"] is True, r.get("error")
+        assert (-44.0, -80.0, 0.0) in self._arc_points(g)
+
+    def test_arc_slot_across_zero_degrees(self):
+        g, _, r = self._run({**self._SQUARE, "holes": [{"slot": {
+            "center": "0,0,0", "radius": 20, "width": 4, "from_angle": 300, "to_angle": 60}}]})
+        assert r["ok"] is True, r.get("error")
+        assert (22.0, 0.0, 0.0) in self._arc_points(g)
+
+    def test_straight_slot(self):
+        g, _, r = self._run({**self._SQUARE, "holes": [{"slot": {
+            "from": "0,0,0", "to": "20,0,0", "width": 10}}]})
+        assert r["ok"] is True, r.get("error")
+        assert set(self._arc_points(g)) == {(25.0, 0.0, 0.0), (-5.0, 0.0, 0.0)}
+        assert _fns(r).count("MakeLineTwoPnt") == 4 + 2
+
+    @pytest.mark.parametrize("slot, words", [
+        ({"center": "0,0,0", "radius": 10, "width": 20, "from_angle": 0, "to_angle": 90}, "width"),
+        ({"center": "0,0,0", "radius": 10, "width": 4, "from_angle": 30, "to_angle": 390}, "same angle"),
+        ({"center": "0,0,0", "radius": 10, "width": 8, "from_angle": 0, "to_angle": 330}, "overlap"),
+        ({"center": "0,0,0", "radius": 10, "width": -1, "from_angle": 0, "to_angle": 90}, "width"),
+        ({"from": "0,0,0", "to": "0,0,0", "width": 4}, "same point"),
+        ({"center": "0,0,0", "width": 4}, "from_angle"),
+    ])
+    def test_bad_slot_says_why(self, slot, words):
+        _, _, r = self._run({**self._SQUARE, "holes": [{"slot": slot}]})
+        assert r["ok"] is False
+        assert "hole 1" in r["error"] and words in r["error"]
+
     def test_two_arc_forms_is_an_error(self):
         _, _, r = self._run({"start": "10,0,0", "segments": [
             {"to": "0,10,0", "center": "0,0,0", "through": "7,7,0"}]})
