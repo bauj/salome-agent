@@ -1,6 +1,6 @@
 import math
 
-from executor.geom.helpers import tool, _check_sub_ids, _next_name, _publish, _resolve_axis
+from executor.geom.helpers import _check_shape, tool, _check_sub_ids, _next_name, _publish, _resolve_axis
 
 
 @tool("make_prism", category="swept",
@@ -11,7 +11,7 @@ def tool_make_prism(executor, args: dict):
     geompy = executor.namespace["geompy"]
     base = executor.geom_bindings[args["base"]]
     prism = geompy.MakePrismDXDYDZ(base, args["dx"], args["dy"], args["dz"])
-    is_valid, msg = geompy.CheckShape(prism, True, 1)
+    is_valid, msg = _check_shape(geompy, prism)
     if not is_valid:
         return {"ok": False, "error": f"make_prism: CheckShape failed ({msg})"}
     name = _next_name(executor, "prism")
@@ -42,7 +42,7 @@ def tool_make_revolution(executor, args: dict):
     axis = _resolve_axis(executor, args["axis"], records)
     angle_rad = math.radians(args["angle_deg"])
     rev = geompy.MakeRevolution(base, executor.geom_bindings[axis], angle_rad)
-    is_valid, msg = geompy.CheckShape(rev, True, 1)
+    is_valid, msg = _check_shape(geompy, rev)
     if not is_valid:
         return {"ok": False, "error": f"make_revolution: CheckShape failed ({msg})"}
     name = _next_name(executor, "rev")
@@ -71,7 +71,7 @@ def tool_make_pipe(executor, args: dict):
     base = executor.geom_bindings[args["base"]]
     path = executor.geom_bindings[args["path"]]
     pipe = geompy.MakePipe(base, path)
-    is_valid, msg = geompy.CheckShape(pipe, True, 1)
+    is_valid, msg = _check_shape(geompy, pipe)
     if not is_valid:
         return {"ok": False, "error": f"make_pipe: CheckShape failed ({msg})"}
     name = _next_name(executor, "pipe")
@@ -149,7 +149,7 @@ def tool_make_thick_solid(executor, args: dict):
         thick = geompy.MakeThickSolid(shape, args["thickness"], faces, inside)
     except Exception as e:  # noqa: BLE001 — OCC names the algorithm, not the fix
         return {"ok": False, "error": f"{e}{_curved_open_face_note(geompy, shape, faces)}"}
-    is_valid, msg = geompy.CheckShape(thick, True, 1)
+    is_valid, msg = _check_shape(geompy, thick)
     if not is_valid:
         return {"ok": False, "error": f"make_thick_solid: CheckShape failed ({msg})"}
     if _unchanged(geompy, shape, thick):
@@ -183,7 +183,7 @@ def tool_make_filling(executor, args: dict):
     geompy = executor.namespace["geompy"]
     contours = [executor.geom_bindings[c] for c in args["contours"]]
     fill = geompy.MakeFilling(contours)
-    is_valid, msg = geompy.CheckShape(fill, True, 1)
+    is_valid, msg = _check_shape(geompy, fill)
     if not is_valid:
         return {"ok": False, "error": f"make_filling: CheckShape failed ({msg})"}
     name = _next_name(executor, "fill")
