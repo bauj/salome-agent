@@ -361,6 +361,7 @@ class LLMClient:
             return
         path = os.path.join(os.path.dirname(self.trace_path) or ".", "llm_live.txt")
         try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             self._live = open(path, "a", encoding="utf-8")
         except OSError as e:
             log.warning("could not open %s: %s", path, e)

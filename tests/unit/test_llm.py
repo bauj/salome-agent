@@ -1192,6 +1192,17 @@ def test_live_file_gets_reasoning_and_content_as_they_stream(tmp_path, monkeypat
     assert "finish=stop" in live
 
 
+def test_live_file_creates_the_run_dir_for_the_first_call(tmp_path, monkeypatch):
+    lines = [_THINK, 'data: {"choices": [{"delta": {"content": "{}"}, "finish_reason": "stop"}]}',
+             "data: [DONE]"]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    run_dir = tmp_path / "run"
+    client = LLMClient("http://x/v1", "", "auto", trace_path=str(run_dir / "llm_trace.jsonl"))
+    client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
+    live = (run_dir / "llm_live.txt").read_text()
+    assert "planner" in live and "hmm" in live
+
+
 def test_live_file_marks_a_cut_call(tmp_path, monkeypatch):
     ticks = iter(range(0, 100_000, 10))
     monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(ticks))
