@@ -396,13 +396,13 @@ class TestLocalEdgeOps:
         assert isinstance(rec["args"][3]["value"], list)
 
     def test_fillet_edges_bad_string_ids_get_a_clean_error(self, agent_client):
-        """A bare string `edges` is normalised to ints; if they are not real
-        edge ids geompy still rejects them, but with our wrapped message rather
-        than a raw CORBA.BAD_PARAM."""
+        """A bare string `edges` is normalised to ints; ids that are not edges
+        of the shape are refused before GEOM, naming the real ones (GH #35)."""
         agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})
         result = agent_client.call_tool("fillet_edges", {"shape": "box_1", "edges": "97,98", "radius": 1.0})
         assert result["ok"] is False
-        assert result["error"].startswith("fillet_edges: MakeFillet failed")
+        assert result["error"].startswith("fillet_edges: [97, 98] are not edge ids of box_1")
+        assert "its edge ids are [5, 8, 10," in result["error"]
 
 
 class TestDisplayTools:
