@@ -463,13 +463,19 @@ _OUTLINE = {"type": "object", "properties": {
 
 
 @tool("make_profile_face", category="sketch",
-      description=('Planar face from an outline traced from `start` through `segments`, each '
+      description=('Give the profile as drawn and let this tool do the geometry: it finds fillet '
+                   'tangent points, traces slots, accepts either direction round and checks that '
+                   'the outline closes and arc ends sit on their radius, naming the corrected value '
+                   'if one is off. Do not work these out yourself before calling. '
+                   'Planar face from an outline traced from `start` through `segments`, each '
                    'starting where the previous one ends and ending at its `to`: a straight line, '
                    'or a circular arc with `center` (shorter way round, `reverse` for the longer; '
                    'for a half circle give `through` instead) or `through` (a point on the arc), '
                    'or a smooth curve through `via` points. `fillet` rounds the corner at a segment\'s '
                    '`to` with a tangent arc of that radius: give corners as drawn and the tool '
                    'finds the tangent points (end the last segment at `start` to round that one). '
+                   'It works the same at outward and inward corners: at an inward (concave) '
+                   'corner it adds material, rounding the notch. '
                    'If the last `to` is not back at `start` '
                    'a straight line closes it. `holes`: outlines of the same form, '
                    '{"center", "radius"} circles, {"slot": ...} slots with round ends, or '
