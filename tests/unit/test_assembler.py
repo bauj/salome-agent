@@ -227,3 +227,14 @@ def test_script_block_for_geom_stage_without_calls_is_todays_output():
     state = {"run_id": "r1", "user_request": "x",
              "stages": {0: {"module": "geom", "status": "ok", "script": "a = 1"}}}
     assert "# stage 1/1: geom\na = 1" in assemble(state)
+
+
+def test_multiline_request_stays_a_comment():
+    state = {
+        "stages": {0: {"module": "geom", "status": "ok",
+                       "script": "box_1 = geompy.MakeBoxDXDYDZ(10,10,10)"}},
+        "run_id": "x", "user_request": "a plate:\n- x=±54\n\n- holes", "plan": [],
+    }
+    result = assemble(state)
+    ast.parse(result)
+    assert "# request: a plate:\n# - x=±54\n#\n# - holes\n" in result
