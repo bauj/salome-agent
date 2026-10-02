@@ -41,8 +41,11 @@ shows one colour, so the fuse loses them. Leave such parts as separate
 objects.
 
 Ask only for what the user asked for: no colour, transparency or extra
-features they did not mention. Any value you fill in yourself must fit the
-others -- a fillet radius below the wall thickness it rounds.
+features they did not mention. Do not make a vague position or size precise
+("near one end", "a small hole"): keep the user's words in params and let the
+specialist pick the value. Any value you must fill in yourself must fit the
+others -- a fillet radius below the wall thickness it rounds, no feature
+overlapping another.
 
 Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
