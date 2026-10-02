@@ -372,6 +372,82 @@ class _Tracer:
         return name
 
 
+_SLOT_FORMS = ("a slot needs `from`, `to`, `width` (straight) or `center`, `radius`, `width`, "
+               "`from_angle`, `to_angle` (along an arc)")
+
+
+def _slot_outline(executor, slot, normal) -> dict:
+    """The {start, segments} outline of a straight or arc slot with round ends."""
+    def num(key):
+        v = slot.get(key)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise _ProfileError(f"`{key}` must be a number; {_SLOT_FORMS}")
+        return float(v)
+
+    def pt(*terms):
+        return ",".join(repr(round(sum(k * v[i] for k, v in terms), 9) + 0.0) for i in range(3))
+
+    def cross(a, b):
+        return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+    if not isinstance(slot, dict):
+        raise _ProfileError(_SLOT_FORMS)
+    straight = "from" in slot or "to" in slot
+    if straight and not all(k in slot for k in ("from", "to", "width")) or \
+            not straight and not all(k in slot for k in ("center", "radius", "width",
+                                                          "from_angle", "to_angle")):
+        raise _ProfileError(_SLOT_FORMS)
+    h = num("width") / 2
+    if h <= 0:
+        raise _ProfileError("a slot's `width` must be positive")
+    if straight:
+        a, b = _coords(executor, slot["from"]), _coords(executor, slot["to"])
+        length = math.dist(a, b)
+        if length <= _SAME:
+            raise _ProfileError("the slot's `from` and `to` are the same point")
+        u = tuple((b[i] - a[i]) / length for i in range(3))
+        n = cross(normal, u)
+        return {"start": pt((1, a), (h, n)), "segments": [
+            {"to": pt((1, b), (h, n))},
+            {"to": pt((1, b), (-h, n)), "through": pt((1, b), (h, u))},
+            {"to": pt((1, a), (-h, n))},
+            {"to": pt((1, a), (h, n)), "through": pt((1, a), (-h, u))}]}
+    c, r = _coords(executor, slot["center"]), num("radius")
+    if h >= r:
+        raise _ProfileError(f"the slot's `width` {2 * h:g} must be less than twice its "
+                            f"`radius` {r:g}")
+    a0 = num("from_angle")
+    sweep = (num("to_angle") - a0) % 360
+    if sweep < 1e-9 or 360 - sweep < 1e-9:
+        raise _ProfileError("`from_angle` and `to_angle` are the same angle; a slot sweeps "
+                            "counter-clockwise from one to the other")
+    if sweep > 180 and 2 * r * math.sin(math.radians(360 - sweep) / 2) <= 2 * h:
+        raise _ProfileError(f"the slot's round ends overlap: a {sweep:g} deg sweep leaves "
+                            f"too small a gap for width {2 * h:g} at radius {r:g}")
+    e1 = cross(cross(normal, (1.0, 0.0, 0.0)), normal)
+    if math.hypot(*e1) < 1e-6:
+        e1 = cross(cross(normal, (0.0, 1.0, 0.0)), normal)
+    e1 = tuple(v / math.hypot(*e1) for v in e1)
+    e2 = cross(normal, e1)
+
+    def radial(deg):
+        t = math.radians(deg)
+        return tuple(math.cos(t) * e1[i] + math.sin(t) * e2[i] for i in range(3))
+
+    def tangent(deg):
+        t = math.radians(deg)
+        return tuple(-math.sin(t) * e1[i] + math.cos(t) * e2[i] for i in range(3))
+
+    a1, mid = a0 + sweep, a0 + sweep / 2
+    return {"start": pt((1, c), (r + h, radial(a0))), "segments": [
+        {"to": pt((1, c), (r + h, radial(a1))), "through": pt((1, c), (r + h, radial(mid)))},
+        {"to": pt((1, c), (r - h, radial(a1))),
+         "through": pt((1, c), (r, radial(a1)), (h, tangent(a1)))},
+        {"to": pt((1, c), (r - h, radial(a0))), "through": pt((1, c), (r - h, radial(mid)))},
+        {"to": pt((1, c), (r + h, radial(a0))),
+         "through": pt((1, c), (r, radial(a0)), (-h, tangent(a0)))}]}
+
+
 _POINT = {"type": "string", "description": "point name or \"x,y,z\""}
 _OUTLINE = {"type": "object", "properties": {
     "start": _POINT,
@@ -396,7 +472,11 @@ _OUTLINE = {"type": "object", "properties": {
                    'finds the tangent points (end the last segment at `start` to round that one). '
                    'If the last `to` is not back at `start` '
                    'a straight line closes it. `holes`: outlines of the same form, '
-                   '{"center", "radius"} circles, or {"wire": name} of a closed wire. The outline and '
+                   '{"center", "radius"} circles, {"slot": ...} slots with round ends, or '
+                   '{"wire": name} of a closed wire. A slot is straight ({from, to, width}: the '
+                   'centre line\'s ends) or along an arc ({center, radius, width, from_angle, '
+                   'to_angle}: radius of the centre line, swept counter-clockwise in degrees, 0 = '
+                   '+X in the XY plane); give it as drawn, the tool traces it. The outline and '
                    'each hole may run either way round. Builds edges, wire and '
                    'face in one call: prefer it to make_line/make_arc/make_wire/make_face_from_wires '
                    'for a whole outline. Extrude it with make_prism or revolve it with '
@@ -409,8 +489,16 @@ _OUTLINE = {"type": "object", "properties": {
               "segments": _OUTLINE["properties"]["segments"],
               "center": {"type": "string", "description": "round hole centre"},
               "radius": {"type": "number", "description": "round hole radius"},
-              "wire": {"type": "string", "description": "name of an existing closed wire"}}},
-              "description": "an outline ({start, segments}), a circle ({center, radius}) or {wire}"}},
+              "wire": {"type": "string", "description": "name of an existing closed wire"},
+              "slot": {"type": "object", "properties": {
+                  "from": _POINT, "to": _POINT,
+                  "center": _POINT, "radius": {"type": "number"},
+                  "from_angle": {"type": "number"}, "to_angle": {"type": "number"},
+                  "width": {"type": "number"}},
+                  "description": "straight {from, to, width} or arc {center, radius, width, "
+                                 "from_angle, to_angle}"}}},
+              "description": "an outline ({start, segments}), a circle ({center, radius}), "
+                             "a {slot} or {wire}"}},
           "required": ["start", "segments"]},
       arg_types={})
 def tool_make_profile_face(executor, args: dict):
@@ -424,26 +512,40 @@ def tool_make_profile_face(executor, args: dict):
         if by_line:
             closed_by_line.append("outline")
         wires = [outer]
-        normal = None
+        normal, normal_n = None, None
+
+        def plane():
+            nonlocal normal
+            if normal is None:
+                normal = _plane_normal(tracer.used)
+                if normal is None:
+                    raise _ProfileError("the outline is a straight line, it has no plane "
+                                        "to put a hole in")
+                k = next(i for i in (2, 1, 0) if abs(normal[i]) > 1e-9)
+                if normal[k] < 0:
+                    normal = tuple(-v + 0.0 for v in normal)
+            return normal
         for i, hole in enumerate(args.get("holes") or [], 1):
             label = f"hole {i}"
             if isinstance(hole, str):
                 hole = {"wire": hole}
             if not isinstance(hole, dict):
-                raise _ProfileError(f"{label}: give {{start, segments}}, {{center, radius}} or {{wire}}")
+                raise _ProfileError(f"{label}: give {{start, segments}}, {{center, radius}}, {{slot}} or {{wire}}")
             if "segments" in hole:
                 name, by_line = tracer.outline(hole, label)
                 if by_line:
                     closed_by_line.append(label)
+            elif "slot" in hole:
+                try:
+                    outline = _slot_outline(executor, hole["slot"], plane())
+                except _ProfileError as e:
+                    raise _ProfileError(f"{label}: {e}") from e
+                name, _ = tracer.outline(outline, label)
             elif "radius" in hole:
                 if "center" not in hole or not hole["radius"] or float(hole["radius"]) <= 0:
                     raise _ProfileError(f"{label}: a round hole needs `center` and a positive `radius`")
-                if normal is None:
-                    normal = _plane_normal(tracer.used)
-                    if normal is None:
-                        raise _ProfileError("the outline is a straight line, it has no plane "
-                                            "to put a round hole in")
-                    normal_n = _resolve_axis(executor, list(normal), records)
+                if normal_n is None:
+                    normal_n = _resolve_axis(executor, list(plane()), records)
                 c_n, _ = tracer.point(hole["center"])
                 radius = float(hole["radius"])
                 name = _next_name(executor, "circ")
@@ -457,7 +559,7 @@ def tool_make_profile_face(executor, args: dict):
                     raise _ProfileError(f"{label}: wire {name} is open, loose ends at "
                                         f"{', '.join(_fmt_point(p) for p in loose)}")
             else:
-                raise _ProfileError(f"{label}: give {{start, segments}}, {{center, radius}} or {{wire}}")
+                raise _ProfileError(f"{label}: give {{start, segments}}, {{center, radius}}, {{slot}} or {{wire}}")
             wires.append(name)
     except _ProfileError as e:
         return {"ok": False, "error": f"make_profile_face: {e}"}
