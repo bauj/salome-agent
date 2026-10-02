@@ -2,7 +2,7 @@ import base64
 
 import pytest
 
-from salome_agent.cli import (load_reference_image, load_reference_images,
+from salome_agent.cli import (check_image_uris, load_reference_image, load_reference_images,
                               parse_args, parse_image_paths)
 
 
@@ -124,6 +124,49 @@ def test_load_reference_images_caps_the_total_size(tmp_path, monkeypatch):
     path.write_bytes(PNG)
     with pytest.raises(ValueError, match="MB of images"):
         load_reference_images([str(path), str(path)])
+
+
+def uri(data, mime="image/png"):
+    return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+
+
+def test_check_image_uris_passes_good_images():
+    assert check_image_uris([uri(PNG), uri(BMP, "image/bmp")]) == [uri(PNG), uri(BMP, "image/bmp")]
+
+
+def test_check_image_uris_relabels_by_content():
+    # a browser types a file by its extension: a JPEG saved as .png says image/png
+    jpeg = b"\xff\xd8\xff\xe0rest"
+    assert check_image_uris([uri(jpeg, "image/png")]) == [uri(jpeg, "image/jpeg")]
+
+
+@pytest.mark.parametrize("bad", [
+    "x", uri(b"<svg/>", "image/svg+xml"), uri(b"hello", "text/plain"),
+    'data:image/png;base64,AA"onerror=x', "data:image/png," + "abc", 1])
+def test_check_image_uris_rejects_what_is_not_an_image(bad):
+    with pytest.raises(ValueError):
+        check_image_uris([bad])
+
+
+def test_check_image_uris_rejects_a_non_list():
+    with pytest.raises(ValueError, match="list"):
+        check_image_uris(uri(PNG))
+
+
+def test_check_image_uris_caps_the_count():
+    from salome_agent.cli import MAX_IMAGES
+
+    with pytest.raises(ValueError, match=f"at most {MAX_IMAGES}"):
+        check_image_uris([uri(PNG)] * (MAX_IMAGES + 1))
+
+
+def test_check_image_uris_caps_the_total_size(monkeypatch):
+    from salome_agent import cli
+
+    monkeypatch.setattr(cli, "MAX_IMAGE_BYTES", 15)
+    check_image_uris([uri(PNG)])
+    with pytest.raises(ValueError, match="MB of images"):
+        check_image_uris([uri(PNG), uri(PNG)])
 
 
 def test_main_rejects_an_empty_images_flag(tmp_path, monkeypatch):

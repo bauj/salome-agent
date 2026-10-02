@@ -93,6 +93,38 @@ def load_reference_images(paths: list[str]) -> list[str]:
     return [load_reference_image(p) for p in paths]
 
 
+def check_image_uris(uris) -> list[str]:
+    """Reference images that arrive as data: URIs (a GUI's attachments), held
+    to the --images rules: base64, recognised by content, MAX_IMAGES /
+    MAX_IMAGE_BYTES. Returns them relabelled with the type their content
+    shows; ValueError otherwise."""
+    import base64
+    import binascii
+
+    if not isinstance(uris, list):
+        raise ValueError("expected a list of images")
+    if len(uris) > MAX_IMAGES:
+        raise ValueError(f"{len(uris)} images, at most {MAX_IMAGES}")
+    checked, total = [], 0
+    for uri in uris:
+        head, _, payload = uri.partition(",") if isinstance(uri, str) else ("", "", "")
+        if not (head.startswith("data:") and head.endswith(";base64")):
+            raise ValueError("an image is not a base64 data: URI")
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except binascii.Error:
+            raise ValueError("an image is not valid base64") from None
+        mime = _image_mime(data)
+        if mime is None:
+            raise ValueError("only PNG, JPEG, WEBP, GIF and BMP images can be attached")
+        total += len(data)
+        checked.append(f"data:{mime};base64,{payload}")
+    if total > MAX_IMAGE_BYTES:
+        raise ValueError(f"{total / (1024 * 1024):.1f} MB of images, "
+                         f"at most {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
+    return checked
+
+
 def build_llm(config: dict, request_timeout: float | None = None,
               trace_path: str | None = None, run_id: str | None = None):
     from salome_agent.llm import LLMClient
