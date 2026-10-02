@@ -664,17 +664,24 @@ def test_compact_result_keeps_a_delta_note():
     assert compact["delta"] == "cut: removed nothing"
 
 
-def test_image_description_is_injected_as_text_never_as_images():
+def test_reference_block_is_injected_as_text_never_as_images():
     llm = MagicMock()
     llm.chat.side_effect = [_resp(("finish_stage", {"result_names": []}))]
     client = MagicMock()
     client.list_tools.return_value = {"tools": []}
     run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
                         llm, client, iteration_cap=3,
-                        image_description="Summary: an L-bracket")
+                        reference_block="Reference image spec for this stage's part(s): P1")
     user = llm.chat.call_args.kwargs["messages"][1]["content"]
     assert isinstance(user, str)
-    assert "Summary: an L-bracket" in user
+    assert "Reference image spec for this stage's part(s): P1" in user
+
+
+def test_geom_prompt_explains_the_reference_image_spec():
+    from salome_agent.specialists.geom import _GEOM_BASE
+    assert "Reference image spec" in _GEOM_BASE
+    assert "make_profile_face unchanged" in _GEOM_BASE
+    assert "conflicts" in _GEOM_BASE
 
 
 def _audited_run(calls, finishes, verify_cadence="none", upstream=None):

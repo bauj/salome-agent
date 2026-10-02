@@ -62,6 +62,26 @@ def _timing_lines(state: dict) -> list[str]:
     return lines
 
 
+def _image_lines(state: dict) -> list[str]:
+    from salome_agent.nodes.vision_spec import all_conflicts, unclaimed_parts
+
+    spec = state.get("image_spec")
+    if not isinstance(spec, dict):
+        return []
+    lines = []
+    dim = spec.get("dimensionality")
+    if isinstance(dim, dict) and dim.get("value") == "2d" and dim.get("assumed"):
+        lines.append('Built as a flat face: the image gave no thickness -- say "extrude N mm" '
+                     "to make it solid.")
+    unclaimed = unclaimed_parts(state.get("plan") or [], spec)
+    if unclaimed:
+        lines.append(f"Parts in the image spec no stage built: {', '.join(unclaimed)}.")
+    conflicts = all_conflicts(spec)
+    if conflicts:
+        lines += ["Conflicts the vision check could not resolve:"] + [f"- {c}" for c in conflicts]
+    return ["## Reference image", "", *lines, ""] if lines else []
+
+
 def write_report(state: dict, usage: dict | None = None) -> str:
     lines = [f"# Report: {state['run_id']}", "",
              f"Request: {state['user_request']}", ""]
@@ -79,6 +99,7 @@ def write_report(state: dict, usage: dict | None = None) -> str:
     if usage and usage.get("calls"):
         lines += _usage_lines(usage)
     lines += _timing_lines(state)
+    lines += _image_lines(state)
     outcome = state.get("turn_outcome") or {}
     if outcome.get("summary") or outcome.get("question"):
         lines += ["## Amend", "", outcome.get("summary") or "",

@@ -59,14 +59,15 @@ Module scope:
   contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
   Only use paravis when the request involves a results/field/MED file.
 
-If the request comes with an "Image description" block, it was written by an
-image-analysis agent from the user's reference image(s) -- treat it as the visual
-target: use the parts it lists, their approximate proportions and placement to
-shape your stage breakdown. Several views described together are ONE object, not
-separate parts. Prefer explicit numeric dimensions given in the text request, then
-dimensions the description says were read from the image; only fall back to values
-marked as estimated (~) when nothing else gives one. Mention uncertainties in a
-stage's params rather than inventing detail.
+If the request comes with a "Reference image spec" block, an image-analysis
+agent read it from the user's reference image(s): one entry per part, each with
+an id (P1, P2, ...). Shape your stages around those parts and give every stage
+that builds one of them a "parts" list of their ids, e.g. "parts": ["P1"]; that
+stage is handed the part's exact data. Never restate a part's numbers in intent
+or params -- refer to it by id. Several views described together are ONE object,
+not separate parts. Explicit numeric dimensions in the text request still win:
+put those in params. Mention listed uncertainties or conflicts in a stage's
+params rather than inventing detail.
 
 geom tools available to a single geom stage:
   make_box -- Axis-aligned solid box with one corner at the origin, extending +X/+Y/+Z by dx/dy/dz.

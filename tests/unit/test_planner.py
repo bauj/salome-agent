@@ -80,12 +80,46 @@ def test_plan_unknown_detail_falls_back_to_no_hint():
     assert system == PLANNER_SYSTEM_PROMPT
 
 
-def test_plan_appends_image_description_to_the_request():
+def test_plan_appends_the_compact_spec_to_the_request():
+    from tests.unit.test_vision_spec import p1_spec
     llm = MagicMock()
-    llm.chat.return_value = {"stages": []}
-    plan("make this bracket", llm, image_description="Summary: an L-bracket")
-    user_content = llm.chat.call_args.kwargs["messages"][1]["content"]
-    assert user_content == "make this bracket\n\nImage description:\nSummary: an L-bracket"
+    llm.chat.return_value = {"stages": [{"module": "geom", "intent": "plate", "params": {},
+                                         "inputs": [], "parts": ["P1"]}]}
+    stages = plan("make this plate", llm, image_spec=p1_spec())
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert user.startswith("make this plate\n\nReference image spec")
+    assert "- P1 plate: profile in XY" in user
+    assert stages[0]["parts"] == ["P1"]
+
+
+def test_unknown_part_ids_are_sent_back_once_then_dropped():
+    from tests.unit.test_vision_spec import p1_spec
+    llm = MagicMock()
+    bad = {"stages": [{"module": "geom", "intent": "plate", "params": {}, "inputs": [],
+                       "parts": ["P1", "P7"]}]}
+    llm.chat.side_effect = [bad, bad]
+    stages = plan("make this plate", llm, image_spec=p1_spec())
+    assert llm.chat.call_count == 2
+    retry = llm.chat.call_args_list[1].kwargs["messages"]
+    assert retry[-1]["role"] == "user"
+    assert 'Unknown part id(s) P7 in "parts"; the parts are P1.' in retry[-1]["content"]
+    assert stages[0]["parts"] == ["P1"]
+
+
+def test_a_bare_string_parts_value_is_read_as_a_list():
+    from tests.unit.test_vision_spec import p1_spec
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": [{"module": "geom", "intent": "plate", "params": {},
+                                         "inputs": [], "parts": "P1"}]}
+    stages = plan("make this plate", llm, image_spec=p1_spec())
+    assert llm.chat.call_count == 1
+    assert stages[0]["parts"] == ["P1"]
+
+
+def test_prompt_tells_the_planner_to_list_part_ids_not_numbers():
+    assert '"parts"' in PLANNER_SYSTEM_PROMPT
+    assert "Reference image spec" in PLANNER_SYSTEM_PROMPT
+    assert "never restate" in PLANNER_SYSTEM_PROMPT.lower()
 
 
 def test_every_routable_module_contributes_its_catalogue():
