@@ -242,3 +242,13 @@ Live (success criteria):
 - `salome_agent/config.py`, `README.md` — `llm.vision_fix_retries`.
 - `salome_agent/nodes/report.py` — assumed-2D note, unclaimed-part note.
 - tests + golden fixtures.
+
+## Decisions made while planning
+
+- Unknown part ids from the planner: one re-ask inside `plan()` with the list of
+  valid ids, then still-unknown ids are dropped with a warning (the LLM client's
+  JSON-retry loop only covers unparseable JSON).
+- The "assumed 2D" note goes in `report.md` (section "Reference image") and the
+  log, not in the chat turn summary.
+- If no stage of a plan lists any `parts`, every geom stage gets the whole spec,
+  so a planner that ignores `parts` is no worse off than before.
