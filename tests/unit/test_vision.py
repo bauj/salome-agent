@@ -62,3 +62,49 @@ def test_prompt_makes_every_linear_dimension_name_both_ends():
     p = VISION_SYSTEM_PROMPT
     assert '"from": what the first extension line sits on' in p
     assert "centre-to-centre" in p
+
+
+def _uri(data: bytes, mime="image/png") -> str:
+    import base64
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _png(w, h):
+    import struct
+    return b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", w, h) + b"\x08\x02\x00\x00\x00"
+
+
+def test_image_size_reads_png_jpeg_gif_bmp_webp_headers():
+    import struct
+    from salome_agent.nodes.vision import image_size
+
+    assert image_size(_uri(_png(510, 550))) == (510, 550)
+    jpeg = (b"\xff\xd8" + b"\xff\xe0" + struct.pack(">H", 4) + b"JF"
+            + b"\xff\xc0" + struct.pack(">HBHH", 11, 8, 300, 640) + b"\x03\x01\x22\x00")
+    assert image_size(_uri(jpeg, "image/jpeg")) == (640, 300)
+    assert image_size(_uri(b"GIF89a" + struct.pack("<HH", 12, 34), "image/gif")) == (12, 34)
+    bmp = b"BM" + b"\x00" * 16 + struct.pack("<ii", 77, -88)
+    assert image_size(_uri(bmp, "image/bmp")) == (77, 88)
+    vp8x = b"RIFF\x00\x00\x00\x00WEBPVP8X" + b"\x00" * 8 + (99).to_bytes(3, "little") + (49).to_bytes(3, "little")
+    assert image_size(_uri(vp8x, "image/webp")) == (100, 50)
+    vp8l = b"RIFF\x00\x00\x00\x00WEBPVP8L" + b"\x00" * 4 + b"\x2f" + struct.pack("<I", (20 - 1) | ((30 - 1) << 14))
+    assert image_size(_uri(vp8l, "image/webp")) == (20, 30)
+    vp8 = (b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 4 + b"\x00\x00\x00\x9d\x01\x2a"
+           + struct.pack("<HH", 64, 48))
+    assert image_size(_uri(vp8, "image/webp")) == (64, 48)
+
+
+def test_image_size_is_none_when_it_cannot_tell():
+    from salome_agent.nodes.vision import image_size
+
+    assert image_size("data:image/png;base64,AAAA") is None
+    assert image_size("not a uri") is None
+
+
+def test_describe_images_tells_the_model_each_image_pixel_size():
+    llm = MagicMock()
+    llm.chat.return_value = box_spec()
+    describe_images("make this", [_uri(_png(510, 550)), "data:image/png;base64,AAAA"], llm)
+    text = llm.chat.call_args.kwargs["messages"][1]["content"][0]["text"]
+    assert "image 1: 510 x 550 px" in text
+    assert "image 2" not in text

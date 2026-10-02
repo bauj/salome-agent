@@ -1,4 +1,7 @@
+import base64
+import binascii
 import json
+import struct
 
 from salome_agent.llm import with_images
 from salome_agent.logs import log
@@ -118,12 +121,74 @@ Rules:
 - Keep it factual and compact: no CAD tool names, no step-by-step build order."""
 
 
+def _jpeg_size(data: bytes) -> tuple[int, int] | None:
+    i = 2
+    while i + 9 <= len(data):
+        if data[i] != 0xFF:
+            return None
+        marker = data[i + 1]
+        if marker == 0xFF:
+            i += 1
+            continue
+        if marker in (0x01, *range(0xD0, 0xDA)):
+            i += 2
+            continue
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            h, w = struct.unpack(">HH", data[i + 5:i + 9])
+            return w, h
+        i += 2 + struct.unpack(">H", data[i + 2:i + 4])[0]
+    return None
+
+
+def _image_size(data: bytes) -> tuple[int, int] | None:
+    if data.startswith(b"\x89PNG") and data[12:16] == b"IHDR":
+        return struct.unpack(">II", data[16:24])
+    if data.startswith(b"\xff\xd8"):
+        return _jpeg_size(data)
+    if data[:4] in (b"GIF8",):
+        return struct.unpack("<HH", data[6:10])
+    if data.startswith(b"BM"):
+        w, h = struct.unpack("<ii", data[18:26])
+        return w, abs(h)
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        chunk = data[12:16]
+        if chunk == b"VP8X":
+            return (1 + int.from_bytes(data[24:27], "little"),
+                    1 + int.from_bytes(data[27:30], "little"))
+        if chunk == b"VP8L":
+            bits = int.from_bytes(data[21:25], "little")
+            return 1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF)
+        if chunk == b"VP8 ":
+            w, h = struct.unpack("<HH", data[26:30])
+            return w & 0x3FFF, h & 0x3FFF
+    return None
+
+
+def image_size(uri: str) -> tuple[int, int] | None:
+    """(width, height) in pixels of a base64 data: URI image, read from its
+    header; None when it cannot tell."""
+    head, _, payload = uri.partition(",")
+    if not head.startswith("data:"):
+        return None
+    try:
+        size = _image_size(base64.b64decode(payload))
+    except (binascii.Error, struct.error, ValueError):
+        return None
+    return size if size and all(size) else None
+
+
 def describe_images(request: str, images: list[str], llm, fix_retries: int = 2) -> dict:
     """Run the vision agent: one multimodal call that turns the reference image(s)
     into a structured spec, re-asked with the validator's errors up to
     fix_retries times; errors still left are attached as conflicts."""
     text = ("User request (context only -- describe the image(s), do not plan):\n"
             + request)
+    # A model that measures in pixels otherwise guesses the image size, and a
+    # wrong guess skews every scale it derives.
+    sizes = [f"image {i}: {s[0]} x {s[1]} px"
+             for i, s in enumerate(map(image_size, images), 1) if s]
+    if sizes:
+        text += "\n\nImage size (width x height): " + "; ".join(sizes) + "."
     messages = [{"role": "system", "content": VISION_SYSTEM_PROMPT},
                 {"role": "user", "content": with_images(text, images)}]
     spec = llm.chat(messages=messages, module="vision")
