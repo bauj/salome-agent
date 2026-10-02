@@ -644,14 +644,18 @@ class LLMClient:
     def _build_endpoint(self, module: str | None, override: dict) -> _Endpoint:
         def pick(key, shared):
             return override[key] if key in override else shared
-        extra_body = self.module_extra_body.get(module, self.extra_body)
+        # Another host is another provider: never hand it the shared key, CA,
+        # headers or body unless the override repeats them.
+        own_host = "base_url" in override and override["base_url"].rstrip("/") != self.base_url
+        extra_body = self.module_extra_body.get(module, {} if own_host else self.extra_body)
         verify = (_cert_verify(override["ssl_cert_file"]) if "ssl_cert_file" in override
-                  else self.ssl_cert_file)
-        return _Endpoint(pick("base_url", self.base_url), pick("api_key", self.api_key),
+                  else True if own_host else self.ssl_cert_file)
+        return _Endpoint(pick("base_url", self.base_url),
+                         pick("api_key", "" if own_host else self.api_key),
                          pick("model", self.model), verify,
                          pick("temperature", self.temperature),
                          pick("timeout", self.request_timeout),
-                         pick("extra_headers", self.extra_headers),
+                         pick("extra_headers", {} if own_host else self.extra_headers),
                          pick("extra_body", extra_body))
 
     def endpoint(self, module: str | None = None) -> _Endpoint:
