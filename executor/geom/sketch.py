@@ -1,6 +1,6 @@
 import math
 
-from executor.geom.helpers import tool, _next_name, _publish, _resolve_point, _resolve_axis
+from executor.geom.helpers import _check_shape, tool, _next_name, _publish, _resolve_point, _resolve_axis
 
 
 @tool("make_face", category="sketch",
@@ -11,7 +11,7 @@ def tool_make_face(executor, args: dict):
     geompy = executor.namespace["geompy"]
     orientation = args.get("orientation", 1)
     face = geompy.MakeFaceHW(args["height"], args["width"], orientation)
-    is_valid, msg = geompy.CheckShape(face, True, 1)
+    is_valid, msg = _check_shape(geompy, face)
     if not is_valid:
         return {"ok": False, "error": f"make_face: CheckShape failed ({msg})"}
     name = _next_name(executor, "face")
@@ -38,7 +38,7 @@ def tool_make_disk(executor, args: dict):
     geompy = executor.namespace["geompy"]
     orientation = args.get("orientation", 1)
     disk = geompy.MakeDiskR(args["radius"], orientation)
-    is_valid, msg = geompy.CheckShape(disk, True, 1)
+    is_valid, msg = _check_shape(geompy, disk)
     if not is_valid:
         return {"ok": False, "error": f"make_disk: CheckShape failed ({msg})"}
     name = _next_name(executor, "disk")
@@ -136,7 +136,7 @@ def tool_make_plane(executor, args: dict):
     vn = _resolve_axis(executor, args["normal"], records)
     trim_size = args.get("trim_size", 2000)
     plane = geompy.MakePlane(executor.geom_bindings[pn], executor.geom_bindings[vn], trim_size)
-    is_valid, msg = geompy.CheckShape(plane, True, 1)
+    is_valid, msg = _check_shape(geompy, plane)
     if not is_valid:
         return {"ok": False, "error": f"make_plane: CheckShape failed ({msg})"}
     name = _next_name(executor, "plane")
@@ -231,7 +231,7 @@ def tool_make_polygon_face(executor, args: dict):
     except Exception as e:
         return {"ok": False, "error": (f"make_polygon_face: no planar face ({e}) — all points "
                                        "must lie in the same plane")}
-    is_valid, msg = geompy.CheckShape(face, True, 1)
+    is_valid, msg = _check_shape(geompy, face)
     if not is_valid:
         return {"ok": False, "error": f"make_polygon_face: CheckShape failed ({msg})"}
     name = _next_name(executor, "face")
@@ -372,7 +372,7 @@ def _planar_face(geompy, wires, tool: str):
     kind = str(geompy.KindOfShape(face)[0]).rsplit(".", 1)[-1]
     if kind not in _PLANAR_KINDS:
         return None, f"{tool}: the wires do not lie in one plane (GEOM built a {kind} face)"
-    is_valid, msg = geompy.CheckShape(face, True, 1)
+    is_valid, msg = _check_shape(geompy, face)
     if not is_valid:
         return None, f"{tool}: CheckShape failed ({msg})"
     return face, None

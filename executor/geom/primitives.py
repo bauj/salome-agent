@@ -1,4 +1,4 @@
-from executor.geom.helpers import tool, _next_name, _publish, _resolve_point
+from executor.geom.helpers import _check_shape, tool, _next_name, _publish, _resolve_point
 
 
 @tool("make_box", category="primitive",
@@ -34,7 +34,7 @@ def tool_make_box_two_pnt(executor, args: dict):
     n1 = _resolve_point(executor, args["pnt1"], records)
     n2 = _resolve_point(executor, args["pnt2"], records)
     box = geompy.MakeBoxTwoPnt(executor.geom_bindings[n1], executor.geom_bindings[n2])
-    is_valid, msg = geompy.CheckShape(box, True, 1)
+    is_valid, msg = _check_shape(geompy, box)
     if not is_valid:
         return {"ok": False, "error": f"make_box_two_pnt: CheckShape failed ({msg})"}
     name = _next_name(executor, "box")
@@ -55,7 +55,7 @@ def tool_make_box_two_pnt(executor, args: dict):
 def tool_make_cylinder(executor, args: dict):
     geompy = executor.namespace["geompy"]
     cyl = geompy.MakeCylinderRH(args["radius"], args["height"])
-    is_valid, msg = geompy.CheckShape(cyl, True, 1)
+    is_valid, msg = _check_shape(geompy, cyl)
     if not is_valid:
         return {"ok": False, "error": f"make_cylinder: CheckShape failed ({msg})"}
     name = _next_name(executor, "cyl")
@@ -90,7 +90,7 @@ def tool_make_sphere(executor, args: dict):
         sph = geompy.MakeSphereR(args["radius"])
         record_args = [{"kind": "literal", "value": args["radius"]}]
         fn = "MakeSphereR"
-    is_valid, msg = geompy.CheckShape(sph, True, 1)
+    is_valid, msg = _check_shape(geompy, sph)
     if not is_valid:
         return {"ok": False, "error": f"make_sphere: CheckShape failed ({msg})"}
     name = _next_name(executor, "sph")
@@ -111,7 +111,7 @@ def tool_make_sphere(executor, args: dict):
 def tool_make_cone(executor, args: dict):
     geompy = executor.namespace["geompy"]
     cone = geompy.MakeConeR1R2H(args["radius1"], args["radius2"], args["height"])
-    is_valid, msg = geompy.CheckShape(cone, True, 1)
+    is_valid, msg = _check_shape(geompy, cone)
     if not is_valid:
         return {"ok": False, "error": f"make_cone: CheckShape failed ({msg})"}
     name = _next_name(executor, "cone")
@@ -137,7 +137,7 @@ def tool_make_cone(executor, args: dict):
 def tool_make_torus(executor, args: dict):
     geompy = executor.namespace["geompy"]
     torus = geompy.MakeTorusRR(args["radius_major"], args["radius_minor"])
-    is_valid, msg = geompy.CheckShape(torus, True, 1)
+    is_valid, msg = _check_shape(geompy, torus)
     if not is_valid:
         return {"ok": False, "error": f"make_torus: CheckShape failed ({msg})"}
     name = _next_name(executor, "torus")

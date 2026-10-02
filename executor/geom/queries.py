@@ -1,4 +1,4 @@
-from executor.geom.helpers import tool
+from executor.geom.helpers import _check_shape, tool
 from executor.geom.results import _shape_info
 
 
@@ -9,7 +9,7 @@ from executor.geom.results import _shape_info
 def tool_check_shape(executor, args: dict):
     geompy = executor.namespace["geompy"]
     shape = executor.geom_bindings[args["shape"]]
-    is_valid, msg = geompy.CheckShape(shape, True, 1)
+    is_valid, msg = _check_shape(geompy, shape)
     return {"ok": bool(is_valid), "records": [], "sanity": {"ok": bool(is_valid), "message": msg}}
 
 
