@@ -160,7 +160,87 @@ def _box(points):
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _arc_points(c, r, a0, sweep, chord=0.5):
+    """Points along an arc from angle a0 (radians) through sweep."""
+    n = max(2, math.ceil(abs(sweep) * r / chord) + 1)
+    return [(c[0] + r * math.cos(a0 + sweep * k / (n - 1)),
+             c[1] + r * math.sin(a0 + sweep * k / (n - 1))) for k in range(n)]
+
+
+def _sample_outline(outline, plane):
+    """The outline as a closed polyline of in-plane points, arcs traced the way
+    make_profile_face traces them; None when it cannot be parsed."""
+    start = parse_point(outline.get("start"))
+    if start is None or not isinstance(outline.get("segments"), list):
+        return None
+    cur = _flat(start, plane)
+    pts = [cur]
+    for seg in outline["segments"]:
+        to = parse_point(seg.get("to")) if isinstance(seg, dict) else None
+        if to is None:
+            return None
+        to = _flat(to, plane)
+        if seg.get("center") is not None:
+            c = parse_point(seg["center"])
+            if c is None:
+                return None
+            c = _flat(c, plane)
+            a0 = math.atan2(cur[1] - c[1], cur[0] - c[0])
+            a1 = math.atan2(to[1] - c[1], to[0] - c[0])
+            sweep = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi
+            if seg.get("reverse"):
+                sweep -= math.copysign(2 * math.pi, sweep)
+            pts += _arc_points(c, math.dist(cur, c), a0, sweep, 1.0)[1:]
+        elif seg.get("through") is not None:
+            t = parse_point(seg["through"])
+            circle = _circumcircle(cur, _flat(t, plane), to) if t else None
+            if circle is None:
+                return None
+            c, r = circle
+            ang = [math.atan2(q[1] - c[1], q[0] - c[0]) for q in (cur, _flat(t, plane), to)]
+            ccw = (ang[2] - ang[0]) % (2 * math.pi)
+            sweep = ccw if (ang[1] - ang[0]) % (2 * math.pi) < ccw else ccw - 2 * math.pi
+            pts += _arc_points(c, r, ang[0], sweep, 1.0)[1:]
+        elif isinstance(seg.get("via"), list):
+            via = [parse_point(v) for v in seg["via"]]
+            if None in via:
+                return None
+            pts += [_flat(v, plane) for v in via] + [to]
+        else:
+            pts.append(to)
+        cur = to
+    if math.dist(pts[-1], pts[0]) > TOL:
+        pts.append(pts[0])
+    return pts
+
+
+def _seg_dist(p, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L = dx * dx + dy * dy
+    t = 0.0 if L == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L))
+    return math.dist(p, (a[0] + t * dx, a[1] + t * dy))
+
+
+def _poly_dist(A, B):
+    """Smallest distance between two polylines (a single point is a polyline too)."""
+    def one_way(P, Q):
+        if len(Q) == 1:
+            return min(math.dist(p, Q[0]) for p in P)
+        return min(_seg_dist(p, Q[i], Q[i + 1]) for p in P for i in range(len(Q) - 1))
+    return min(one_way(A, B), one_way(B, A))
+
+
+def _inside_polygon(q, poly):
+    inside = False
+    for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
+        if (y0 > q[1]) != (y1 > q[1]) and q[0] < x0 + (q[1] - y0) * (x1 - x0) / (y1 - y0):
+            inside = not inside
+    return inside
+
+
 def _check_hole(hole, plane, box, where, err):
+    """Check one hole; for a round hole or a slot that sits in the outline's box,
+    return (core polyline, half-width) for the overlap checks."""
     x0, y0, x1, y1 = box
 
     def inside(q, label):
@@ -185,18 +265,19 @@ def _check_hole(hole, plane, box, where, err):
             ends = [parse_point(s.get("from")), parse_point(s.get("to"))]
             if None in ends:
                 err(f'{where}.slot: "from" and "to" must be "x,y,z" points')
-            else:
-                for e in ends:
-                    if not inside(_flat(e, plane), "slot end"):
-                        break
+            elif all(inside(_flat(e, plane), "slot end") for e in ends):
+                return [_flat(e, plane) for e in ends], parse_num(s["width"]) / 2
         elif "center" in s:
             c = parse_point(s.get("center"))
+            r = parse_num(s.get("radius"))
             angles = [parse_num(s.get("from_angle")), parse_num(s.get("to_angle"))]
-            if c is None or (parse_num(s.get("radius")) or 0) <= 0 or None in angles:
+            if c is None or (r or 0) <= 0 or None in angles:
                 err(f'{where}.slot: an arc slot needs "center" as "x,y,z", a positive '
                     f'"radius" and "from_angle"/"to_angle" in degrees')
-            else:
-                inside(_flat(c, plane), "slot centre")
+            elif inside(_flat(c, plane), "slot centre"):
+                sweep = math.radians((angles[1] - angles[0]) % 360)
+                return (_arc_points(_flat(c, plane), r, math.radians(angles[0]), sweep),
+                        parse_num(s["width"]) / 2)
         else:
             err(f"{where}.slot: give {{from, to, width}} or "
                 f"{{center, radius, width, from_angle, to_angle}}")
@@ -205,12 +286,37 @@ def _check_hole(hole, plane, box, where, err):
         r = parse_num(hole.get("radius"))
         if c is None or r is None or r <= 0:
             err(f'{where}: a round hole needs "center" as "x,y,z" and a positive "radius"')
-        else:
-            inside(_flat(c, plane), "centre")
+        elif inside(_flat(c, plane), "centre"):
+            return [_flat(c, plane)], r
     elif "wire" in hole:
         err(f"{where}: a spec hole cannot name a wire; give its outline")
     else:
         err(f"{where}: give an outline {{start, segments}}, a circle {{center, radius}} or a {{slot}}")
+    return None
+
+
+def _check_hole_layout(regions, boundary, err):
+    """Round holes and slots must sit inside the outline without touching it or
+    each other (else GEOM builds no single face)."""
+    placed = []
+    for h, (core, r) in regions:
+        where = f"base.profile.holes[{h}]"
+        if not all(_inside_polygon(q, boundary) for q in core):
+            label = "centre" if len(core) == 1 else "slot centre line"
+            err(f"{where}: {label} {_fmt(core[0])} lies outside the outline"
+                if len(core) == 1 else f"{where}: {label} leaves the outline")
+            continue
+        d = _poly_dist(core, boundary)
+        if d < r - TOL:
+            err(f"{where}: the hole crosses the outline by {r - d:.3g}")
+            continue
+        placed.append((h, core, r))
+    for i, (hi, ci, ri) in enumerate(placed):
+        for hj, cj, rj in placed[i + 1:]:
+            d = _poly_dist(ci, cj)
+            if d < ri + rj - TOL:
+                err(f"base.profile.holes[{hi}] and holes[{hj}] overlap by {ri + rj - d:.3g}; "
+                    "holes must not touch each other")
 
 
 def _check_dims(dims, where, err):
@@ -247,12 +353,21 @@ def _check_profile_base(base, dim, err):
     if not isinstance(prof, dict):
         err("base.profile must be an object {start, segments, holes}")
         return
-    pts = _check_outline(prof, plane, "base.profile", err)
+    outline_errors = []
+    pts = _check_outline(prof, plane, "base.profile", outline_errors.append)
+    for m in outline_errors:
+        err(m)
     if not pts:
         return
     box = _box(pts)
+    regions = []
     for h, hole in enumerate(prof.get("holes") or [], 1):
-        _check_hole(hole, plane, box, f"base.profile.holes[{h}]", err)
+        region = _check_hole(hole, plane, box, f"base.profile.holes[{h}]", err)
+        if region:
+            regions.append((h, region))
+    boundary = _sample_outline(prof, plane)
+    if boundary and len(boundary) > 3 and not outline_errors:
+        _check_hole_layout(regions, boundary, err)
 
 
 def _check_feature(f, j, n, err):

@@ -274,3 +274,30 @@ def test_stage_part_ids_falls_back_to_every_part_when_no_stage_lists_any():
 def test_unclaimed_parts():
     assert unclaimed_parts([{"module": "geom", "parts": ["P1"]}], box_spec()) == ["P2"]
     assert unclaimed_parts([{"module": "geom"}], box_spec()) == []
+
+
+def test_holes_that_overlap():
+    spec = p1_spec()
+    spec["parts"][0]["base"]["profile"]["holes"][6]["slot"]["center"] = "0,-26,0"
+    errs = msgs(validate_spec(spec))
+    assert any(m.startswith("base.profile.holes[1] and holes[7] overlap by ") for m in errs), errs
+
+
+def test_hole_crossing_the_outline():
+    spec = p1_spec()
+    spec["parts"][0]["base"]["profile"]["holes"].append({"center": "85,40,0", "radius": 10})
+    (_, msg), = validate_spec(spec)
+    assert msg.startswith("base.profile.holes[8]: the hole crosses the outline by ")
+
+
+def test_hole_inside_the_bounding_box_but_outside_the_outline():
+    spec = p1_spec()
+    spec["parts"][0]["base"]["profile"]["holes"].append({"center": "80,-50,0", "radius": 5})
+    (_, msg), = validate_spec(spec)
+    assert msg == "base.profile.holes[8]: centre (80, -50) lies outside the outline"
+
+
+def test_slot_crossing_the_outline():
+    spec = p1_spec()
+    spec["parts"][0]["base"]["profile"]["holes"][5]["slot"]["radius"] = 48
+    assert any("holes[6]: the hole crosses the outline by " in m for m in msgs(validate_spec(spec)))
