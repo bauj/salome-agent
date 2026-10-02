@@ -359,7 +359,8 @@ _OUTLINE = {"type": "object", "properties": {
                    'for a half circle give `through` instead) or `through` (a point on the arc), '
                    'or a smooth curve through `via` points. If the last `to` is not back at `start` '
                    'a straight line closes it. `holes`: outlines of the same form, '
-                   '{"center", "radius"} circles, or {"wire": name} of a closed wire. Builds edges, wire and '
+                   '{"center", "radius"} circles, or {"wire": name} of a closed wire. The outline and '
+                   'each hole may run either way round. Builds edges, wire and '
                    'face in one call: prefer it to make_line/make_arc/make_wire/make_face_from_wires '
                    'for a whole outline. Extrude it with make_prism or revolve it with '
                    'make_revolution.'),
