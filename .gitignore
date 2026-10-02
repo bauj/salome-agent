@@ -7,3 +7,4 @@ config.json
 config_*.json
 .claude/
 uv.lock
+samples/
