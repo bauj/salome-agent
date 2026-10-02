@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 
 
@@ -36,7 +37,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"}
+# Recognised by content, not extension: the host's mimetypes table varies
+# (.webp only from Python 3.11, .bmp as image/x-ms-bmp on some distros), and
+# a mislabelled file would otherwise reach the model as garbage.
+_IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"BM", "image/bmp"),
+)
+MAX_IMAGES = 10
+MAX_IMAGE_BYTES = 20 * 1024 * 1024   # all images together, before base64
 
 
 def parse_image_paths(raw: str) -> list[str]:
@@ -45,22 +57,39 @@ def parse_image_paths(raw: str) -> list[str]:
     return [p.strip() for p in raw.split(",") if p.strip()]
 
 
+def _image_mime(data: bytes) -> str | None:
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    for magic, mime in _IMAGE_SIGNATURES:
+        if data.startswith(magic):
+            return mime
+    return None
+
+
 def load_reference_image(path: str) -> str:
     """Read an image file and return it as a data: URI for a multimodal LLM
     message. Raises ValueError on an unsupported type, OSError if unreadable."""
     import base64
-    import mimetypes
 
-    mime, _ = mimetypes.guess_type(path)
-    if mime not in _IMAGE_MIME_TYPES:
-        raise ValueError(f"--images: unsupported or unrecognized image type for {path!r} "
-                         f"(expected one of {sorted(_IMAGE_MIME_TYPES)})")
     with open(path, "rb") as f:
         data = f.read()
+    mime = _image_mime(data)
+    if mime is None:
+        raise ValueError(f"--images: {path!r} is not a PNG, JPEG, WEBP, GIF or BMP image")
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
 def load_reference_images(paths: list[str]) -> list[str]:
+    """Raises ValueError on no path at all (a typo like `--images ,` must not
+    silently drop the images) and past MAX_IMAGES / MAX_IMAGE_BYTES."""
+    if not paths:
+        raise ValueError("--images: no image path given")
+    if len(paths) > MAX_IMAGES:
+        raise ValueError(f"--images: {len(paths)} images, at most {MAX_IMAGES}")
+    total = sum(os.path.getsize(p) for p in paths)
+    if total > MAX_IMAGE_BYTES:
+        raise ValueError(f"--images: {total / (1024 * 1024):.1f} MB of images, "
+                         f"at most {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
     return [load_reference_image(p) for p in paths]
 
 
@@ -95,7 +124,6 @@ def build_llm(config: dict, request_timeout: float | None = None,
 
 
 def main(argv: list[str] | None = None) -> int:
-    import os
     import uuid
 
     from salome_agent import server_conn
@@ -127,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     # a run aborted at an interactive gate leaves nothing behind.
 
     reference_images = None
-    if args.images:
+    if args.images is not None:
         image_paths = parse_image_paths(args.images)
         try:
             reference_images = load_reference_images(image_paths)
