@@ -9,6 +9,12 @@ narrows what the geom specialist is offered; omit it if unsure. Respond as
 JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
 prose before or after it.
 
+A flat part whose outline has rounded corners, holes or slots (a plate, a
+bracket, a gasket) is one make_profile_face (outline and holes in one call)
+extruded with make_prism: hint those two, not the make_box + fillet_edges +
+cut route. Add other tools only for work the outline cannot do, such as
+rounding the top edges.
+
 Keep your reasoning brief -- a few sentences at most. Do not enumerate every
 possible interpretation or walk through each stage in detail; decide and emit
 the plan.
