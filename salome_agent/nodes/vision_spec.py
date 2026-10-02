@@ -516,12 +516,13 @@ def _outline_radii(outline, plane, found):
 
 
 def _spec_radii(parts):
-    """Every (radius, how many, kind) the spec draws; None when some feature of
-    unknown count (a fillet on named edges) makes a tally meaningless."""
-    found, unknown = [], set()
-    for part in parts:
+    """Every (radius, how many, kind, part index) the spec draws, plus the radii
+    of features whose count is unknown (a fillet on named edges)."""
+    tagged, unknown = [], set()
+    for pi, part in enumerate(parts):
         if not isinstance(part, dict):
             continue
+        found = []
         base = part.get("base") if isinstance(part.get("base"), dict) else {}
         prof = base.get("profile")
         if base.get("kind") == "profile" and isinstance(prof, dict):
@@ -547,7 +548,8 @@ def _spec_radii(parts):
                 found.append((parse_num(f["diameter"]) / 2, copies.get(j, 1), "hole features"))
             elif f.get("type") == "fillet" and parse_num(f.get("radius")):
                 unknown.add(round(parse_num(f["radius"]), 2))
-    return found, unknown
+        tagged += [(r, k, kind, pi) for r, k, kind in found]
+    return tagged, unknown
 
 
 def _check_callout_counts(spec, parts, err):
@@ -567,14 +569,17 @@ def _check_callout_counts(spec, parts, err):
         if round(r, 2) in unknown:
             continue
         kinds = _RADIUS_KINDS if sym == "R" else _DIAMETER_KINDS
-        match = [(k, kind) for rad, k, kind in found
+        match = [(k, kind, pi) for rad, k, kind, pi in found
                  if kind in kinds and abs(rad - r) <= 0.05]
-        have = sum(k for k, _ in match)
-        if not match or have == n:
-            continue
-        tally = {}
-        for k, kind in match:
+        have = sum(k for k, _, _ in match)
+        # The callout may cover only one kind (slot ends, not an outline arc of the
+        # same radius) or one part: any reading that gives n is fine.
+        tally, groups = {}, {}
+        for k, kind, pi in match:
             tally[kind] = tally.get(kind, 0) + k
+            groups[(kind, pi)] = groups.get((kind, pi), 0) + k
+        if not match or n in (have, *tally.values(), *groups.values()):
+            continue
         listed = ", ".join(f"{k} {kind}" for kind, k in tally.items())
         err(f'the drawing reads "{text}" ({n} features of {sym}{val}) but the spec draws '
             f"{have} ({listed}); re-read that callout and give every one of them")

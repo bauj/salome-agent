@@ -370,3 +370,18 @@ def test_counted_callouts_are_skipped_when_they_cannot_be_counted():
     spec = p1_with_callouts("R20 - 6X")
     spec["parts"][0]["features"] = [{"type": "fillet", "radius": 20, "where": "top edges"}]
     assert validate_spec(spec) == []
+
+
+def test_a_callout_covering_one_kind_of_a_shared_radius_passes():
+    spec = p1_with_callouts("4X R9")
+    spec["parts"][0]["base"]["profile"]["segments"][1]["fillet"] = 9
+    assert [m for m in msgs(validate_spec(spec)) if "callout" in m] == []
+
+
+def test_a_callout_covering_one_part_passes():
+    spec = p1_with_callouts("3X Ø30")
+    other = copy.deepcopy(spec["parts"][0])
+    other["id"] = "P2"
+    other["base"]["profile"]["holes"] = other["base"]["profile"]["holes"][:2]
+    spec["parts"].append(other)
+    assert [m for m in msgs(validate_spec(spec)) if "callout" in m] == []
