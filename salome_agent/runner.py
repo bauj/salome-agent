@@ -112,9 +112,11 @@ def show_results(client, build_graph: dict | None) -> None:
         log.warning("could not display the results: %s", e)
 
 
-def initial_state(request: str, config: dict, client, run_id: str, batch: bool) -> dict:
+def initial_state(request: str, config: dict, client, run_id: str, batch: bool,
+                  reference_images: list[str] | None = None) -> dict:
     return {
-        "user_request": request, "config": {**config, "batch": batch},
+        "user_request": request, "reference_images": reference_images,
+        "image_description": None, "config": {**config, "batch": batch},
         "session": _session_handle(client), "plan": [], "plan_approved": False,
         "stage_idx": 0, "stages": {}, "last_error": None, "history": [],
         "study_ns": "salome_agent_run", "final_script": None, "report": None,
@@ -214,7 +216,8 @@ def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
 def run_request(request: str, config: dict, *, client, on_event, on_gate,
                 cancel: threading.Event | None = None, batch: bool = False,
                 verbose: int = 0, run_id: str | None = None,
-                request_timeout: float | None = None) -> RunResult:
+                request_timeout: float | None = None,
+                reference_images: list[str] | None = None) -> RunResult:
     from salome_agent import cli
     from salome_agent.graph import build_graph
     from salome_agent.logs import log
@@ -232,7 +235,8 @@ def run_request(request: str, config: dict, *, client, on_event, on_gate,
                             "executor_client": client}}
     graph = build_graph(batch=batch)
     mapper = EventMapper(run_id, run_dir)
-    inp = initial_state(request, config, client, run_id, batch)
+    inp = initial_state(request, config, client, run_id, batch,
+                        reference_images=reference_images)
 
     final = drive(graph, inp, cfg, mapper, llm, on_event, on_gate, cancel)
     if not final.get("aborted"):

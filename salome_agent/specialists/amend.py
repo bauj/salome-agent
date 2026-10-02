@@ -193,7 +193,8 @@ def _spec(session: AmendSession) -> ModuleSpec:
 
 
 def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
-              history=(), selection=None, session=None, cancel=None):
+              history=(), selection=None, session=None, cancel=None,
+              image_description=None):
     session = session or AmendSession(graph, client, turn)
     blocks = ["Build graph:\n" + graph.render()]
     snap = _snapshot(client, graph)
@@ -205,6 +206,9 @@ def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
     if selection:
         blocks.append("The user currently has these selected in the viewer:\n"
                       + "\n".join(json.dumps(s) for s in selection))
+    if image_description:
+        blocks.append("The user attached reference image(s) to this message; the "
+                      "image-analysis agent describes them as:\n" + image_description)
     blocks.append(f"The user says: {text}")
     stage_plan = {"module": "amend", "intent": text, "tools": ["edit_arg", "delete_node"]}
     outcome = ToolSpecialist(_spec(session)).run(

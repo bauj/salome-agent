@@ -4,7 +4,7 @@ import pytest
 import requests
 
 from salome_agent.llm import (LLMCancelled, LLMClient, _parse_json_content,
-                              assistant_tool_turn, continuity_fields)
+                              assistant_tool_turn, continuity_fields, with_images)
 
 
 def _sse_frames(body):
@@ -73,6 +73,29 @@ def _stub_post(body):
     def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
         return _FakeResp(body)
     return post
+
+
+def test_with_images_none_or_empty_returns_plain_text():
+    assert with_images("make a box", None) == "make a box"
+    assert with_images("make a box", []) == "make a box"
+
+
+def test_with_images_builds_multimodal_parts():
+    content = with_images("make a box", ["data:image/png;base64,AAAA"])
+    assert content == [
+        {"type": "text", "text": "make a box"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+    ]
+
+
+def test_with_images_supports_several_images():
+    content = with_images("make a box", ["data:image/png;base64,AAAA",
+                                         "data:image/bmp;base64,BBBB"])
+    assert content == [
+        {"type": "text", "text": "make a box"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        {"type": "image_url", "image_url": {"url": "data:image/bmp;base64,BBBB"}},
+    ]
 
 
 def test_plain_json():
@@ -1044,3 +1067,12 @@ def test_stream_hook_ends_on_error_and_a_raising_hook_is_ignored(monkeypatch):
     with pytest.raises(ValueError):          # no JSON content -> planner parse error
         client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
     assert seen == ["start", "delta", "end"]
+
+
+def test_length_finish_reason_warns_about_truncation(monkeypatch, caplog):
+    body = {"choices": [{"message": {"content": "{}"}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 2700, "completion_tokens": 1396}}
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(body))
+    LLMClient("http://x/v1", "k", "m", ssl_cert_file="").chat(
+        messages=[{"role": "user", "content": "hi"}])
+    assert "cut off" in caplog.text and "2700" in caplog.text

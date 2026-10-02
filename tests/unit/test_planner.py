@@ -64,6 +64,26 @@ def test_plan_detail_hint_appended_to_system_prompt():
     assert system.startswith("You turn a natural-language SALOME request")
 
 
+def test_plan_forwards_reference_images_as_multimodal_content():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("make a box like this", llm, images=["data:image/png;base64,AAAA",
+                                              "data:image/bmp;base64,BBBB"])
+    user_content = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert user_content == [
+        {"type": "text", "text": "make a box like this"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        {"type": "image_url", "image_url": {"url": "data:image/bmp;base64,BBBB"}},
+    ]
+
+
+def test_plan_without_image_sends_plain_text_content():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("make a box", llm)
+    assert llm.chat.call_args.kwargs["messages"][1]["content"] == "make a box"
+
+
 def test_plan_unknown_detail_falls_back_to_no_hint():
     llm = MagicMock()
     llm.chat.return_value = {"stages": []}
@@ -71,6 +91,14 @@ def test_plan_unknown_detail_falls_back_to_no_hint():
     system = llm.chat.call_args.kwargs["messages"][0]["content"]
     from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT
     assert system == PLANNER_SYSTEM_PROMPT
+
+
+def test_plan_appends_image_description_to_the_request():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("make this bracket", llm, image_description="Summary: an L-bracket")
+    user_content = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert user_content == "make this bracket\n\nImage description:\nSummary: an L-bracket"
 
 
 def test_every_routable_module_contributes_its_catalogue():

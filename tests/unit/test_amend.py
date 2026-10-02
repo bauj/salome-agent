@@ -88,6 +88,18 @@ def test_selection_block_renders_only_when_given():
     assert "currently has these selected" in llm.chat.call_args.kwargs["messages"][1]["content"]
 
 
+def test_image_description_block_renders_only_when_given():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("finish_turn", {"summary": "x"}))] * 2
+    run_amend("t", _graph(), llm, FakeClient(), 1, POLICY)
+    assert "reference image" not in llm.chat.call_args.kwargs["messages"][1]["content"]
+    run_amend("add this handle", _graph(), llm, FakeClient(), 1, POLICY,
+              image_description="a D-shaped handle")
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "reference image" in user and "a D-shaped handle" in user
+    assert user.index("a D-shaped handle") < user.index("The user says: add this handle")
+
+
 def test_append_goes_into_one_amend_block_for_the_turn():
     llm = MagicMock()
     llm.chat.side_effect = [_resp(("make_box", {"dx": 2, "dy": 2, "dz": 2})),

@@ -9,6 +9,17 @@ from salome_agent.logs import log
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
+
+def with_images(text: str, image_data_uris: list[str] | None):
+    """Build a chat message `content` value: plain text, or an OpenAI-compatible
+    multimodal parts list (text + one image_url part per reference image)."""
+    if not image_data_uris:
+        return text
+    return [
+        {"type": "text", "text": text},
+        *({"type": "image_url", "image_url": {"url": uri}} for uri in image_data_uris),
+    ]
+
 # Retry a 502/503/504 only when it comes back fast (a real transient blip). A
 # slow one is the proxy's upstream-timeout firing — retrying wastes another
 # full timeout for the same slow backend.
@@ -501,6 +512,14 @@ class LLMClient:
                      "ttft_s": ttft, "usage": usage, "message": message})
         log.debug("LLM response in %.1fs (ttft %ss): finish=%s",
                   time.monotonic() - t0, ttft, finish)
+        if finish == "length":
+            u = usage or {}
+            log.warning("LLM output was cut off (finish_reason=length; prompt %s + "
+                        "completion %s tokens): the context window or max-tokens limit "
+                        "was hit. Hidden reasoning counts against it -- raise the "
+                        "server's context (Ollama defaults to 4096) or lower the "
+                        "reasoning effort (llm.module_extra_body).",
+                        u.get("prompt_tokens", "?"), u.get("completion_tokens", "?"))
         return message
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,

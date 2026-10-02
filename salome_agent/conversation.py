@@ -67,7 +67,10 @@ class Conversation:
         with open(os.path.join(self.run_dir, "build_graph.json"), "w") as f:
             json.dump(self.graph.to_dict(), f, indent=1)
 
-    def turn(self, text: str, *, selection=None, on_event, on_gate, cancel=None) -> TurnResult:
+    def turn(self, text: str, *, selection=None, images: list[str] | None = None, on_event,
+             on_gate, cancel=None) -> TurnResult:
+        """`images`: reference images for this turn as data: URIs (see
+        cli.load_reference_image); the vision agent describes them first."""
         if self.ended:
             return TurnResult("ended", "the SALOME session is gone; start a new conversation", {})
         if self.degraded:
@@ -77,7 +80,8 @@ class Conversation:
         n = self.turn_idx
         self._event(on_event, "turn_start", turn=n, text=text)
         before = self.graph.copy()
-        inp = initial_state(text, self.config, self.client, self.run_id, self.batch)
+        inp = initial_state(text, self.config, self.client, self.run_id, self.batch,
+                            reference_images=list(images) if images else None)
         inp.update(build_graph=self.graph.to_dict(), turn_idx=n, selection=selection,
                    history=list(self.history))
         cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": self.llm,
