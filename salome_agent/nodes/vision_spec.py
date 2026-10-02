@@ -1,5 +1,7 @@
 """The vision agent's structured spec (task 286): mechanical validation, and the
 renderings the planner, geom stages, amend and the report get."""
+import copy
+import json
 import math
 import re
 
@@ -357,3 +359,151 @@ def validate_spec(spec) -> list[tuple[str | None, str]]:
         seen.add(pid)
         _check_part(part, dim, ids, lambda m, pid=pid: errs.append((pid, m)))
     return errs
+
+
+def format_errors(errors) -> str:
+    return "\n".join(f"- {pid}: {msg}" if pid else f"- {msg}" for pid, msg in errors)
+
+
+def attach_conflicts(spec, errors) -> dict:
+    """The spec with each remaining validator error stored where it applies."""
+    if not isinstance(spec, dict):
+        return {"summary": json.dumps(spec, ensure_ascii=False), "parts": [],
+                "conflicts": [m for _, m in errors]}
+    out = copy.deepcopy(spec)
+    by_id = {p.get("id"): p for p in out.get("parts") or [] if isinstance(p, dict)}
+    for pid, msg in errors:
+        target = by_id.get(pid, out)
+        target.setdefault("conflicts", []).append(msg)
+    return out
+
+
+def _parts(spec) -> list[dict]:
+    return [p for p in spec.get("parts") or [] if isinstance(p, dict)]
+
+
+def all_conflicts(spec: dict) -> list[str]:
+    out = list(spec.get("conflicts") or [])
+    for p in _parts(spec):
+        out += [f"{p.get('id')}: {c}" for c in p.get("conflicts") or []]
+    return out
+
+
+def _target_line(spec) -> str | None:
+    dim = spec.get("dimensionality")
+    if not isinstance(dim, dict) or dim.get("value") not in ("2d", "3d"):
+        return None
+    line = f"Target: {dim['value'].upper()}"
+    if dim["value"] == "2d":
+        planes = {(p.get("base") or {}).get("plane") for p in _parts(spec)} - {None}
+        line += f" in the {'/'.join(sorted(planes)) or 'XY'} plane"
+    if dim.get("assumed"):
+        line += f" (assumed: {dim.get('reason') or 'the image gave no depth'})"
+    return line
+
+
+def _json(v) -> str:
+    return json.dumps(v, ensure_ascii=False)
+
+
+def _part_line(p) -> str:
+    base = p.get("base") if isinstance(p.get("base"), dict) else {}
+    kind = base.get("kind")
+    head = f"{p.get('id')} {p.get('name') or ''}".rstrip()
+    if kind == "profile":
+        desc = f"profile in {base.get('plane')}"
+        if base.get("extrude"):
+            desc += f", extruded {(base['extrude'] or {}).get('height')}"
+        elif base.get("revolve"):
+            desc += f", revolved {(base['revolve'] or {}).get('angle')} deg"
+        else:
+            desc += ", flat face"
+        prof = base.get("profile") if isinstance(base.get("profile"), dict) else {}
+        pts = outline_extent(prof, base.get("plane"))
+        if pts:
+            x0, y0, x1, y1 = _box(pts)
+            desc += f", {x1 - x0:g} x {y1 - y0:g}"
+        holes = len(prof.get("holes") or [])
+        if holes:
+            desc += f", {holes} hole{'s' if holes > 1 else ''}"
+    elif kind == "primitive":
+        desc = f"{base.get('shape')} {_json(base.get('dims') or {})}"
+    elif kind == "approx":
+        desc = f"approx. {base.get('description')} {_json(base.get('dims') or {})}"
+    else:
+        desc = "unknown base"
+    feats = [f.get("type") for f in p.get("features") or [] if isinstance(f, dict)]
+    if feats:
+        counts = {}
+        for t in feats:
+            counts[t] = counts.get(t, 0) + 1
+        desc += "; features: " + ", ".join(f"{n} {t}" for t, n in counts.items())
+    if p.get("relation"):
+        desc += f"; {p['relation']}"
+    if p.get("conflicts"):
+        n = len(p["conflicts"])
+        desc += f"; {n} conflict{'s' if n > 1 else ''}"
+    return f"- {head}: {desc}"
+
+
+def _context_lines(spec) -> list[str]:
+    lines = []
+    target = _target_line(spec)
+    if target:
+        lines.append(target)
+    if spec.get("summary"):
+        lines.append(f"Summary: {spec['summary']}")
+    if spec.get("datum"):
+        lines.append(f"Datum: {spec['datum']}")
+    if spec.get("uncertainties"):
+        lines.append("Uncertainties: " + "; ".join(str(u) for u in spec["uncertainties"]))
+    if spec.get("conflicts"):
+        lines.append("Conflicts: " + "; ".join(str(c) for c in spec["conflicts"]))
+    return lines
+
+
+def compact_spec(spec: dict) -> str:
+    """The planner's view: parts by id and kind, no numbers to restate."""
+    lines = ["Reference image spec (read from the user's image(s); each geom stage is "
+             "handed the exact data of the parts it lists):"]
+    lines += _context_lines(spec)
+    parts = _parts(spec)
+    if parts:
+        lines.append("Parts:")
+        lines += [_part_line(p) for p in parts]
+    return "\n".join(lines)
+
+
+def parts_block(spec: dict, ids: list[str]) -> str:
+    """A geom stage's view: its parts' exact JSON."""
+    chosen = [p for p in _parts(spec) if p.get("id") in ids]
+    lines = ["Reference image spec for this stage's part(s), read from the user's "
+             "image(s) by an image-analysis agent (you do not see the images):"]
+    lines += _context_lines(spec)
+    lines.append("```json\n" + json.dumps(chosen, ensure_ascii=False, indent=1) + "\n```")
+    return "\n".join(lines)
+
+
+def amend_block(spec: dict) -> str:
+    return (compact_spec(spec) + "\nParts data:\n```json\n"
+            + json.dumps(_parts(spec), ensure_ascii=False, indent=1) + "\n```")
+
+
+def part_ids(stage: dict) -> list[str]:
+    ids = stage.get("parts") or []
+    return [ids] if isinstance(ids, str) else [i for i in ids if isinstance(i, str)]
+
+
+def stage_part_ids(plan: list[dict], idx: int, spec: dict) -> list[str]:
+    """The parts stage idx builds; every part when no stage of the plan lists any
+    (a planner that ignored `parts` must not leave geom without the spec)."""
+    if any(part_ids(s) for s in plan):
+        return part_ids(plan[idx])
+    return [p.get("id") for p in _parts(spec)]
+
+
+def unclaimed_parts(plan: list[dict], spec: dict) -> list[str]:
+    claimed = {i for s in plan for i in part_ids(s)}
+    if not claimed:
+        return []
+    return [p.get("id") for p in _parts(spec) if p.get("id") not in claimed]
