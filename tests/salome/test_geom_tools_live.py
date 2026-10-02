@@ -237,6 +237,25 @@ class TestCurveTools:
         assert face["ok"] is True, face.get("error")
         assert face["area"] == pytest.approx(200 + 25 * math.pi, rel=1e-6)
 
+    def test_hole_outline_direction_does_not_matter(self, agent_client):
+        """The description promises either way round works: same area and volume both ways."""
+        c = agent_client.call_tool
+        outer = {"start": "0,0,0", "segments": [{"to": "40,0,0"}, {"to": "40,20,0"},
+                                                 {"to": "0,20,0"}]}
+        ccw = {"start": "5,6,0", "segments": [
+            {"to": "15,6,0"}, {"to": "15,14,0", "through": "19,10,0"},
+            {"to": "5,14,0"}, {"to": "5,6,0", "through": "1,10,0"}]}
+        cw = {"start": "5,6,0", "segments": [
+            {"to": "5,14,0", "through": "1,10,0"}, {"to": "15,14,0"},
+            {"to": "15,6,0", "through": "19,10,0"}, {"to": "5,6,0"}]}
+        area = 800 - (80 + 16 * math.pi)
+        for hole in (ccw, cw):
+            face = c("make_profile_face", {**outer, "holes": [hole]})
+            assert face["ok"] is True, face.get("error")
+            assert face["area"] == pytest.approx(area, rel=1e-6)
+            solid = self._out(c("make_prism", {"base": self._out(face), "dx": 0, "dy": 0, "dz": 4}))
+            assert self._props(agent_client, solid)["volume"] == pytest.approx(4 * area, rel=1e-6)
+
     def test_spline_side_closed_by_a_line(self, agent_client):
         face = agent_client.call_tool("make_profile_face", {"start": "0,0,0", "segments": [
             {"to": "10,0,0"}, {"to": "0,10,0", "via": ["8,6,0", "4,9,0"]}]})

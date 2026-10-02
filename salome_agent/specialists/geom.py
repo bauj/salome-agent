@@ -27,6 +27,9 @@ display modes that were not requested.
 If a requested value or step order cannot work geometrically (a fillet
 wider than the wall it sits on, a hole larger than its part), make the
 smallest change that does work and say what you changed when you finish.
+When a position or size is vague ("near one end", "roughly 10 mm") or the
+given value would make features overlap, choose one clean value that fits and
+build with it; do not weigh different readings of the wording.
 When a tool error names a value to use, use exactly that value; do not
 work out whether a larger one would also fit. Pick one fix
 and try it; do not weigh a list of alternatives. Plan only your next step
