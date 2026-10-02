@@ -76,3 +76,25 @@ def test_report_timing_section():
 
 def test_report_omits_timing_when_no_timing_data():
     assert "## Timing" not in write_report(_state())
+
+
+def test_report_says_an_assumed_2d_target_was_built_flat():
+    spec = {"dimensionality": {"value": "2d", "assumed": True}, "parts": [{"id": "P1"}]}
+    out = write_report(_state(image_spec=spec, plan=[]))
+    assert "## Reference image" in out
+    assert 'Built as a flat face: the image gave no thickness -- say "extrude N mm" to make it solid.' in out
+
+
+def test_report_lists_unclaimed_parts_and_conflicts():
+    spec = {"dimensionality": {"value": "3d"},
+            "parts": [{"id": "P1", "conflicts": ["arc off radius"]}, {"id": "P2"}],
+            "conflicts": ["datum unclear"]}
+    out = write_report(_state(image_spec=spec, plan=[{"module": "geom", "parts": ["P1"]}]))
+    assert "Parts in the image spec no stage built: P2." in out
+    assert "- datum unclear" in out and "- P1: arc off radius" in out
+
+
+def test_report_has_no_image_section_when_nothing_to_say():
+    spec = {"dimensionality": {"value": "3d"}, "parts": [{"id": "P1"}]}
+    assert "## Reference image" not in write_report(_state(image_spec=spec, plan=[]))
+    assert "## Reference image" not in write_report(_state())
