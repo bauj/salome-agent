@@ -149,6 +149,23 @@ def _is_json_object(s: str) -> bool:
         return False
 
 
+def _assemble_message(partial: dict) -> dict:
+    """The provider `message` from what _consume_stream gathered (complete,
+    or as far as a stream that stopped early got)."""
+    message: dict = {"role": "assistant", "content": "".join(partial.get("content", [])) or None}
+    if partial.get("reasoning"):
+        message["reasoning_content"] = "".join(partial["reasoning"])
+    if partial.get("tool_frags"):
+        message["tool_calls"] = [
+            {"id": slot["id"], "type": "function",
+             "function": {"name": slot["name"], "arguments": "".join(slot["args"]) or "{}"},
+             **slot.get("extra", {})}
+            for _, slot in sorted(partial["tool_frags"].items())
+        ]
+    message.update(partial.get("msg_extra", {}))
+    return message
+
+
 def _loads_first_object(s: str):
     """`json.loads` but tolerant of a trailing repeat — Gemini's shim
     sometimes emits a tool call's arguments twice, yielding "{...}{...}"."""
@@ -269,6 +286,8 @@ class LLMClient:
         # Also set by runner.drive(): called with {"type": "start" | "delta" |
         # "end", ...} as a call streams, so a front end can show the reasoning live.
         self.on_stream = None
+        self._live = None           # -vv llm_live.txt handle while a call streams
+        self._live_channel = None
 
     def _check_cancel(self) -> None:
         if self.cancel is not None and self.cancel.is_set():
@@ -322,8 +341,54 @@ class LLMClient:
             log.warning("could not write LLM trace: %s", e)
         log.debug("LLM response:\n%s", json.dumps(response, indent=2, default=str, ensure_ascii=False))
 
-    def _consume_stream(self, resp, t0: float,
-                        prose: bool = False) -> tuple[dict, dict | None, str | None, float | None]:
+    def _trace_incomplete(self, request: dict, attempt: int, t0: float, partial: dict,
+                          error: BaseException) -> None:
+        """A call that did not finish (budget, cancel, dropped stream, Ctrl-C)
+        still gets a trace line, with what it streamed before it stopped."""
+        reason = f"{type(error).__name__}: {error}"
+        self._live_write(f"\n=== incomplete after {time.monotonic() - t0:.1f}s: {reason} ===\n")
+        self._trace(request, {"incomplete": reason, "attempt": attempt,
+                              "elapsed_s": round(time.monotonic() - t0, 2),
+                              "ttft_s": partial.get("ttft"), "frames": partial.get("frames", 0),
+                              "message": _assemble_message(partial)})
+
+    def _live_open(self, module: str | None, attempt: int) -> None:
+        """-vv: llm_live.txt next to the trace gets each call's reasoning and
+        content as they stream, flushed per delta, so `tail -f` shows a call
+        in flight and a killed run keeps what it had."""
+        self._live, self._live_channel = None, None
+        if not self.trace_path:
+            return
+        path = os.path.join(os.path.dirname(self.trace_path) or ".", "llm_live.txt")
+        try:
+            self._live = open(path, "a", encoding="utf-8")
+        except OSError as e:
+            log.warning("could not open %s: %s", path, e)
+            return
+        self._live_write(f"\n=== {time.strftime('%H:%M:%S')} {module or 'call'} "
+                         f"attempt {attempt} ===\n")
+
+    def _live_write(self, text: str, channel: str | None = None) -> None:
+        if self._live is None:
+            return
+        if channel and channel != self._live_channel:
+            self._live_channel = channel
+            text = f"\n--- {channel} ---\n{text}"
+        try:
+            self._live.write(text)
+            self._live.flush()
+        except (OSError, ValueError) as e:
+            log.warning("could not write llm_live.txt: %s", e)
+            self._live = None
+
+    def _live_close(self) -> None:
+        if self._live is not None:
+            self._live.close()
+            self._live = None
+
+    def _consume_stream(self, resp, t0: float, prose: bool = False,
+                        partial: dict | None = None
+                        ) -> tuple[dict, dict | None, str | None, float | None]:
         """Reassemble an SSE `data:` stream into one provider `message` dict
         (plus usage / finish_reason / time-to-first-token). `content` and
         `reasoning_content` fragments are concatenated; `tool_calls` fragments
@@ -337,10 +402,16 @@ class LLMClient:
         endpoint (an HTML error page, say) -> RuntimeError. One that yields
         no content/tool-call AND no finish_reason / [DONE] was cut mid-flight
         or blocked -> raised as a connection drop so the caller retries. Real
-        output with a missing terminator is kept (some shims omit [DONE])."""
+        output with a missing terminator is kept (some shims omit [DONE]).
+
+        `partial` is filled as the stream arrives, so a caller can trace what
+        came through if the stream stops early."""
+        partial = {} if partial is None else partial
         content, reasoning = [], []
         tool_frags: dict[int, dict] = {}
         msg_extra: dict = {}
+        partial.update(content=content, reasoning=reasoning, tool_frags=tool_frags,
+                       msg_extra=msg_extra, frames=0, ttft=None)
         finish = usage = ttft = None
         frames = 0
         done = False
@@ -362,7 +433,7 @@ class LLMClient:
             if not raw:
                 continue
             if ttft is None:
-                ttft = round(time.monotonic() - t0, 2)
+                ttft = partial["ttft"] = round(time.monotonic() - t0, 2)
             if raw.startswith("data:"):
                 raw = raw[5:].strip()
             if raw == "[DONE]":
@@ -373,6 +444,7 @@ class LLMClient:
             except ValueError:
                 continue  # SSE comment / keep-alive line
             frames += 1
+            partial["frames"] = frames
             if frame.get("error"):
                 raise RuntimeError(f"LLM stream returned an error frame: {frame['error']}")
             if frame.get("usage"):
@@ -381,10 +453,12 @@ class LLMClient:
                 delta = choice.get("delta") or {}
                 if delta.get("content"):
                     content.append(delta["content"])
+                    self._live_write(delta["content"], "content")
                     if prose:
                         self._stream_event(type="delta", channel="prose", text=delta["content"])
                 if delta.get("reasoning_content"):
                     reasoning.append(delta["reasoning_content"])
+                    self._live_write(delta["reasoning_content"], "reasoning")
                     self._stream_event(type="delta", channel="reasoning",
                                        text=delta["reasoning_content"])
                 for key in _CONTINUITY_KEYS:
@@ -424,19 +498,7 @@ class LLMClient:
             # OpenAI-compat shims just omit the terminator; keep what we got
             log.warning("LLM stream ended without an explicit finish_reason / "
                         "[DONE]; using the %d frame(s) received", frames)
-        message: dict = {"role": "assistant", "content": "".join(content) or None}
-        if reasoning:
-            message["reasoning_content"] = "".join(reasoning)
-        if tool_frags:
-            message["tool_calls"] = [
-                {"id": slot["id"], "type": "function",
-                 "function": {"name": slot["name"],
-                              "arguments": "".join(slot["args"]) or "{}"},
-                 **slot.get("extra", {})}
-                for _, slot in sorted(tool_frags.items())
-            ]
-        message.update(msg_extra)
-        return message, usage, finish, ttft
+        return _assemble_message(partial), usage, finish, ttft
 
     def _round_trip(self, payload: dict, tool_names: list[str] | None,
                     extra_body: dict | None = None, module: str | None = None) -> dict:
@@ -444,12 +506,12 @@ class LLMClient:
         retries) — returns the reassembled provider `message` object."""
         self._stream_event(type="start", module=module)
         try:
-            return self._round_trip_attempts(payload, tool_names, extra_body)
+            return self._round_trip_attempts(payload, tool_names, extra_body, module)
         finally:
             self._stream_event(type="end")
 
     def _round_trip_attempts(self, payload: dict, tool_names: list[str] | None,
-                             extra_body: dict | None) -> dict:
+                             extra_body: dict | None, module: str | None = None) -> dict:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         headers.update(self.extra_headers)
         payload = {**payload, "stream": True,
@@ -500,8 +562,15 @@ class LLMClient:
                     t0 = time.monotonic()
                     continue
                 resp.raise_for_status()
-                message, usage, finish, ttft = self._consume_stream(
-                    resp, t0, prose=bool(tool_names))
+                partial: dict = {}
+                self._live_open(module, attempt)
+                try:
+                    message, usage, finish, ttft = self._consume_stream(
+                        resp, t0, prose=bool(tool_names), partial=partial)
+                except BaseException as e:
+                    self._trace_incomplete(trace_request, attempt, t0, partial, e)
+                    self._live_close()
+                    raise
                 break
             except LLMCancelled:
                 log.info("LLM request attempt %d cancelled", attempt)
@@ -522,6 +591,8 @@ class LLMClient:
                     raise
                 self._pause(_backoff_seconds(attempt))
                 t0 = time.monotonic()
+        self._live_write(f"\n=== finish={finish}, {time.monotonic() - t0:.1f}s ===\n")
+        self._live_close()
         self.usage["llm_seconds"] += time.monotonic() - t0
         self._record_usage({"usage": usage})
         self._trace(trace_request,

@@ -210,7 +210,10 @@ The agent will:
    stderr as it goes (`planning...`, `stage 1/2 [geom] ...`, `static check: ok`,
    `exec check: ok`, ...). Add `-v` for per-LLM-call and per-retry detail, `-vv`
    to also dump every LLM prompt, response and reasoning to the terminal and
-   `<run_id>/llm_trace.jsonl`.
+   `<run_id>/llm_trace.jsonl` (a call cut off, cancelled or dropped still gets a line,
+   marked `incomplete`, with what it streamed). `-vv` also writes
+   `<run_id>/llm_live.txt` as each call streams: `tail -f` it to watch the model's
+   reasoning while a call is in flight.
 3. Write output to `<work_dir>/<run_id>/`:
    - `result.py` — the standalone reproducible script
    - `report.md` — per-stage status and retry counts (also printed at the end)
@@ -237,7 +240,7 @@ Run the result on its own, with no agent involved:
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--tools {hints,all}` | Geom tool retrieval. `hints` (default): the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the full geom registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
 | `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
-| `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`. |
+| `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`, and stream each call's reasoning to `<run_id>/llm_live.txt`. |
 | `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch` or `--no-session`. |
 
 ### GUI plugin setup
