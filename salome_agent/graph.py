@@ -363,8 +363,9 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             stage["status"] = "ok"
             stage["result_names"] = result["result_names"]
             update["last_error"] = None
-            log.info("  geom specialist done: %d tool call(s), results=%s",
-                     len(result.get("call_log") or []), result["result_names"])
+            log.info("  geom specialist done: %d tool call(s), %d geompy call(s), results=%s",
+                     len(result.get("calls") or []), len(result.get("call_log") or []),
+                     result["result_names"])
         else:
             stage["status"] = "failed"
             update["last_error"] = result.get("last_error")
