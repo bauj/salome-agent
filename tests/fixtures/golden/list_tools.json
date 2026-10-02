@@ -323,7 +323,7 @@
         "points"
       ]
     },
-    "description": "Planar face bounded by a closed polygon through `points` (3 or more corners, in order; the last joins back to the first). Extrude it with make_prism for a gable roof, wedge or any prismatic profile. Straight sides only: for an outline with arcs use make_line + make_arc, make_wire, make_face_from_wires.",
+    "description": "Planar face bounded by a closed polygon through `points` (3 or more corners, in order; the last joins back to the first). Extrude it with make_prism for a gable roof, wedge or any prismatic profile. Straight sides only: for an outline with arcs or curves use make_profile_face.",
     "category": "sketch"
   },
   {
@@ -358,7 +358,7 @@
         "end"
       ]
     },
-    "description": "A circular arc edge, in one of two forms: `center` + `start` + `end` (radius = centre to start; `end` only sets the direction the arc stops at; it takes the shorter way round, `reverse` the longer; for a half circle use the other form) or `start` + `through` + `end` (the arc passes through all three). Points are names or \"x,y,z\". The result gives the arc's real end points and length: start the next segment there. Chain arcs and make_line segments with make_wire, then make_face_from_wires.",
+    "description": "A circular arc edge, in one of two forms: `center` + `start` + `end` (radius = centre to start; `end` only sets the direction the arc stops at; it takes the shorter way round, `reverse` the longer; for a half circle use the other form) or `start` + `through` + `end` (the arc passes through all three). Points are names or \"x,y,z\". The result gives the arc's real end points and length: start the next segment there. Chain arcs and make_line segments with make_wire, then make_face_from_wires; for a whole outline make_profile_face does it in one call.",
     "category": "sketch"
   },
   {
@@ -401,6 +401,228 @@
       ]
     },
     "description": "Planar face bounded by closed wires: the first is the outer contour, any others are holes (make_wire results, or a make_circle edge for a round hole). Extrude it with make_prism or revolve it with make_revolution.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_ellipse",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "center": {
+          "type": "string",
+          "description": "centre point"
+        },
+        "normal": {
+          "type": "string",
+          "description": "normal of the ellipse plane (full form)"
+        },
+        "r_major": {
+          "type": "number",
+          "description": "major radius (full form)"
+        },
+        "r_minor": {
+          "type": "number",
+          "description": "minor radius, <= r_major (full form)"
+        },
+        "major_dir": {
+          "type": "string",
+          "description": "direction of the major axis (full form)"
+        },
+        "start": {
+          "type": "string",
+          "description": "end of one semi-axis (quarter form)"
+        },
+        "end": {
+          "type": "string",
+          "description": "end of the other semi-axis (quarter form)"
+        }
+      },
+      "required": [
+        "center"
+      ]
+    },
+    "description": "An ellipse edge, in one of two forms: `center` + `normal` + `r_major` + `r_minor` (a full ellipse; `major_dir` orients the major axis) or `center` + `start` + `end` (a quarter ellipse from `start` to `end`, two points at right angles from the centre at the ends of the semi-axes). Points are names or \"x,y,z\".",
+    "category": "sketch"
+  },
+  {
+    "name": "make_polyline",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "description": "point names or \"x,y,z\", in order"
+        },
+        "closed": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "points"
+      ]
+    },
+    "description": "A wire of straight segments through `points` in order; `closed` joins the last back to the first. Open, it is a path for make_pipe or a piece for make_wire; for a filled polygon use make_polygon_face.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_curve",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "description": "point names or \"x,y,z\", in order"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "interpolation",
+            "bezier"
+          ],
+          "default": "interpolation"
+        },
+        "closed": {
+          "type": "boolean",
+          "default": false
+        },
+        "start_tangent": {
+          "type": "string",
+          "description": "direction at the first point"
+        },
+        "end_tangent": {
+          "type": "string",
+          "description": "direction at the last point"
+        }
+      },
+      "required": [
+        "points"
+      ]
+    },
+    "description": "A smooth curve edge from `points`: kind \"interpolation\" (default) passes through every point, \"bezier\" only through the first and last (the others pull it like control points). `closed` makes a loop; `start_tangent` + `end_tangent` (directions, open interpolation only) set the direction at the ends. The result gives its real end points and length.",
+    "category": "sketch"
+  },
+  {
+    "name": "make_profile_face",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "string",
+          "description": "point name or \"x,y,z\""
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "to": {
+                "type": "string",
+                "description": "where the segment ends"
+              },
+              "center": {
+                "type": "string",
+                "description": "circular arc about this centre (shorter way round)"
+              },
+              "reverse": {
+                "type": "boolean",
+                "default": false,
+                "description": "centre arc: the longer way round"
+              },
+              "through": {
+                "type": "string",
+                "description": "circular arc through this point"
+              },
+              "via": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "smooth curve through these points"
+              }
+            },
+            "required": [
+              "to"
+            ]
+          }
+        },
+        "holes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "string",
+                "description": "point name or \"x,y,z\""
+              },
+              "segments": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "to": {
+                      "type": "string",
+                      "description": "where the segment ends"
+                    },
+                    "center": {
+                      "type": "string",
+                      "description": "circular arc about this centre (shorter way round)"
+                    },
+                    "reverse": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "centre arc: the longer way round"
+                    },
+                    "through": {
+                      "type": "string",
+                      "description": "circular arc through this point"
+                    },
+                    "via": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "smooth curve through these points"
+                    }
+                  },
+                  "required": [
+                    "to"
+                  ]
+                }
+              },
+              "center": {
+                "type": "string",
+                "description": "round hole centre"
+              },
+              "radius": {
+                "type": "number",
+                "description": "round hole radius"
+              },
+              "wire": {
+                "type": "string",
+                "description": "name of an existing closed wire"
+              }
+            }
+          },
+          "description": "an outline ({start, segments}), a circle ({center, radius}) or {wire}"
+        }
+      },
+      "required": [
+        "start",
+        "segments"
+      ]
+    },
+    "description": "Planar face from an outline traced from `start` through `segments`, each starting where the previous one ends and ending at its `to`: a straight line, or a circular arc with `center` (shorter way round, `reverse` for the longer; for a half circle give `through` instead) or `through` (a point on the arc), or a smooth curve through `via` points. If the last `to` is not back at `start` a straight line closes it. `holes`: outlines of the same form, {\"center\", \"radius\"} circles, or {\"wire\": name} of a closed wire. Builds edges, wire and face in one call: prefer it to make_line/make_arc/make_wire/make_face_from_wires for a whole outline. Extrude it with make_prism or revolve it with make_revolution.",
     "category": "sketch"
   },
   {

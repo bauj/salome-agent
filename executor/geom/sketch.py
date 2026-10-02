@@ -202,7 +202,7 @@ def _not_a_plane(coords) -> str | None:
       description=('Planar face bounded by a closed polygon through `points` (3 or more corners, '
                    'in order; the last joins back to the first). Extrude it with make_prism for a '
                    'gable roof, wedge or any prismatic profile. Straight sides only: for an '
-                   'outline with arcs use make_line + make_arc, make_wire, make_face_from_wires.'),
+                   'outline with arcs or curves use make_profile_face.'),
       schema={"type": "object", "properties": {"points": {"type": "array", "items": {"type": "string"}, "minItems": 3, "description": "corners in order: point names or \"x,y,z\""}}, "required": ["points"]},
       arg_types={})
 def tool_make_polygon_face(executor, args: dict):
@@ -252,7 +252,8 @@ def tool_make_polygon_face(executor, args: dict):
                    'shorter way round, `reverse` the longer; for a half circle use the other form) '
                    'or `start` + `through` + `end` (the arc passes through all three). Points are names or "x,y,z". The result gives the arc\'s real end points '
                    'and length: start the next segment there. Chain arcs and make_line segments with '
-                   'make_wire, then make_face_from_wires.'),
+                   'make_wire, then make_face_from_wires; for a whole outline make_profile_face '
+                   'does it in one call.'),
       schema={"type": "object", "properties": {"start": {"type": "string", "description": "start point"}, "end": {"type": "string", "description": "end point (centre form: sets the direction only)"}, "center": {"type": "string", "description": "centre point (centre form)"}, "through": {"type": "string", "description": "a point the arc passes through, between start and end (3-point form)"}, "reverse": {"type": "boolean", "default": False, "description": "centre form: take the longer way round"}}, "required": ["start", "end"]},
       arg_types={})
 def tool_make_arc(executor, args: dict):
@@ -359,6 +360,24 @@ def tool_make_wire(executor, args: dict):
 _PLANAR_KINDS = {"PLANE", "PLANAR", "POLYGON", "DISK_CIRCLE", "DISK_ELLIPSE"}
 
 
+def _planar_face(geompy, wires, tool: str):
+    """(face, None) for a planar face bounded by `wires`, else (None, error)."""
+    try:
+        face = geompy.MakeFaceWires(wires, 1)
+    except Exception as e:
+        return None, (f"{tool}: no face ({e}) — the wires must be closed, in one plane, holes "
+                      "inside the outer contour")
+    # Like MakePolyline faces, MakeFaceWires(..., 1) quietly builds a curved
+    # face from wires that are not in one plane, so check what it made.
+    kind = str(geompy.KindOfShape(face)[0]).rsplit(".", 1)[-1]
+    if kind not in _PLANAR_KINDS:
+        return None, f"{tool}: the wires do not lie in one plane (GEOM built a {kind} face)"
+    is_valid, msg = geompy.CheckShape(face, True, 1)
+    if not is_valid:
+        return None, f"{tool}: CheckShape failed ({msg})"
+    return face, None
+
+
 @tool("make_face_from_wires", category="sketch",
       description=('Planar face bounded by closed wires: the first is the outer contour, any others '
                    'are holes (make_wire results, or a make_circle edge for a round hole). Extrude '
@@ -377,20 +396,9 @@ def tool_make_face_from_wires(executor, args: dict):
             return {"ok": False, "error": (f"make_face_from_wires: wire {n} is open, loose ends at "
                                            f"{', '.join(_fmt_point(p) for p in loose)} — close it "
                                            "before making a face")}
-    try:
-        face = geompy.MakeFaceWires(shapes, 1)
-    except Exception as e:
-        return {"ok": False, "error": (f"make_face_from_wires: no face ({e}) — the wires must be "
-                                       "closed, in one plane, holes inside the outer contour")}
-    # Like MakePolyline faces, MakeFaceWires(..., 1) quietly builds a curved
-    # face from wires that are not in one plane, so check what it made.
-    kind = str(geompy.KindOfShape(face)[0]).rsplit(".", 1)[-1]
-    if kind not in _PLANAR_KINDS:
-        return {"ok": False, "error": ("make_face_from_wires: the wires do not lie in one plane "
-                                       f"(GEOM built a {kind} face)")}
-    is_valid, msg = geompy.CheckShape(face, True, 1)
-    if not is_valid:
-        return {"ok": False, "error": f"make_face_from_wires: CheckShape failed ({msg})"}
+    face, error = _planar_face(geompy, shapes, "make_face_from_wires")
+    if error:
+        return {"ok": False, "error": error}
     name = _next_name(executor, "face")
     _publish(executor, face, name)
     return {"ok": True, "sanity": {"ok": True},
