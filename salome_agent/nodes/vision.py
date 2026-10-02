@@ -60,6 +60,18 @@ Rules:
 - For "2d", never invent a thickness, height or extrusion; for "3d", give the depth
   of every part, estimated with "~" if no view shows it.
 - Never invent detail that is not visible; list it under uncertainties instead.
+- Reading technical drawings:
+  - A linear dimension measures between its two extension lines: say what each one
+    sits on (a centre line, an edge, a tangent point). Ending on a centre line means
+    the distance is to that centre, not to an edge.
+  - A radius or diameter arrowed to a chain-dotted arc or circle is a pitch/centre-
+    line radius (bolt circle, slot centre line), not an edge.
+  - A curved slot with R ends is as wide as twice that R, centred on its pitch arc.
+  - "nX" counts identical features; "TYP" applies the value to every like feature.
+  - Give the centre of every arc and circle as coordinates from the drawing datum.
+- Before answering, check that the outline closes: consecutive arcs and lines must
+  meet or be tangent at the centres and radii you give. If they do not, re-read the
+  dimensions; if a conflict remains, name the conflicting values in uncertainties.
 - Keep it factual and compact: no CAD tool names, no step-by-step build order."""
 
 
