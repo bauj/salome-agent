@@ -1334,3 +1334,69 @@ def test_no_trace_path_writes_no_live_file(tmp_path, monkeypatch):
         LLMClient("http://x/v1", "", "auto", max_retries=0).chat(
             messages=[{"role": "user", "content": "x"}])
     assert list(tmp_path.iterdir()) == []
+
+
+def _reasoning_lines(chunks, then=None):
+    """SSE lines streaming `chunks` as reasoning deltas, then the `then` delta."""
+    lines = ["data: " + json.dumps({"choices": [{"delta": {"reasoning_content": c}}]})
+             for c in chunks]
+    if then is not None:
+        lines.append("data: " + json.dumps({"choices": [{"delta": then,
+                                                         "finish_reason": "stop"}]}))
+    lines.append("data: [DONE]")
+    return lines
+
+
+_MK_TOOL = [{"name": "mk", "parameters": {"type": "object"}}]
+
+
+def test_reasoning_budget_cuts_a_tool_call_that_only_deliberates(monkeypatch, tmp_path):
+    from salome_agent.llm import ReasoningBudgetExceeded
+    calls = []
+
+    def post(url, json=None, headers=None, verify=None, timeout=None, stream=None):
+        calls.append(1)
+        return _FakeResp(None, lines=_reasoning_lines(["x" * 400] * 10))
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    trace = tmp_path / "t.jsonl"
+    client = LLMClient("http://x/v1", "", "auto", reasoning_budget=500,
+                       trace_path=str(trace))
+    with pytest.raises(ReasoningBudgetExceeded) as e:
+        client.chat(messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+    assert e.value.tokens > 500
+    assert len(calls) == 1  # not retried as an endpoint failure
+    assert "incomplete" in trace.read_text()
+
+
+def test_reasoning_budget_stops_counting_once_a_tool_call_starts(monkeypatch):
+    tc = {"tool_calls": [{"index": 0, "id": "c1", "type": "function",
+                          "function": {"name": "mk", "arguments": "{}"}}]}
+    lines = (_reasoning_lines(["x" * 400] * 4)[:-1]
+             + ["data: " + json.dumps({"choices": [{"delta": tc}]})]
+             + _reasoning_lines(["x" * 400] * 10, then={}))
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=lines))
+    out = LLMClient("http://x/v1", "", "auto", reasoning_budget=500).chat(
+        messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+    assert out["tool_call"] == "mk"
+
+
+def test_reasoning_budget_zero_is_off(monkeypatch):
+    tc = {"tool_calls": [{"index": 0, "id": "c1", "type": "function",
+                          "function": {"name": "mk", "arguments": "{}"}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=_reasoning_lines(
+                            ["x" * 4000] * 10, then=tc)))
+    out = LLMClient("http://x/v1", "", "auto", reasoning_budget=0).chat(
+        messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+    assert out["tool_call"] == "mk"
+
+
+def test_reasoning_budget_does_not_apply_without_tools(monkeypatch):
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=_reasoning_lines(
+                            ["x" * 4000] * 10, then={"content": '{"a": 1}'})))
+    out = LLMClient("http://x/v1", "", "auto", reasoning_budget=500).chat(
+        messages=[{"role": "user", "content": "plan"}])
+    assert out == {"a": 1}

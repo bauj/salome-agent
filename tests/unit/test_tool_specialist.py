@@ -255,3 +255,34 @@ def test_copy_that_reads_an_upstream_shape_is_silent():
         {"module": "toy"}, llm, MagicMock(), iteration_cap=3, upstream=("beam_1",))
     [content] = _tool_messages(llm)
     assert "earlier stage" not in content
+
+
+def test_reasoning_overrun_is_nudged_once_then_the_turn_is_retried():
+    from salome_agent.llm import ReasoningBudgetExceeded
+    llm = MagicMock()
+    llm.chat.side_effect = [ReasoningBudgetExceeded(21000, 20000), _resp(("done", {"x": 1}))]
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
+    assert result["out"] == {"x": 1}
+    nudge = llm.chat.call_args.kwargs["messages"][-1]
+    assert nudge["role"] == "user"
+    assert "21000" in nudge["content"] and "tool call now" in nudge["content"]
+
+
+def test_second_overrun_in_a_row_ends_the_stage():
+    from salome_agent.llm import ReasoningBudgetExceeded
+    llm = MagicMock()
+    llm.chat.side_effect = [ReasoningBudgetExceeded(21000, 20000),
+                            ReasoningBudgetExceeded(22000, 20000)]
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
+    assert result["exhausted"] is True
+    assert "reasoning budget" in result["last_error"]
+    assert llm.chat.call_count == 2
+
+
+def test_overrun_after_an_acting_turn_is_nudged_again():
+    from salome_agent.llm import ReasoningBudgetExceeded
+    llm = MagicMock()
+    llm.chat.side_effect = [ReasoningBudgetExceeded(21000, 20000), _resp(("work", {"a": 1})),
+                            ReasoningBudgetExceeded(21000, 20000), _resp(("done", {}))]
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=6)
+    assert "out" in result

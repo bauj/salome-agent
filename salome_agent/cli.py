@@ -160,7 +160,8 @@ def build_llm(config: dict, request_timeout: float | None = None,
                      json_retries=llm_config.get("json_retries", 2),
                      module_extra_body=module_extra_body,
                      max_retries=llm_config.get("max_retries", 2),
-                     modules=modules)
+                     modules=modules,
+                     reasoning_budget=llm_config.get("reasoning_budget", 20000))
 
 
 def main(argv: list[str] | None = None) -> int:
