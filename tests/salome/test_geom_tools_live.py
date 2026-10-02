@@ -326,6 +326,35 @@ class TestCurveTools:
         assert face["area"] == pytest.approx(area, rel=1e-6)
         self._valid_with_wires(agent_client, face, 8)
 
+    def test_slot_holes_p1_plate(self, agent_client):
+        """test_fillet_p1_plate with its curved slots given as slots, not traced arcs."""
+        holes = [{"center": "0,0,0", "radius": 25}, {"center": "0,-80,0", "radius": 20}]
+        holes += [{"center": f"{64 * math.cos(math.radians(a))},{64 * math.sin(math.radians(a))},0",
+                   "radius": 15} for a in (30, 90, 150)]
+        holes += [{"slot": {"center": "0,-80,0", "radius": 35, "width": 18,
+                            "from_angle": a0, "to_angle": a0 + 120}} for a0 in (-60, 120)]
+        face = agent_client.call_tool("make_profile_face", {"start": "96,0,0", "segments": [
+            {"to": "-96,0,0", "through": "0,96,0"}, {"to": "-54,0,0", "fillet": 20},
+            {"to": "-54,-80,0"}, {"to": "54,-80,0", "through": "0,-134,0"},
+            {"to": "54,0,0", "fillet": 20}, {"to": "96,0,0"}], "holes": holes})
+        assert face["ok"] is True, face.get("error")
+        outline = math.pi * (96 ** 2 + 54 ** 2) / 2 + 108 * 80 + 2 * 400 * self.CORNER
+        slots = 2 * (35 * 2 * math.pi / 3 * 18 + 81 * math.pi)
+        area = outline - math.pi * (25 ** 2 + 20 ** 2 + 3 * 15 ** 2) - slots
+        assert face["area"] == pytest.approx(area, rel=1e-6)
+        self._valid_with_wires(agent_client, face, 8)
+
+    def test_straight_slot_off_the_xy_plane(self, agent_client):
+        face = agent_client.call_tool("make_profile_face", {"start": "0,0,0", "segments": [
+            {"to": "40,0,0"}, {"to": "40,0,20"}, {"to": "0,0,20"}],
+            "holes": [{"slot": {"from": "10,0,15", "to": "30,0,15", "width": 6}},
+                      {"slot": {"center": "20,0,10", "radius": 6, "width": 2,
+                                "from_angle": 30, "to_angle": 150}}]})
+        assert face["ok"] is True, face.get("error")
+        area = 800 - (20 * 6 + 9 * math.pi) - (6 * 2 * math.pi * 2 / 3 + math.pi)
+        assert face["area"] == pytest.approx(area, rel=1e-6)
+        self._valid_with_wires(agent_client, face, 3)
+
     def test_fillet_in_a_hole_keeps_its_own_wire(self, agent_client):
         face = agent_client.call_tool("make_profile_face", {"start": "0,0,0", "segments": [
             {"to": "40,0,0", "fillet": 2}, {"to": "40,20,0"}, {"to": "0,20,0"}],
