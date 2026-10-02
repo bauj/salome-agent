@@ -316,8 +316,8 @@ class LLMClient:
         # request (messages + FULL tool schemas) summed over every call —
         # the real input cost even when a provider strips its `usage` block,
         # and the only figure that reflects the re-sent tool schemas.
-        # `llm_seconds` sums the wall-clock of each successful round-trip
-        # (final attempt only; retry backoff sleeps excluded) — graph.py diffs
+        # `llm_seconds` sums the wall-clock of each streamed attempt, including
+        # one cut or dropped mid-stream (retry backoff sleeps excluded) — graph.py diffs
         # it at stage boundaries to split LLM wait from local/SALOME time.
         self.usage = {"calls": 0, "metered_calls": 0,
                       "prompt_tokens": 0, "completion_tokens": 0,
@@ -620,6 +620,9 @@ class LLMClient:
                         budget=ep.request_timeout,
                         reasoning_budget=self.reasoning_budget if tool_names else 0)
                 except BaseException as e:
+                    # a cut or dropped call still cost a round-trip and its wait
+                    self.usage["calls"] += 1
+                    self.usage["llm_seconds"] += time.monotonic() - t0
                     self._trace_incomplete(trace_request, attempt, t0, partial, e)
                     self._live_close()
                     raise

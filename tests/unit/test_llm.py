@@ -1400,3 +1400,17 @@ def test_reasoning_budget_does_not_apply_without_tools(monkeypatch):
     out = LLMClient("http://x/v1", "", "auto", reasoning_budget=500).chat(
         messages=[{"role": "user", "content": "plan"}])
     assert out == {"a": 1}
+
+
+def test_a_cut_call_still_counts_in_usage_calls_and_seconds(monkeypatch):
+    from salome_agent.llm import ReasoningBudgetExceeded
+    ticks = iter(range(0, 100_000, 10))
+    monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=_reasoning_lines(["x" * 400] * 10)))
+    client = LLMClient("http://x/v1", "", "auto", reasoning_budget=500, request_timeout=10_000)
+    with pytest.raises(ReasoningBudgetExceeded):
+        client.chat(messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+    assert client.usage["calls"] == 1
+    assert client.usage["metered_calls"] == 0
+    assert client.usage["llm_seconds"] > 0
