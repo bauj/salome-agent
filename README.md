@@ -187,8 +187,8 @@ salome-agent "make this bracket" --images ./bracket-sketch.png --batch
 salome-agent "make this bracket" --images ./front.png,./side.png,./top.bmp --batch
 ```
 
-Each image is base64-encoded (PNG/JPEG/WEBP/GIF/BMP; needs a vision-capable LLM behind
-`llm.base_url`) and first handed to a dedicated **vision agent**. It extracts what is
+Each image is base64-encoded (PNG/JPEG/WEBP/GIF/BMP, recognised by content; at most 10
+images and 20 MB in all; needs a vision-capable LLM behind `llm.base_url`) and first handed to a dedicated **vision agent**. It extracts what is
 visible — the parts and their shapes, dimensions written on the drawing, proportions,
 symmetry, and what is ambiguous — as a structured description, which is logged and passed
 to the **planner** and to the **geom specialist** in place of the raw pictures — neither

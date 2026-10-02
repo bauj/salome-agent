@@ -59,24 +59,30 @@ def test_parse_image_paths_single_path():
     assert parse_image_paths("ref.png") == ["ref.png"]
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"rest"
+BMP = b"BM" + b"rest"
+
+
 def test_load_reference_image_returns_data_uri(tmp_path):
     path = tmp_path / "ref.png"
-    path.write_bytes(b"not-a-real-png")
+    path.write_bytes(PNG)
     uri = load_reference_image(str(path))
-    assert uri == "data:image/png;base64," + base64.b64encode(b"not-a-real-png").decode("ascii")
+    assert uri == "data:image/png;base64," + base64.b64encode(PNG).decode("ascii")
 
 
-def test_load_reference_image_accepts_bmp(tmp_path):
-    path = tmp_path / "ref.bmp"
-    path.write_bytes(b"not-a-real-bmp")
-    uri = load_reference_image(str(path))
-    assert uri.startswith("data:image/bmp;base64,")
+@pytest.mark.parametrize("data,mime", [
+    (BMP, "image/bmp"), (b"\xff\xd8\xff\xe0rest", "image/jpeg"),
+    (b"GIF89arest", "image/gif"), (b"RIFF\0\0\0\0WEBPrest", "image/webp")])
+def test_load_reference_image_detects_the_type_from_content(tmp_path, data, mime):
+    path = tmp_path / "ref.bin"
+    path.write_bytes(data)
+    assert load_reference_image(str(path)).startswith(f"data:{mime};base64,")
 
 
-def test_load_reference_image_rejects_unsupported_type(tmp_path):
-    path = tmp_path / "ref.txt"
+def test_load_reference_image_ignores_a_misleading_extension(tmp_path):
+    path = tmp_path / "ref.png"
     path.write_text("hello")
-    with pytest.raises(ValueError, match="unsupported or unrecognized image type"):
+    with pytest.raises(ValueError, match="is not a PNG, JPEG, WEBP, GIF or BMP image"):
         load_reference_image(str(path))
 
 
@@ -88,12 +94,43 @@ def test_load_reference_image_missing_file_raises_oserror(tmp_path):
 def test_load_reference_images_returns_one_uri_per_path(tmp_path):
     p1 = tmp_path / "front.png"
     p2 = tmp_path / "side.bmp"
-    p1.write_bytes(b"aaa")
-    p2.write_bytes(b"bbb")
+    p1.write_bytes(PNG)
+    p2.write_bytes(BMP)
     uris = load_reference_images([str(p1), str(p2)])
     assert len(uris) == 2
     assert uris[0].startswith("data:image/png;base64,")
     assert uris[1].startswith("data:image/bmp;base64,")
+
+
+def test_load_reference_images_rejects_an_empty_list():
+    with pytest.raises(ValueError, match="no image path given"):
+        load_reference_images(parse_image_paths(" , "))
+
+
+def test_load_reference_images_caps_the_count(tmp_path):
+    from salome_agent.cli import MAX_IMAGES
+
+    path = tmp_path / "ref.png"
+    path.write_bytes(PNG)
+    with pytest.raises(ValueError, match=f"at most {MAX_IMAGES}"):
+        load_reference_images([str(path)] * (MAX_IMAGES + 1))
+
+
+def test_load_reference_images_caps_the_total_size(tmp_path, monkeypatch):
+    from salome_agent import cli
+
+    monkeypatch.setattr(cli, "MAX_IMAGE_BYTES", 10)
+    path = tmp_path / "ref.png"
+    path.write_bytes(PNG)
+    with pytest.raises(ValueError, match="MB of images"):
+        load_reference_images([str(path), str(path)])
+
+
+def test_main_rejects_an_empty_images_flag(tmp_path, monkeypatch):
+    from salome_agent import cli, config
+
+    monkeypatch.setattr(config, "load_config", lambda path: {"work_dir": str(tmp_path)})
+    assert cli.main(["make a box", "--images", ","]) == 1
 
 
 def test_main_no_session_delegates_to_run_request(tmp_path, monkeypatch, capsys):
