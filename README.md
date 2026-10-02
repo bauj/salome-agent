@@ -79,6 +79,7 @@ cp config.example.json config.json
     "json_retries": 2,
     "vision_fix_retries": 2,
     "max_retries": 2,
+    "reasoning_budget": 20000,
     "extra_headers": {},
     "extra_body": {},
     "module_extra_body": {},
@@ -118,6 +119,7 @@ Any OpenAI-compatible `/chat/completions` endpoint. Requests are streamed (SSE).
 | `json_retries` | `2` | When the planner's answer does not parse as JSON, the answer and the exact parser error are fed back and the planner is re-asked this many times before the run fails. |
 | `vision_fix_retries` | `2` | When the image-analysis agent's spec fails the mechanical checks (an outline that does not close, an arc end off its radius, a hole outside the outline, a dangling reference), the errors are fed back and it is re-asked this many times; errors still left go to the planner and geom as `conflicts`. |
 | `max_retries` | `2` | Retries for transient failures — connection drop, truncated stream, HTTP 429 (honouring `Retry-After`), fast 502/503/504 — with exponential backoff. Raise it for a flaky free-tier endpoint. |
+| `reasoning_budget` | `20000` | Specialist (tool-calling) calls only: approximate reasoning tokens (characters / 4) a model may spend before its first tool call. Past it the call is cut and re-asked once with a "pick a reading and act" nudge; a second cut in a row ends the stage. `0` turns it off. |
 | `extra_headers` | `{}` | Extra HTTP headers sent verbatim on every request. In a string value `{run_id}` is replaced with the run's id — for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`. |
 | `extra_body` | `{}` | Extra top-level fields merged into every request's JSON body, next to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider body params such as `{"reasoning_effort": "high"}`; whether the provider honours a field is up to the provider. |
 | `module_extra_body` | `{}` | `{"planner" \| "geom" \| "smesh" \| "paravis": {...}}` — a body sent *instead of* `extra_body` (full replacement, not a merge) on that module's calls. Lets an expensive knob sit on the planner only, e.g. `{"planner": {"reasoning_effort": "high"}}`, while the many specialist calls run without it. |

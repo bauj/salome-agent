@@ -83,6 +83,18 @@ class StreamBudgetExceeded(requests.Timeout):
     burns another full budget on the same stuck backend."""
 
 
+class ReasoningBudgetExceeded(Exception):
+    """A tool-calling round-trip reasoned past `llm.reasoning_budget` (approx
+    tokens) before starting any tool call or content: the model is deliberating
+    instead of acting. Never retried here; the specialist re-asks with a nudge."""
+
+    def __init__(self, tokens: int, budget: int):
+        super().__init__(f"model reasoned ~{tokens} tokens without acting "
+                         f"(llm.reasoning_budget {budget})")
+        self.tokens = tokens
+        self.budget = budget
+
+
 class LLMCancelled(Exception):
     """The turn's cancel event was set while a call was in flight (Stop in the
     chat). Not a failure and never retried; deliberately not a requests or
@@ -252,7 +264,7 @@ class LLMClient:
                  trace_path: str | None = None, extra_headers: dict | None = None,
                  extra_body: dict | None = None, json_retries: int = 2,
                  module_extra_body: dict | None = None, max_retries: int = 2,
-                 modules: dict | None = None):
+                 modules: dict | None = None, reasoning_budget: int = 0):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -283,6 +295,9 @@ class LLMClient:
         # 502/503/504) get this many retries after the first attempt, with
         # exponential backoff. Bump it for a flaky free-tier endpoint.
         self.max_retries = max_retries
+        # Tool-calling calls only: approx reasoning tokens (chars/4) a model may
+        # spend before its first tool call or content; 0 = no limit.
+        self.reasoning_budget = reasoning_budget
         # modules: {"<module>": {<config.MODULE_LLM_KEYS subset>}} — that module's calls
         # go to its own endpoint/model (e.g. a better drawing reader for vision);
         # keys left out keep the shared value. Its extra_body, when given, wins
@@ -415,8 +430,8 @@ class LLMClient:
             self._live = None
 
     def _consume_stream(self, resp, t0: float, prose: bool = False,
-                        partial: dict | None = None, budget: float | None = None
-                        ) -> tuple[dict, dict | None, str | None, float | None]:
+                        partial: dict | None = None, budget: float | None = None,
+                        reasoning_budget: int = 0) -> tuple[dict, dict | None, str | None, float | None]:
         """Reassemble an SSE `data:` stream into one provider `message` dict
         (plus usage / finish_reason / time-to-first-token). `content` and
         `reasoning_content` fragments are concatenated; `tool_calls` fragments
@@ -443,6 +458,7 @@ class LLMClient:
         finish = usage = ttft = None
         frames = 0
         done = False
+        reasoning_chars = 0
         budget = self.request_timeout if budget is None else budget
         deadline = t0 + budget
         # chunk_size=None: iter_lines() with a fixed size uses read(amt)
@@ -487,6 +503,10 @@ class LLMClient:
                         self._stream_event(type="delta", channel="prose", text=delta["content"])
                 if delta.get("reasoning_content"):
                     reasoning.append(delta["reasoning_content"])
+                    reasoning_chars += len(delta["reasoning_content"])
+                    if (reasoning_budget and not content and not tool_frags
+                            and reasoning_chars // 4 > reasoning_budget):
+                        raise ReasoningBudgetExceeded(reasoning_chars // 4, reasoning_budget)
                     self._live_write(delta["reasoning_content"], "reasoning")
                     self._stream_event(type="delta", channel="reasoning",
                                        text=delta["reasoning_content"])
@@ -597,7 +617,8 @@ class LLMClient:
                 try:
                     message, usage, finish, ttft = self._consume_stream(
                         resp, t0, prose=bool(tool_names), partial=partial,
-                        budget=ep.request_timeout)
+                        budget=ep.request_timeout,
+                        reasoning_budget=self.reasoning_budget if tool_names else 0)
                 except BaseException as e:
                     self._trace_incomplete(trace_request, attempt, t0, partial, e)
                     self._live_close()
@@ -607,6 +628,10 @@ class LLMClient:
                 log.info("LLM request attempt %d cancelled", attempt)
                 if resp is not None:
                     resp.close()
+                raise
+            except ReasoningBudgetExceeded as e:
+                log.warning("LLM request attempt %d: %s", attempt, e)
+                resp.close()
                 raise
             except StreamBudgetExceeded as e:
                 log.warning("LLM request attempt %d: %s", attempt, e)
