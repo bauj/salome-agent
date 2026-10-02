@@ -133,10 +133,10 @@ def build_llm(config: dict, request_timeout: float | None = None,
     # extra_headers: verbatim per-request headers; string values may contain
     # {run_id}, substituted with this run's id (a stable per-conversation token
     # some gateways require).
-    extra_headers = {
-        k: v.format(run_id=run_id) if isinstance(v, str) else v
-        for k, v in (llm_config.get("extra_headers") or {}).items()
-    }
+    def headers(raw):
+        return {k: v.format(run_id=run_id) if isinstance(v, str) else v
+                for k, v in (raw or {}).items()}
+    extra_headers = headers(llm_config.get("extra_headers"))
     # extra_body: verbatim top-level chat-completions body fields (e.g. a
     # provider's reasoning_effort knob) — unlike extra_headers, these land in
     # the JSON payload, not the HTTP headers (GH #28).
@@ -145,6 +145,11 @@ def build_llm(config: dict, request_timeout: float | None = None,
     # that replaces extra_body for that module's calls, so an expensive knob
     # (reasoning_effort) can sit on the planner alone.
     module_extra_body = llm_config.get("module_extra_body") or {}
+    # modules: {"<module>": {base_url, api_key, model, ...}} — that module's
+    # calls go to its own endpoint/model; omitted keys keep the shared value.
+    modules = {name: {**o, "extra_headers": headers(o["extra_headers"])}
+               if "extra_headers" in (o or {}) else (o or {})
+               for name, o in (llm_config.get("modules") or {}).items()}
     return LLMClient(base_url=llm_config["base_url"], api_key=llm_config.get("api_key", ""),
                      model=llm_config["model"], ssl_cert_file=llm_config.get("ssl_cert_file", ""),
                      temperature=llm_config.get("temperature", 0),
@@ -152,7 +157,8 @@ def build_llm(config: dict, request_timeout: float | None = None,
                      trace_path=trace_path, extra_headers=extra_headers, extra_body=extra_body,
                      json_retries=llm_config.get("json_retries", 2),
                      module_extra_body=module_extra_body,
-                     max_retries=llm_config.get("max_retries", 2))
+                     max_retries=llm_config.get("max_retries", 2),
+                     modules=modules)
 
 
 def main(argv: list[str] | None = None) -> int:
