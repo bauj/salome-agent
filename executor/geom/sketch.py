@@ -370,6 +370,9 @@ def _planar_face(geompy, wires, tool: str):
     # Like MakePolyline faces, MakeFaceWires(..., 1) quietly builds a curved
     # face from wires that are not in one plane, so check what it made.
     kind = str(geompy.KindOfShape(face)[0]).rsplit(".", 1)[-1]
+    if kind == "COMPOUND":
+        return None, (f"{tool}: the wires make no single face (GEOM built a COMPOUND): "
+                      "holes overlap each other or cross the outline")
     if kind not in _PLANAR_KINDS:
         return None, f"{tool}: the wires do not lie in one plane (GEOM built a {kind} face)"
     is_valid, msg = _check_shape(geompy, face)
