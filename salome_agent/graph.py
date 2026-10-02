@@ -62,6 +62,11 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
 
 
 def route_start(state: dict) -> str:
+    """"plan" goes through describe_image first, so a follow-up turn that
+    brings reference images is routed there too; describe_image hands it on to
+    amend."""
+    if state.get("reference_images"):
+        return "plan"
     return "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
 
 
@@ -97,12 +102,14 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
     session = amend.AmendSession(graph, client, turn)
+    description = state.get("image_description")
+    extra = {"image_description": description} if description else {}
     try:
         session, outcome = amend.run_amend(
             state["user_request"], graph, llm, client, turn,
             state["config"]["policy"], history=state.get("history") or [],
             selection=state.get("selection"), session=session,
-            cancel=config["configurable"].get("cancel"))
+            cancel=config["configurable"].get("cancel"), **extra)
     except RollbackFailed as e:
         log.error("  %s", e)
         return Command(update={"fatal": f"rollback failed: {e}", "degraded": True,
@@ -197,6 +204,35 @@ def retry_context(state: dict, idx: int, client) -> dict | None:
 # msgpack them and fail with "Type is not msgpack serializable: MagicMock"
 # the first time a live end-to-end run actually exercised the checkpointer.
 
+def _describe_image_node(state: dict, config: "RunnableConfig"):
+    from langgraph.types import Command
+    from salome_agent.nodes.vision import describe_images, format_description
+
+    images = state.get("reference_images")
+    after = "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
+    if not images:
+        return Command(goto=after)
+    llm = config["configurable"]["llm_client"]
+    log.info("describing %d reference image(s)...", len(images))
+    snap0 = _usage_snap(llm)
+    t0 = time.monotonic()
+    try:
+        desc = describe_images(state["user_request"], images, llm)
+    except Exception as e:  # noqa: BLE001
+        msg = _llm_endpoint_fatal(e)
+        if msg is None:
+            raise
+        log.error("%s", msg)
+        return Command(update={"fatal": msg}, goto="assemble")
+    text = format_description(desc)
+    log.info("image description:\n%s", text)
+    update = {"image_description": text}
+    if snap0 is not None:
+        vt = _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0)
+        log.info("  vision timing: wall=%.1fs llm=%.1fs", vt["wall"], vt["llm_s"])
+    return Command(update=update, goto=after)
+
+
 def _plan_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
     from salome_agent.nodes.planner import blank_stages, plan
@@ -214,7 +250,15 @@ def _plan_node(state: dict, config: "RunnableConfig"):
         # "retry" is planned from scratch and must still see what was asked
         request += _earlier_requests(state)
     try:
-        stage_plans = plan(request, llm, detail)
+        description = state.get("image_description")
+        # The vision agent's description replaces the raw images for the planner;
+        # they are only passed through if no description was produced.
+        image_kwargs = {}
+        if description:
+            image_kwargs["image_description"] = description
+        elif state.get("reference_images"):
+            image_kwargs["images"] = state["reference_images"]
+        stage_plans = plan(request, llm, detail, **image_kwargs)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -276,6 +320,10 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         if block:
             blocks.append(block)
     if module == "geom":
+        # smesh/paravis never see the image description: it only feeds CAD construction
+        if state.get("image_description"):
+            from salome_agent.specialists.geom import image_block
+            blocks.append(image_block(state["image_description"]))
         retry = retry_context(state, idx, client)
         seed = (retry or {}).get("call_log")
         seed_calls = (retry or {}).get("calls")
@@ -464,6 +512,7 @@ def build_graph(batch: bool):
     from salome_agent.nodes.gates import plan_gate, retry_gate
 
     g = StateGraph(RunState)
+    g.add_node("describe_image", _describe_image_node)
     g.add_node("plan", _plan_node)
     g.add_node("amend", _amend_node)
     g.add_node("plan_gate", plan_gate)
@@ -475,5 +524,7 @@ def build_graph(batch: bool):
     g.add_node("skip", _skip_node)
     g.add_node("assemble", _assemble_node)
     g.add_node("report", _report_node)
-    g.add_conditional_edges(START, route_start, {"plan": "plan", "amend": "amend"})
+    # a first turn goes through describe_image, which hands over to plan
+    # straight away when there is no reference image
+    g.add_conditional_edges(START, route_start, {"plan": "describe_image", "amend": "amend"})
     return g.compile(checkpointer=MemorySaver())

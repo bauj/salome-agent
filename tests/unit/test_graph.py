@@ -378,6 +378,68 @@ def test_run_stage_node_skips_timing_without_a_real_usage_dict(monkeypatch):
     assert "timing" not in cmd.update["stages"][0]
 
 
+def test_describe_image_node_skips_straight_to_plan_without_images():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    cmd = graph._describe_image_node({"user_request": "x"}, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "plan" and not cmd.update
+    llm.chat.assert_not_called()
+
+
+def test_describe_image_node_stores_the_description_for_the_planner():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.return_value = {"summary": "an L-bracket"}
+    state = {"user_request": "x", "reference_images": ["data:image/png;base64,AAAA"]}
+    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "plan"
+    assert "an L-bracket" in cmd.update["image_description"]
+
+
+def test_describe_image_node_hands_a_follow_up_turn_to_amend():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.return_value = {"summary": "a handle"}
+    state = {"user_request": "x", "turn_idx": 1,
+             "reference_images": ["data:image/png;base64,AAAA"]}
+    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "amend" and "a handle" in cmd.update["image_description"]
+    cmd = graph._describe_image_node({"user_request": "x", "turn_idx": 1},
+                                     {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "amend"
+
+
+def test_describe_image_node_turns_endpoint_error_into_a_clean_fatal():
+    from salome_agent import graph
+
+    llm = MagicMock()
+    llm.chat.side_effect = _http_error(503)
+    state = {"user_request": "x", "reference_images": ["data:image/png;base64,AAAA"]}
+    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
+    assert cmd.goto == "assemble" and "503" in cmd.update["fatal"]
+
+
+def test_plan_node_hands_the_description_not_the_images_to_the_planner(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.nodes import planner
+
+    seen = {}
+
+    def fake_plan(request, llm, detail="balanced", images=None, image_description=None):
+        seen.update(images=images, image_description=image_description)
+        return [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]
+
+    monkeypatch.setattr(planner, "plan", fake_plan)
+    state = {"user_request": "x", "config": {"policy": {}},
+             "reference_images": ["data:image/png;base64,AAAA"],
+             "image_description": "Summary: a box"}
+    graph._plan_node(state, {"configurable": {"llm_client": MagicMock()}})
+    assert seen == {"images": None, "image_description": "Summary: a box"}
+
+
 def test_select_upstream_always_returns_every_available_name():
     from salome_agent.graph import select_upstream
 

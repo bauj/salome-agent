@@ -36,6 +36,8 @@ def test_route_start():
     assert route_start({"turn_idx": 0}) == "plan"
     assert route_start({}) == "plan"
     assert route_start({"turn_idx": 2}) == "amend"
+    # images go through describe_image (the "plan" branch) on any turn
+    assert route_start({"turn_idx": 2, "reference_images": ["data:image/png;base64,AA"]}) == "plan"
 
 
 def test_amend_turn_rewrites_result_and_graph_json(tmp_path, monkeypatch):
@@ -101,6 +103,29 @@ def test_llm_failure_mid_amend_keeps_the_edits_already_applied(tmp_path, monkeyp
     out = app.invoke(_state(tmp_path, _graph(), "make it taller"), config=cfg)
     assert out["fatal"].startswith("LLM endpoint error")
     assert out["build_graph"]["nodes"][0]["tool_args"]["dz"] == 3
+
+
+def test_follow_up_with_images_is_described_then_amended(tmp_path, monkeypatch):
+    from salome_agent.nodes import vision as vision_mod
+    from salome_agent.specialists import amend as amend_mod
+
+    monkeypatch.setattr(vision_mod, "describe_images",
+                        lambda request, images, llm: {"summary": "a D-shaped handle"})
+    seen = {}
+
+    def fake_run_amend(text, graph, llm, client, turn, policy, **kw):
+        seen.update(kw)
+        return amend_mod.AmendSession(graph, client, turn), {"summary": "ok", "question": None}
+
+    monkeypatch.setattr(amend_mod, "run_amend", fake_run_amend)
+    state = _state(tmp_path, _graph(), "add this handle")
+    state["reference_images"] = ["data:image/png;base64,AAAA"]
+    app = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    out = app.invoke(state, config=cfg)
+    assert "a D-shaped handle" in seen["image_description"]
+    assert out["turn_outcome"]["summary"] == "ok"
 
 
 def _replan_seen(tmp_path, monkeypatch, history):

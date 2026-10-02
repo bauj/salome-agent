@@ -664,6 +664,19 @@ def test_compact_result_keeps_a_delta_note():
     assert compact["delta"] == "cut: removed nothing"
 
 
+def test_image_description_is_injected_as_text_never_as_images():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("finish_stage", {"result_names": []}))]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": []}
+    run_geom_specialist({"module": "geom", "intent": "box", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=3,
+                        image_description="Summary: an L-bracket")
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert isinstance(user, str)
+    assert "Summary: an L-bracket" in user
+
+
 def _audited_run(calls, finishes, verify_cadence="none", upstream=None):
     """Run a stage whose model makes `calls` (one per turn) then calls
     finish_stage with each of `finishes` in turn. Returns (result, llm)."""

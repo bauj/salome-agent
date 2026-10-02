@@ -177,6 +177,31 @@ source .venv/bin/activate
 salome-agent "make a 10mm cube" --batch
 ```
 
+To point the agent at a picture (or several) of the part you want, add `--images`
+(comma-separated paths, no spaces around the commas needed):
+
+```bash
+salome-agent "make this bracket" --images ./bracket-sketch.png --batch
+
+# several views/plans of the same part
+salome-agent "make this bracket" --images ./front.png,./side.png,./top.bmp --batch
+```
+
+Each image is base64-encoded (PNG/JPEG/WEBP/GIF/BMP; needs a vision-capable LLM behind
+`llm.base_url`) and first handed to a dedicated **vision agent**. It extracts what is
+visible — the parts and their shapes, dimensions written on the drawing, proportions,
+symmetry, and what is ambiguous — as a structured description, which is logged and passed
+to the **planner** and to the **geom specialist** in place of the raw pictures — neither
+sees the images themselves. The planner uses it to shape the stage breakdown, the
+specialist for proportions and placement. Multiple
+images are treated as different views/plans of the *same* part, reconciled into one 3D
+description — not as separate parts. Explicit numeric dimensions in the text request
+win, then dimensions read from the image; values the vision agent had to estimate are
+marked `~`. smesh/paravis stages don't see the images — it only feeds CAD construction.
+
+The vision call is tagged `module="vision"`, so `llm.module_extra_body` can give it its own
+request body (e.g. a different `reasoning_effort`) like the other modules.
+
 The agent will:
 
 1. Connect to the running server via `~/.salome_agent/server.json`. If none is
@@ -204,6 +229,7 @@ Run the result on its own, with no agent involved:
 
 | Flag | Meaning |
 |------|---------|
+| `--images PATH,PATH,...` | Comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) the generated CAD should match — e.g. several views/plans of the same part; described by a vision agent whose text description feeds the planner and the geom specialist (they never see the images). |
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
 | `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. smesh/paravis only (geom needs a session). |
 | `--work-dir DIR` | Override `config.work_dir`. |
@@ -340,7 +366,7 @@ salome_agent/
   cli.py            entry point
   graph.py          the LangGraph StateGraph (all nodes + routing)
   config.py         config loading + validation
-  llm.py            minimal OpenAI-compatible tool-calling client
+  llm.py            minimal OpenAI-compatible tool-calling client (+ with_images() for multimodal messages)
   state.py          RunState / stage TypedDicts
   nodes/            planner, gates (plan/retry), advance, assembler, report
   specialists/      geom (tool-calling), smesh, paravis (raw script)

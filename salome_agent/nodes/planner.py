@@ -1,3 +1,4 @@
+from salome_agent.llm import with_images
 from salome_agent.modules import spec_for
 
 
@@ -51,7 +52,17 @@ Module scope:
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
 - paravis: post-processing an existing simulation result (a MED file) --
   contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
-  Only use paravis when the request involves a results/field/MED file."""
+  Only use paravis when the request involves a results/field/MED file.
+
+If the request comes with an "Image description" block, it was written by an
+image-analysis agent from the user's reference image(s) -- treat it as the visual
+target: use the parts it lists, their approximate proportions and placement to
+shape your stage breakdown. Several views described together are ONE object, not
+separate parts. Prefer explicit numeric dimensions given in the text request, then
+dimensions the description says were read from the image; only fall back to values
+marked as estimated (~) when nothing else gives one. Mention uncertainties in a
+stage's params rather than inventing detail. If reference image(s) are attached
+directly instead, read them the same way."""
 
 # The smesh and paravis one-liners stay in _PLANNER_BASE (not restructured);
 # they also appear in their spec.catalogue strings so routable() includes them.
@@ -77,11 +88,15 @@ def blank_stages(stage_plans: list[dict]) -> dict:
     }
 
 
-def plan(request: str, llm, detail: str = "balanced") -> list[dict]:
+def plan(request: str, llm, detail: str = "balanced",
+        images: list[str] | None = None,
+        image_description: str | None = None) -> list[dict]:
     system = PLANNER_SYSTEM_PROMPT + _DETAIL_HINT.get(detail, "")
+    if image_description:
+        request = f"{request}\n\nImage description:\n{image_description}"
     response = llm.chat(
         messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": request}],
+                  {"role": "user", "content": with_images(request, images)}],
         module="planner",
     )
     return response["stages"]
