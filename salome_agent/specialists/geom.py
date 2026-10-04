@@ -352,6 +352,7 @@ GEOM_SPEC = register(ModuleSpec(
     execute=lambda client, name, args: client.call_tool(name, args),
     render_result=lambda result: str(_compact_result(result)),
     tools_for=_geom_tools_for,
+    needs_session=True,
     kickoff=("Start with the first step now. Do not work out the later steps "
              "yet: each tool result tells you what you need for the next one, "
              "and the tool descriptions say how each tool behaves."),
