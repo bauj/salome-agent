@@ -1,9 +1,9 @@
-"""Live-LLM smoke test for the smesh + paravis specialists (task 177).
+"""Live-LLM smoke test for the smesh specialist (task 177).
 
 Every other specialist test uses a MagicMock LLM, which cannot catch
 message-shape / prompt-wiring / schema bugs — those only surface against a
 real endpoint (see the geom-specialist bugs 19-23). This drives the real
-smesh/paravis path against the configured LLM and a live SALOME session.
+smesh path against the configured LLM and a live SALOME session.
 
 Skipped unless BOTH a real ./config.json is present AND -m salome is run.
 """
@@ -148,39 +148,3 @@ def test_geom_to_smesh_multistage_live(config, tmp_path, running_server):
     assert "MakeBoxDXDYDZ" in src
     assert "find_object(" in src
     assert "Compute()" in src
-
-
-def test_paravis_specialist_live_generates_valid_script(client, live_llm):
-    """Lighter than the smesh test: paravis exec-verify needs a real MED file
-    on disk from an upstream stage (that path is task 174's geom->smesh->paravis
-    chain). Here we only confirm the specialist talks to the real LLM correctly
-    and emits a syntactically valid, statically-clean script."""
-    from salome_agent.specialists.script_modules import PARAVIS_SPEC
-    from salome_agent.specialists.tool_specialist import ToolSpecialist
-    from salome_agent.verify.introspect import build_api_map
-    from salome_agent.verify.static import check_static
-
-    stage_plan = {"module": "paravis", "intent": "colour the mesh surface by the 'temperature' field",
-                  "params": {"field": "temperature"}, "inputs": ["/tmp/mesh_out.med"]}
-
-    captured = {}
-    real_chat = live_llm.chat
-
-    def spy_chat(messages, tools=None, module=None):
-        captured["messages"] = messages
-        return real_chat(messages=messages, tools=tools, module=module)
-
-    live_llm.chat = spy_chat
-    try:
-        result = ToolSpecialist(PARAVIS_SPEC).run(stage_plan, live_llm, client, iteration_cap=12)
-    finally:
-        live_llm.chat = real_chat
-
-    assert result["warning"] is None, result["warning"]
-    script = result["script"]
-    assert script
-    print("\n--- generated paravis script ---\n" + script + "\n---\n")
-
-    _assert_tool_turns_well_formed(captured["messages"])
-    static_err = check_static(script, build_api_map(client))
-    assert static_err is None, static_err

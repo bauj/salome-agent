@@ -4,14 +4,14 @@ import operator
 
 
 class StagePlan(TypedDict):
-    module: Literal["geom", "smesh", "paravis"]
+    module: Literal["geom", "smesh"]
     intent: str
     params: dict
     # Plain-words description of what this stage needs, never object names
-    # (planner.py). paravis reads the MED file path from it.
+    # (planner.py).
     inputs: list[str]
     # Optional planner hint: the geom tool names this stage expects to use
-    # (task 193). Absent on smesh/paravis stages.
+    # (task 193). Absent on smesh stages.
     tools: NotRequired[list[str]]
     # Optional: the vision spec part ids this stage builds (task 286); the stage
     # is handed those parts' exact data.

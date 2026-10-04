@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
 from salome_agent.modules import spec_for
-from salome_agent.specialists.script_modules import PARAVIS_SPEC, SMESH_SPEC
+from salome_agent.specialists.script_modules import SMESH_SPEC
 from salome_agent.specialists.tool_specialist import ToolSpecialist
 
 
@@ -10,9 +10,8 @@ def _resp(*calls):
             "content": None, "raw_message": None}
 
 
-def test_both_script_modules_are_registered():
+def test_smesh_script_module_is_registered():
     assert spec_for("smesh") is SMESH_SPEC
-    assert spec_for("paravis") is PARAVIS_SPEC
 
 
 def test_smesh_system_prompt_is_unchanged():
@@ -20,12 +19,6 @@ def test_smesh_system_prompt_is_unchanged():
 
     assert SMESH_SPEC.prompt("final") == SMESH_SYSTEM_PROMPT
     assert SMESH_SPEC.prompt("strict") == SMESH_SYSTEM_PROMPT
-
-
-def test_paravis_system_prompt_is_unchanged():
-    from salome_agent.specialists.paravis import PARAVIS_SYSTEM_PROMPT
-
-    assert PARAVIS_SPEC.prompt("final") == PARAVIS_SYSTEM_PROMPT
 
 
 def test_emit_script_terminates_with_the_code():

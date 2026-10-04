@@ -126,7 +126,7 @@ def test_every_routable_module_contributes_its_catalogue():
     from salome_agent.modules import routable
 
     specs = {s.name for s in routable()}
-    assert specs == {"geom", "smesh", "paravis"}
+    assert specs == {"geom", "smesh"}
     for spec in routable():
         assert spec.catalogue.strip() in PLANNER_SYSTEM_PROMPT
 

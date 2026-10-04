@@ -6,7 +6,7 @@ import pytest
 pytestmark = pytest.mark.salome
 
 FIXTURE = Path(__file__).resolve().parent.parent.parent / "salome_agent" / "verify" / "toplevel_api.json"
-MODULES = ["geompy", "smesh", "pvsimple"]
+MODULES = ["geompy", "smesh"]
 
 
 def test_fixture_matches_live_introspect(agent_client):
