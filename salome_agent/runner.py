@@ -33,6 +33,8 @@ class EventMapper:
         turn and not the planner means an amend (chat edit) turn."""
         if module == "planner":
             source, index = "planner", None
+        elif module == "vision":
+            source, index = "vision", None
         elif self.plan:
             source, index = "stage", self.idx
         else:

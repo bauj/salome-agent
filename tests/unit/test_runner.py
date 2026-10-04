@@ -406,3 +406,11 @@ def test_vision_progress_reaches_on_event_before_the_plan(tmp_path, monkeypatch)
     assert kinds[:3] == ["vision_start", "vision_done", "plan"]
     start = next(e for e in events if e["kind"] == "vision_start")
     assert start["data"] == {"images": 1, "sizes": [], "model": "reader"}
+
+
+def test_vision_reasoning_has_its_own_source_with_or_without_a_plan():
+    m = EventMapper("r1", "/w/r1")
+    assert m.reasoning("vision", 1, "reasoning", "hmm")["data"]["source"] == "vision"
+    m.events("plan", {"plan": PLAN})
+    d = m.reasoning("vision", 2, "reasoning", "x")["data"]
+    assert (d["source"], d["index"]) == ("vision", None)
