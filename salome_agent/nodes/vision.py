@@ -4,7 +4,7 @@ import json
 import struct
 import time
 
-from salome_agent.llm import with_images
+from salome_agent.llm import ReasoningTimeExceeded, with_images
 from salome_agent.logs import log
 from salome_agent.nodes.vision_spec import attach_conflicts, format_errors, validate_spec
 
@@ -107,6 +107,8 @@ Rules:
 - For "2d", never invent a thickness or height; for "3d", give the depth of every
   part, estimated with "~" if no view shows it.
 - Never invent detail that is not visible; list it under uncertainties instead.
+- If a feature is still unclear after one careful look, take the most likely
+  reading, name the doubt in uncertainties and move on; do not reopen it.
 - Reading technical drawings:
   - A linear dimension measures between its two extension lines: say what each one
     sits on (a centre line, an edge, a tangent point). Ending on a centre line means
@@ -178,6 +180,23 @@ def image_size(uri: str) -> tuple[int, int] | None:
     return size if size and all(size) else None
 
 
+DECIDE_NOW = ("You have deliberated too long, and that answer was discarded. Stop "
+              "re-reading: take the most likely reading of every unclear feature, "
+              "name each doubt in uncertainties, and answer with the whole JSON "
+              "spec now.")
+
+
+def _ask(llm, messages: list[dict]) -> dict:
+    """One vision call, cut after half of llm.timeout spent reasoning with no
+    answer and re-asked once with DECIDE_NOW; a second cut propagates."""
+    try:
+        return llm.chat(messages=messages, module="vision", reasoning_share=0.5)
+    except ReasoningTimeExceeded as e:
+        log.warning("vision: %s; asking it to decide", e)
+        return llm.chat(messages=messages + [{"role": "user", "content": DECIDE_NOW}],
+                        module="vision", reasoning_share=0.5)
+
+
 def describe_images(request: str, images: list[str], llm, fix_retries: int = 2,
                     on_progress=None) -> dict:
     """Run the vision agent: one multimodal call that turns the reference image(s)
@@ -211,7 +230,7 @@ def describe_images(request: str, images: list[str], llm, fix_retries: int = 2,
                  model=str(llm.endpoint("vision").model))
     messages = [{"role": "system", "content": VISION_SYSTEM_PROMPT},
                 {"role": "user", "content": with_images(text, images)}]
-    spec = llm.chat(messages=messages, module="vision")
+    spec = _ask(llm, messages)
     for attempt in range(fix_retries + 1):
         errors = validate_spec(spec)
         if not errors:
@@ -230,5 +249,5 @@ def describe_images(request: str, images: list[str], llm, fix_retries: int = 2,
                 "The spec has these problems:\n" + format_errors(errors)
                 + "\nRe-read the image(s) where needed, fix them, and answer with the "
                   "whole corrected JSON spec only."}]
-        spec = llm.chat(messages=messages, module="vision")
+        spec = _ask(llm, messages)
     return spec

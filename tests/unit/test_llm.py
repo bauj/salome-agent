@@ -1488,3 +1488,46 @@ def test_a_cut_call_still_counts_in_usage_calls_and_seconds(monkeypatch):
     assert client.usage["incomplete_calls"] == 1
     # cut once past 500 approx tokens: 6 chunks of 400 chars streamed
     assert client.usage["approx_incomplete_output_tokens"] == 600
+
+
+def test_reasoning_seconds_cuts_a_call_still_reasoning_with_no_answer(monkeypatch):
+    from salome_agent.llm import ReasoningTimeExceeded
+    ticks = iter(range(0, 100_000, 10))
+    monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(ticks))
+    calls = []
+
+    def post(*a, **k):
+        calls.append(1)
+        return _FakeResp(None, lines=_reasoning_lines(["x" * 400] * 50))
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    client = LLMClient("http://x/v1", "", "auto", request_timeout=10_000)
+    with pytest.raises(ReasoningTimeExceeded) as e:
+        client.chat(messages=[{"role": "user", "content": "x"}], reasoning_share=0.01)
+    assert e.value.seconds == 100
+    assert len(calls) == 1  # not retried as an endpoint failure
+    assert client.usage["incomplete_calls"] == 1
+
+
+def test_reasoning_seconds_stops_once_the_answer_starts(monkeypatch):
+    ticks = iter(range(0, 100_000, 10))
+    monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(ticks))
+    lines = (_reasoning_lines(["x"] * 2)[:-1]
+             + ["data: " + json.dumps({"choices": [{"delta": {"content": '{"a":'}}]})]
+             + _reasoning_lines(["x"] * 50, then={"content": " 1}"}))
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=lines))
+    out = LLMClient("http://x/v1", "", "auto", request_timeout=10_000).chat(
+        messages=[{"role": "user", "content": "x"}], reasoning_share=0.01)
+    assert out == {"a": 1}
+
+
+def test_reasoning_seconds_zero_is_off(monkeypatch):
+    ticks = iter(range(0, 100_000, 10))
+    monkeypatch.setattr("salome_agent.llm.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=_reasoning_lines(
+                            ["x"] * 50, then={"content": '{"a": 1}'})))
+    out = LLMClient("http://x/v1", "", "auto", request_timeout=10_000).chat(
+        messages=[{"role": "user", "content": "x"}])
+    assert out == {"a": 1}
