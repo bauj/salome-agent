@@ -61,13 +61,19 @@ def commit_stages(graph, state: dict):
         where = f"stage {idx + 1}/{total}" if turn == 0 else f"turn {turn + 1} stage {idx + 1}/{total}"
         label = f"{where}: {stage['module']}"
         calls = stage.get("calls")
-        if stage["module"] == "geom" and calls is not None:
-            bid = graph.add_block(turn, label, "geom", stage.get("result_names") or [])
+        if calls is not None and _is_tool_module(stage["module"]):
+            bid = graph.add_block(turn, label, stage["module"], stage.get("result_names") or [])
             for c in calls:
-                graph.append(bid, c["tool"], c["tool_args"], c["records"], turn)
+                graph.append(bid, c["tool"], c["tool_args"], c["records"], turn,
+                             module=stage["module"])
         elif stage.get("script"):
             graph.add_block(turn, label, stage["module"], [], script=stage["script"])
     return graph
+
+
+def _is_tool_module(module: str) -> bool:
+    from salome_agent.modules import spec_for
+    return bool(spec_for(module).call_prefix)
 
 
 def _geom_bodies(graph) -> dict:
@@ -83,9 +89,13 @@ def _geom_bodies(graph) -> dict:
             roots += roots_for(records, names)
     everything = [r for records, _ in per_block.values() for r in records]
     keep = _reachable(everything, roots)
-    prefix = spec_for("geom").call_prefix or "geompy."
-    return {bid: generate(records, names, call_prefix=prefix, keep=keep)
-            for bid, (records, names) in per_block.items()}
+    module = {b.id: b.module for b in graph.blocks}
+    out = {}
+    for bid, (records, names) in per_block.items():
+        spec = spec_for(module[bid])
+        out[bid] = generate(records, names, call_prefix=spec.call_prefix or "geompy.",
+                            keep=keep, publish_line=spec.publish_line)
+    return out
 
 
 def render_script(graph, run_id: str) -> str:
@@ -130,7 +140,8 @@ def render_script(graph, run_id: str) -> str:
     if "study_ns" in body:
         preamble += 'study_ns = "salome_agent_run"\n'
 
-    return header + "\n" + preamble + "\n" + body + "\n"
+    postamble = "".join(spec_for(name).postamble for name in sorted(modules))
+    return header + "\n" + preamble + "\n" + body + "\n" + postamble
 
 
 def assemble(state: dict) -> str:

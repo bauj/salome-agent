@@ -4,7 +4,7 @@ import operator
 
 
 class StagePlan(TypedDict):
-    module: Literal["geom", "smesh"]
+    module: Literal["geom", "shaper", "smesh"]
     intent: str
     params: dict
     # Plain-words description of what this stage needs, never object names

@@ -34,9 +34,9 @@ _DISCARD_DEF = {"name": "discard", "description": _DISCARD_DESCRIPTION,
 
 def _drops(record: dict, names: set) -> bool:
     out = record.get("out_vars") or []
-    if out:
-        return set(out) <= names
-    return record.get("recv") in names
+    if record.get("recv") in names:
+        return True
+    return bool(out) and set(out) <= names
 
 
 def prune_records(call_log: list, calls: list, names: set) -> tuple[list, list, list]:
@@ -362,6 +362,13 @@ class ToolSpecialist:
 
             if finish_call is not None:
                 call_id, args, term = finish_call
+                if term is spec.terminator and spec.gate is not None:
+                    refusal = spec.gate(args, call_log, shape_infos)
+                    if refusal:
+                        log.info("  %s: finish refused by the gate", spec.terminator.name)
+                        messages.append({"role": "tool", "tool_call_id": call_id,
+                                         "content": refusal})
+                        continue
                 if term is spec.terminator and not audited:
                     parts = []
                     if (spec.measure_tools and verify_cadence in ("final", "strict")

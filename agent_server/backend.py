@@ -82,7 +82,7 @@ def hide_names(namespace: dict, names: list, erase) -> dict:
     return {"ok": True, "hidden": hidden}
 
 
-_AGENT_COMPONENTS = ("GEOM", "SMESH")
+_AGENT_COMPONENTS = ("GEOM", "SMESH", "SHAPERSTUDY")
 
 
 def study_objects(namespace: dict) -> list:
@@ -121,6 +121,7 @@ class Backend(Protocol):
     def run_code(self, code: str, timeout: float, module: str | None = None) -> dict: ...
     def reset(self, scripts: list) -> dict: ...
     def refresh(self, module: str | None) -> None: ...
+    def run_tool(self, fn, timeout: float): ...
     def forget(self, names: list) -> dict: ...
     def display(self, names: list) -> dict: ...
     def hide(self, names: list) -> dict: ...
@@ -174,6 +175,9 @@ class HeadlessBackend:
 
     def refresh(self, module: str | None) -> None:
         pass
+
+    def run_tool(self, fn, timeout: float):
+        return fn()
 
     def forget(self, names: list) -> dict:
         return forget_names(self.namespace, self.geom_bindings, names)

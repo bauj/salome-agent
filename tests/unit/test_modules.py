@@ -54,7 +54,7 @@ def test_spec_for_rejects_an_unknown_module():
     import pytest
 
     with pytest.raises(KeyError):
-        spec_for("shaper")
+        spec_for("no_such_module")
 
 
 def test_a_failed_specialist_import_does_not_permanently_break_the_registry(monkeypatch):

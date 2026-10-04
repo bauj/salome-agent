@@ -234,3 +234,41 @@ def test_multiline_request_stays_a_comment():
     result = assemble(state)
     ast.parse(result)
     assert "# request: a plate:\n# - x=±54\n#\n# - holes\n" in result
+
+
+def _shaper_stage():
+    sketch = {"fn": "addSketch", "emit": "stmt",
+              "code": 'sketch_1 = model.addSketch(shaper_doc, model.defaultPlane("XOY"))',
+              "args": [], "out_vars": ["sketch_1"], "publish": ["sketch_1"]}
+    line = {"fn": "addLine", "emit": "stmt", "recv": "sketch_1",
+            "code": "sketch_1_L1 = sketch_1.addLine(0, 0, 1, 0)",
+            "args": [], "out_vars": ["sketch_1_L1"], "publish": None}
+    return {"module": "shaper", "status": "ok", "script": None,
+            "result_names": ["sketch_1"], "call_log": [sketch, line],
+            "calls": [{"tool": "create_sketch", "tool_args": {"plane": "XOY"},
+                       "records": [sketch]},
+                      {"tool": "sketch_add", "tool_args": {}, "records": [line]}]}
+
+
+def test_shaper_stage_renders_its_records_between_preamble_and_postamble():
+    state = {"stages": {0: _shaper_stage()}, "run_id": "x",
+             "user_request": "in shaper, a sketch", "plan": []}
+    result = assemble(state)
+    ast.parse(result)
+    assert "from salome.shaper import model" in result
+    assert "geomBuilder" not in result
+    body = result.index('sketch_1 = model.addSketch(shaper_doc, model.defaultPlane("XOY"))')
+    assert result.index("shaper_doc = model.addPart") < body
+    assert body < result.index("_name(sketch_1, 'sketch_1')") < result.index("sketch_1_L1 =")
+    assert result.rstrip().endswith("model.publishToShaperStudy()")
+
+
+def test_shaper_calls_are_kept_as_shaper_nodes():
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.nodes.assembler import commit_stages
+    state = {"stages": {0: _shaper_stage()}, "user_request": "r"}
+    graph = commit_stages(BuildGraph(), state)
+    assert [b.module for b in graph.blocks] == ["shaper"]
+    nodes = list(graph.nodes.values())
+    assert [n.module for n in nodes] == ["shaper", "shaper"]
+    assert nodes[1].deps == [nodes[0].id]

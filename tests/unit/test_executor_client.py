@@ -141,3 +141,22 @@ def test_hello_without_leftovers_defaults_to_zero():
     assert client.leftovers == 0
     client.close()
     t.join()
+
+
+def test_module_goes_on_the_wire_only_when_given(tmp_path):
+    path = tmp_path / "exec_trace.jsonl"
+    box = []
+    t = threading.Thread(target=_fake_server,
+                         args=(box, [{"id": 1, "tools": []},
+                                     {"id": 2, "ok": True, "records": []}]),
+                         daemon=True)
+    t.start()
+    client = _connect(box, record_path=str(path))
+    client.list_tools(module="shaper")
+    client.call_tool("create_sketch", {"plane": "XOY"}, module="shaper")
+    t.join()
+
+    lines = [json.loads(l) for l in path.read_text().splitlines()]
+    assert lines[-2]["payload"] == {"module": "shaper"}
+    assert lines[-1]["payload"] == {"name": "create_sketch", "args": {"plane": "XOY"},
+                                    "module": "shaper"}

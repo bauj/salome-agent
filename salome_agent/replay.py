@@ -30,7 +30,11 @@ def _vars(graph: BuildGraph, ids) -> list[str]:
 def replay(client, graph: BuildGraph, ids) -> None:
     for nid in sorted(ids, key=_num):
         node = graph.nodes[nid]
-        r = client.call_tool(node.tool, node.tool_args, pin=node.out_vars)
+        if node.module == "geom":
+            r = client.call_tool(node.tool, node.tool_args, pin=node.out_vars)
+        else:
+            r = client.call_tool(node.tool, node.tool_args, pin=node.out_vars,
+                                 module=node.module)
         if not r.get("ok"):
             raise ReplayFailed(nid, r.get("error") or "unknown error")
         graph.set_records(nid, r.get("records") or [])
