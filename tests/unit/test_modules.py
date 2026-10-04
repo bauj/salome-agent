@@ -106,5 +106,6 @@ def test_llm_module_names_lists_every_name_llm_modules_accepts():
     from salome_agent.modules import llm_module_names
     names = llm_module_names()
     assert names[:2] == ["planner", "vision"] and names[-1] == "amend"
-    assert {"geom", "smesh", "paravis"} <= set(names)
+    assert {"geom", "smesh"} <= set(names)
+    assert "paravis" not in names
     assert len(names) == len(set(names))

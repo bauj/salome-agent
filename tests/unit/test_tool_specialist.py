@@ -143,7 +143,6 @@ def test_geom_needs_a_session_and_script_modules_do_not():
 
     assert spec_for("geom").needs_session
     assert not spec_for("smesh").needs_session
-    assert not spec_for("paravis").needs_session
 
 
 def test_calls_trace_pairs_tool_and_args_with_records():

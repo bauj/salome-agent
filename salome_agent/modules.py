@@ -39,7 +39,7 @@ class ModuleSpec:
     needs_session: bool = False
 
     # Everything below is a lever that goes INERT when left empty — that is
-    # how smesh and paravis run the geom loop without being changed by it.
+    # how smesh runs the geom loop without being changed by it.
     core_tools: frozenset = frozenset()
     # Order-preserving: this list is serialized verbatim into the load_tools
     # tool schema's enum, which is prompt surface — a frozenset would silently

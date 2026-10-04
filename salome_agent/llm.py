@@ -300,7 +300,7 @@ class LLMClient:
         # module (chat(module=...)) sends this body *instead of* extra_body
         # (full replacement, not a merge). Lets an expensive knob like
         # reasoning_effort sit on the planner only while the specialist loops
-        # (geom/smesh/paravis) — many calls per stage — run without it.
+        # (geom/smesh) — many calls per stage — run without it.
         self.module_extra_body = module_extra_body or {}
         self.ssl_cert_file = _cert_verify(ssl_cert_file)
         self.temperature = temperature

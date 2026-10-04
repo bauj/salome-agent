@@ -3,7 +3,7 @@
 Turn a natural-language request into a **verified, reproducible SALOME Python script**.
 
 You describe what you want ("make a 10 mm cube, then tetrahedral-mesh it"). The agent
-plans the stages, drives per-module specialist agents (geom / smesh / paravis) against a
+plans the stages, drives per-module specialist agents (geom / smesh) against a
 live SALOME session, verifies each stage actually runs, and assembles a standalone
 `result.py` that reproduces the whole thing with no agent or executor involved.
 
@@ -27,7 +27,7 @@ line-delimited JSON); it discovers a running server via `~/.salome_agent/server.
 Flow: `request → plan → [per stage: specialist → verify static → verify exec → advance] → assemble result.py → report`
 
 - **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log.
-- **smesh / paravis** stages are raw scripts, statically checked (top-level API existence) then executed under a timeout with per-module sanity checks.
+- **smesh** stages are raw scripts, statically checked (top-level API existence) then executed under a timeout with per-module sanity checks.
 - Stage retry re-runs the full stage script (no MED checkpoints — GEOM can't export MED). GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
 
 ---
@@ -122,8 +122,8 @@ Any OpenAI-compatible `/chat/completions` endpoint. Requests are streamed (SSE).
 | `reasoning_budget` | `20000` | Specialist (tool-calling) calls only: approximate reasoning tokens (characters / 4) a model may spend before its first tool call. Past it the call is cut and re-asked once with a "pick a reading and act" nudge; a second cut in a row ends the stage. `0` turns it off. |
 | `extra_headers` | `{}` | Extra HTTP headers sent verbatim on every request. In a string value `{run_id}` is replaced with the run's id — for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`. |
 | `extra_body` | `{}` | Extra top-level fields merged into every request's JSON body, next to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider body params such as `{"reasoning_effort": "high"}`; whether the provider honours a field is up to the provider. |
-| `module_extra_body` | `{}` | `{"planner" \| "geom" \| "smesh" \| "paravis": {...}}` — a body sent *instead of* `extra_body` (full replacement, not a merge) on that module's calls. Lets an expensive knob sit on the planner only, e.g. `{"planner": {"reasoning_effort": "high"}}`, while the many specialist calls run without it. |
-| `modules` | `{}` | `{"vision" \| "planner" \| "geom" \| "smesh" \| "paravis": {...}}` — sends that module's calls to their own endpoint and/or model. Each entry may set `base_url`, `api_key`, `model`, `ssl_cert_file`, `temperature`, `timeout`, `extra_headers`, `extra_body`; a key left out keeps the shared `llm` value — except with a `base_url` of its own, which never inherits the shared `api_key`, `ssl_cert_file`, `extra_headers` or `extra_body` (another host gets no credentials meant for the main one). Its `extra_body`, when set, wins over `module_extra_body`. E.g. a stronger drawing reader for images only: `{"vision": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "api_key": "...", "model": "gemini-3-pro-preview"}}`. |
+| `module_extra_body` | `{}` | `{"planner" \| "geom" \| "smesh": {...}}` — a body sent *instead of* `extra_body` (full replacement, not a merge) on that module's calls. Lets an expensive knob sit on the planner only, e.g. `{"planner": {"reasoning_effort": "high"}}`, while the many specialist calls run without it. |
+| `modules` | `{}` | `{"vision" \| "planner" \| "geom" \| "smesh": {...}}` — sends that module's calls to their own endpoint and/or model. Each entry may set `base_url`, `api_key`, `model`, `ssl_cert_file`, `temperature`, `timeout`, `extra_headers`, `extra_body`; a key left out keeps the shared `llm` value — except with a `base_url` of its own, which never inherits the shared `api_key`, `ssl_cert_file`, `extra_headers` or `extra_body` (another host gets no credentials meant for the main one). Its `extra_body`, when set, wins over `module_extra_body`. E.g. a stronger drawing reader for images only: `{"vision": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "api_key": "...", "model": "gemini-3-pro-preview"}}`. |
 
 #### `policy` — how a run behaves
 
@@ -203,7 +203,7 @@ specialist for proportions and placement. Multiple
 images are treated as different views/plans of the *same* part, reconciled into one 3D
 description — not as separate parts. Explicit numeric dimensions in the text request
 win, then dimensions read from the image; values the vision agent had to estimate are
-marked `~`. smesh/paravis stages don't see the images — it only feeds CAD construction.
+marked `~`. smesh stages don't see the images — it only feeds CAD construction.
 
 The vision call is tagged `module="vision"`, so `llm.modules.vision` can send it to a
 different model or endpoint (one that reads drawings better) and `llm.module_extra_body` can
@@ -241,7 +241,7 @@ Run the result on its own, with no agent involved:
 |------|---------|
 | `--images PATH,PATH,...` | Comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) the generated CAD should match — e.g. several views/plans of the same part; described by a vision agent whose text description feeds the planner and the geom specialist (they never see the images). |
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
-| `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. smesh/paravis only (geom needs a session). |
+| `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. smesh only (geom needs a session). |
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
@@ -351,7 +351,7 @@ neither set the `salome` tests skip.
 A normal run verifies each stage script against the **live** SALOME session
 (`introspect()` on the running modules — authoritative). `--no-session` has no
 session, so its static check falls back to `salome_agent/verify/toplevel_api.json`
-— a snapshot of the valid `geompy` / `smesh` / `pvsimple` top-level members. It
+— a snapshot of the valid `geompy` / `smesh` top-level members. It
 only catches calls to names that do not exist on the module; it is a coarse
 check, and `--no-session` skips exec verification entirely.
 
@@ -379,7 +379,7 @@ salome_agent/
   llm.py            minimal OpenAI-compatible tool-calling client (+ with_images() for multimodal messages)
   state.py          RunState / stage TypedDicts
   nodes/            planner, gates (plan/retry), advance, assembler, report
-  specialists/      geom (tool-calling), smesh, paravis (raw script)
+  specialists/      geom (tool-calling), smesh (raw script)
   verify/           static (top-level API check), exec_check, introspect
   server_conn.py    finds + connects to the SALOME agent server
   executor_client.py  TCP client for the server (hello handshake, framing)
@@ -391,7 +391,7 @@ agent_server/       the server that runs inside SALOME
   wire.py           loopback TCP + token listener
   handshake.py      ~/.salome_agent/server.json
   gui_plugin.py     the Tools > Plugins entry point (launch/restart)
-  namespace.py      builds the exec namespace (geompy/smesh/... ; defers pvsimple)
+  namespace.py      builds the exec namespace (geompy/smesh/...)
   __main__.py       headless entry (`python -m agent_server`)
 executor/
   registry.py       ToolRegistry — tool decorator, schemas, arg-type coercion

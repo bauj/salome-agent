@@ -113,7 +113,7 @@ def render_script(graph, run_id: str) -> str:
     # geom's init always comes first — matches main's fixed preamble order.
     if "geom" in modules or "geompy" in body:
         preamble += _GEOM_INIT
-    # Module-driven preamble from specs (smesh/paravis)
+    # Module-driven preamble from specs (smesh)
     for name in sorted(modules):
         spec = spec_for(name)
         if spec.preamble and spec.preamble not in preamble:

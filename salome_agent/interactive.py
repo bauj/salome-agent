@@ -13,7 +13,7 @@ def normalize_plan(edited):
     if not isinstance(edited, list) or not edited:
         return None
     for stage in edited:
-        if not isinstance(stage, dict) or stage.get("module") not in ("geom", "smesh", "paravis"):
+        if not isinstance(stage, dict) or stage.get("module") not in ("geom", "smesh"):
             return None
         stage.setdefault("intent", "")
         stage.setdefault("params", {})
@@ -63,7 +63,7 @@ def prompt_plan(payload, read=input, stream=sys.stderr, edit_fn=_edit_plan_in_ed
             edited = edit_fn(plan)
             if edited is None:
                 stream.write("edit cancelled or unusable (need $EDITOR set, valid JSON, "
-                             "module in geom|smesh|paravis)\n")
+                             "module in geom|smesh)\n")
                 continue
             return {"action": "edit", "plan": edited}
 
