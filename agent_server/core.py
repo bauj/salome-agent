@@ -4,6 +4,7 @@ from agent_server import handshake
 # Tool-calling modules: name -> (package, the SALOME module refreshed after a call).
 _TOOL_MODULES = {"geom": geom, "shaper": shaper}
 _REFRESH = {"geom": "GEOM", "shaper": "SHAPER"}
+_TOOL_TIMEOUT = 120
 
 _FATAL = {"ok": False, "fatal": True,
           "error": "server poisoned by a prior timeout; restart the agent server"}
@@ -20,6 +21,14 @@ class Core:
         rid = req.get("id")
         if self.backend.poisoned():
             return {"id": rid, **_FATAL}
+        try:
+            return self._dispatch(req, rid)
+        except TimeoutError:
+            if self.backend.poisoned():
+                return {"id": rid, **_FATAL}
+            raise
+
+    def _dispatch(self, req: dict, rid) -> dict:
         cmd = req.get("cmd")
         b = self.backend
 
@@ -61,7 +70,8 @@ class Core:
                 return {"id": rid, "ok": False, "error": f"no tool module {module!r}"}
             if cmd == "list_tools":
                 return {"id": rid, "tools": pkg.list_tools()}
-            r = pkg.call_tool(b, req["name"], req["args"], pin=req.get("pin"))
+            call = lambda: pkg.call_tool(b, req["name"], req["args"], pin=req.get("pin"))
+            r = call() if module == "geom" else b.run_tool(call, _TOOL_TIMEOUT)
             if r.get("ok"):
                 b.refresh(_REFRESH[module])
             return {"id": rid, **r}
@@ -74,7 +84,7 @@ class Core:
             return {"id": rid, **r}
         if cmd == "clear_study":
             for pkg in _side_modules():
-                pkg.clear(b)
+                b.run_tool(lambda: pkg.clear(b), _TOOL_TIMEOUT)
             r = b.clear_study()
             b.refresh("GEOM")
             return {"id": rid, **r}
@@ -88,6 +98,8 @@ class Core:
         return {"id": rid, "ok": False, "exception": f"unknown command {cmd!r}"}
 
 
+# Side modules (SHAPER) live in the GUI process and notify its widgets on the
+# calling thread, so every call into them goes through backend.run_tool.
 def _side_modules():
     return [pkg for name, pkg in _TOOL_MODULES.items() if name != "geom"]
 
@@ -98,4 +110,5 @@ def _reset_side_modules(b) -> None:
 
 
 def _forget_side_modules(b, names: list) -> list:
-    return [n for pkg in _side_modules() for n in pkg.forget(b, names)]
+    return [n for pkg in _side_modules()
+            for n in b.run_tool(lambda: pkg.forget(b, names), _TOOL_TIMEOUT)]
