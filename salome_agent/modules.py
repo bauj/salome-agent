@@ -103,3 +103,10 @@ def routable() -> list[ModuleSpec]:
     """Modules the planner may put in a plan — those with catalogue text."""
     _ensure_specialists_registered()
     return [s for s in MODULES.values() if s.catalogue]
+
+
+def llm_module_names() -> list[str]:
+    """Every name llm.modules accepts: the planner, vision, each specialist, and
+    amend (chat edits, built per turn so not in MODULES)."""
+    _ensure_specialists_registered()
+    return ["planner", "vision", *MODULES, "amend"]
