@@ -14,7 +14,7 @@ class RunResult:
 
 
 class EventMapper:
-    """Turns graph.stream(stream_mode="updates") chunks into UI events
+    """Turns graph.stream(stream_mode=["updates", "custom"]) chunks into UI events
     ({"kind", "run_id", "data"}). Tracks the current stage index itself:
     run_stage/verify updates do not carry it, advance/skip carry the next one."""
 
@@ -181,7 +181,10 @@ def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
     try:
         while True:
             pending = None
-            for chunk in app.stream(inp, config=cfg, stream_mode="updates"):
+            for mode, chunk in app.stream(inp, config=cfg, stream_mode=["updates", "custom"]):
+                if mode == "custom":
+                    on_event(mapper.event(chunk["kind"], **(chunk.get("data") or {})))
+                    continue
                 for node, update in chunk.items():
                     if node == "__interrupt__":
                         pending = update[0].value
