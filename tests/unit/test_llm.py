@@ -1067,7 +1067,7 @@ def test_cancel_mid_stream_stops_reading_and_closes_the_response(monkeypatch):
     import threading
     cancel = threading.Event()
     read = []
-    closed = []
+    closed = threading.Event()
 
     class _Resp(_FakeResp):
         def iter_lines(self, chunk_size=512, decode_unicode=False):
@@ -1079,7 +1079,7 @@ def test_cancel_mid_stream_stops_reading_and_closes_the_response(monkeypatch):
                     {"choices": [{"delta": {"reasoning_content": "hmm "}}]})
 
         def close(self):
-            closed.append(1)
+            closed.set()
 
     monkeypatch.setattr("salome_agent.llm.requests.post",
                         lambda *a, **k: _Resp(None))
@@ -1088,7 +1088,7 @@ def test_cancel_mid_stream_stops_reading_and_closes_the_response(monkeypatch):
     with pytest.raises(LLMCancelled):
         client.chat(messages=[{"role": "user", "content": "plan"}])
     assert len(read) == 4
-    assert closed
+    assert closed.wait(1)
 
 
 def test_cancel_already_set_sends_no_request(monkeypatch):
@@ -1102,6 +1102,77 @@ def test_cancel_already_set_sends_no_request(monkeypatch):
     with pytest.raises(LLMCancelled):
         client.chat(messages=[{"role": "user", "content": "plan"}])
     assert posts == []
+
+
+def test_cancel_while_waiting_for_response_headers_is_immediate(monkeypatch):
+    import threading
+    import time
+    cancel, release = threading.Event(), threading.Event()
+
+    def post(*a, **k):
+        release.wait(10)
+        return _FakeResp({})
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = cancel
+    threading.Timer(0.3, cancel.set).start()
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(LLMCancelled):
+            client.chat(messages=[{"role": "user", "content": "plan"}])
+        assert time.monotonic() - t0 < 1.0
+    finally:
+        release.set()
+
+
+def test_cancel_during_a_silent_stream_gap_is_immediate(monkeypatch):
+    import threading
+    import time
+    cancel, release = threading.Event(), threading.Event()
+    closed = threading.Event()
+
+    class _Resp(_FakeResp):
+        def iter_lines(self, chunk_size=512, decode_unicode=False):
+            yield "data: " + json.dumps(
+                {"choices": [{"delta": {"reasoning_content": "hmm "}}]})
+            release.wait(10)
+            yield "data: [DONE]"
+
+        def close(self):  # like http.client: waits for the parked read
+            closed.set()
+            release.wait(10)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _Resp(None))
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = cancel
+    threading.Timer(0.3, cancel.set).start()
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(LLMCancelled):
+            client.chat(messages=[{"role": "user", "content": "plan"}])
+        assert time.monotonic() - t0 < 1.0
+        assert closed.wait(1)
+    finally:
+        release.set()
+
+
+def test_blocking_io_errors_still_reach_the_caller_when_cancellable(monkeypatch):
+    import threading
+    posts = []
+
+    def post(*a, **k):
+        posts.append(1)
+        raise requests.ConnectionError("refused")
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    monkeypatch.setattr("salome_agent.llm._backoff_seconds", lambda attempt: 0)
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = threading.Event()
+    with pytest.raises(requests.ConnectionError):
+        client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert len(posts) == client.max_retries + 1
 
 
 def test_cancel_during_a_retry_wait_gives_up_without_retrying(monkeypatch):
