@@ -1,6 +1,6 @@
 import ast
 
-TOPLEVEL_MODULES = {"geompy", "smesh", "pvsimple"}
+TOPLEVEL_MODULES = {"geompy", "smesh"}
 BANNED_PATTERNS = ["salome_init", "salome.sg."]
 
 

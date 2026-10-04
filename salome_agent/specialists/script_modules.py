@@ -1,5 +1,4 @@
 from salome_agent.modules import ModuleSpec, Terminator, register
-from salome_agent.specialists.paravis import PARAVIS_SYSTEM_PROMPT
 from salome_agent.specialists.smesh import SMESH_SYSTEM_PROMPT
 
 API_TOOL_SCHEMAS = {
@@ -28,14 +27,9 @@ _SCRIPT_PREAMBLE = """from salome.smesh import smeshBuilder
 smesh = smeshBuilder.New()
 """
 
-# One-liners for smesh and paravis routable catalogues. These match the text
-# in planner._PLANNER_BASE's "Module scope" block so the prompt remains byte-identical.
+# The smesh routable-catalogue one-liner. It matches the text in
+# planner._PLANNER_BASE's "Module scope" block so the prompt remains byte-identical.
 _SMESH_CATALOGUE = "- smesh: meshing a geometry (algorithms, hypotheses, compute)."
-_PARAVIS_CATALOGUE = (
-    "- paravis: post-processing an existing simulation result (a MED file) --\n"
-    "  contours, cut planes, rendered scenes. NOT for colouring CAD geometry.\n"
-    "  Only use paravis when the request involves a results/field/MED file."
-)
 
 
 def _tools_for(client) -> dict:
@@ -95,4 +89,3 @@ def _script_spec(name: str, system_prompt: str, catalogue: str) -> ModuleSpec:
 
 
 SMESH_SPEC = register(_script_spec("smesh", SMESH_SYSTEM_PROMPT, catalogue=_SMESH_CATALOGUE))
-PARAVIS_SPEC = register(_script_spec("paravis", PARAVIS_SYSTEM_PROMPT, catalogue=_PARAVIS_CATALOGUE))
