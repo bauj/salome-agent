@@ -98,6 +98,18 @@ class ReasoningBudgetExceeded(Exception):
         self.budget = budget
 
 
+class ReasoningTimeExceeded(Exception):
+    """A call given `reasoning_seconds` was still reasoning, with no content
+    yet, after that many seconds: a slow model going round in circles. Never
+    retried here; the caller re-asks with a "decide now" nudge."""
+
+    def __init__(self, seconds: float, tokens: int, reasoning: str = ""):
+        super().__init__(f"model reasoned {seconds:g}s (~{tokens} tokens) without answering")
+        self.seconds = seconds
+        self.tokens = tokens
+        self.reasoning = reasoning
+
+
 class LLMCancelled(Exception):
     """The turn's cancel event was set while a call was in flight (Stop in the
     chat). Not a failure and never retried; deliberately not a requests or
@@ -473,7 +485,8 @@ class LLMClient:
 
     def _consume_stream(self, resp, t0: float, prose: bool = False,
                         partial: dict | None = None, budget: float | None = None,
-                        reasoning_budget: int = 0) -> tuple[dict, dict | None, str | None, float | None]:
+                        reasoning_budget: int = 0,
+                        reasoning_seconds: float = 0) -> tuple[dict, dict | None, str | None, float | None]:
         """Reassemble an SSE `data:` stream into one provider `message` dict
         (plus usage / finish_reason / time-to-first-token). `content` and
         `reasoning_content` fragments are concatenated; `tool_calls` fragments
@@ -550,6 +563,10 @@ class LLMClient:
                     if (reasoning_budget and not content and not tool_frags
                             and reasoning_chars // 4 > reasoning_budget):
                         raise ReasoningBudgetExceeded(reasoning_chars // 4, reasoning_budget)
+                    if (reasoning_seconds and not content and not tool_frags
+                            and time.monotonic() - t0 > reasoning_seconds):
+                        raise ReasoningTimeExceeded(reasoning_seconds, reasoning_chars // 4,
+                                                    "".join(reasoning))
                     self._live_write(delta["reasoning_content"], "reasoning")
                     self._stream_event(type="delta", channel="reasoning",
                                        text=delta["reasoning_content"])
@@ -593,18 +610,21 @@ class LLMClient:
         return _assemble_message(partial), usage, finish, ttft
 
     def _round_trip(self, payload: dict, tool_names: list[str] | None,
-                    ep: _Endpoint | None = None, module: str | None = None) -> dict:
+                    ep: _Endpoint | None = None, module: str | None = None,
+                    reasoning_seconds: float = 0) -> dict:
         """One streamed POST to /chat/completions (with transient-failure
         retries) — returns the reassembled provider `message` object."""
         self._stream_event(type="start", module=module)
         try:
             return self._round_trip_attempts(payload, tool_names,
-                                             ep or self.endpoint(module), module)
+                                             ep or self.endpoint(module), module,
+                                             reasoning_seconds)
         finally:
             self._stream_event(type="end")
 
     def _round_trip_attempts(self, payload: dict, tool_names: list[str] | None,
-                             ep: _Endpoint, module: str | None = None) -> dict:
+                             ep: _Endpoint, module: str | None = None,
+                             reasoning_seconds: float = 0) -> dict:
         headers = {"Authorization": f"Bearer {ep.api_key}"} if ep.api_key else {}
         headers.update(ep.extra_headers)
         payload = {**payload, "stream": True,
@@ -662,7 +682,8 @@ class LLMClient:
                     message, usage, finish, ttft = self._consume_stream(
                         resp, t0, prose=bool(tool_names), partial=partial,
                         budget=ep.request_timeout,
-                        reasoning_budget=self.reasoning_budget if tool_names else 0)
+                        reasoning_budget=self.reasoning_budget if tool_names else 0,
+                        reasoning_seconds=reasoning_seconds)
                 except BaseException as e:
                     # a cut or dropped call still cost a round-trip and its wait
                     self.usage["calls"] += 1
@@ -680,7 +701,7 @@ class LLMClient:
                     # finish when that read wakes instead of holding up Stop
                     threading.Thread(target=resp.close, daemon=True).start()
                 raise
-            except ReasoningBudgetExceeded as e:
+            except (ReasoningBudgetExceeded, ReasoningTimeExceeded) as e:
                 log.warning("LLM request attempt %d: %s", attempt, e)
                 resp.close()
                 raise
@@ -740,13 +761,16 @@ class LLMClient:
         return self._build_endpoint(module, {})
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             module: str | None = None) -> dict:
+             module: str | None = None, reasoning_share: float = 0) -> dict:
         # tools: [{"name": str, "parameters": <JSON Schema object>}, ...] — a
         # real per-tool schema, not just a bare name, so the LLM knows each
         # arg's name/type/required-ness instead of guessing.
         # module: routes to llm.modules[module] (endpoint/model override) and
         # module_extra_body[module] when present, else the shared settings.
+        # reasoning_share: cut a no-tools call still reasoning, with no answer
+        # yet, after that share of llm.timeout (ReasoningTimeExceeded); 0 = off.
         ep = self.endpoint(module)
+        reasoning_seconds = ep.request_timeout * reasoning_share
         payload = {"model": ep.model, "messages": list(messages),
                    "temperature": ep.temperature, **ep.extra_body}
         if tools:
@@ -790,7 +814,7 @@ class LLMClient:
         # will not parse, hand the model its own answer plus the exact parser
         # error and re-ask, up to json_retries times (GH #6).
         for attempt in range(self.json_retries + 1):
-            message = self._round_trip(payload, None, ep, module)
+            message = self._round_trip(payload, None, ep, module, reasoning_seconds)
             content = message.get("content")
             try:
                 return _parse_json_content(content)
