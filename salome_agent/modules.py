@@ -34,6 +34,9 @@ class ModuleSpec:
     no_tool_nudge: str
     # call_log, last_error -> the result when the iteration cap runs out.
     on_exhausted: Callable[[list, dict | None], dict]
+    # Its tools run in SALOME: with no server (--no-session) the stage ends
+    # fatal instead of starting.
+    needs_session: bool = False
 
     # Everything below is a lever that goes INERT when left empty — that is
     # how smesh and paravis run the geom loop without being changed by it.
