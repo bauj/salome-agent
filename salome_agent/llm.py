@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import threading
 import time
 
 import requests
@@ -8,6 +9,8 @@ import requests
 from salome_agent.logs import log
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+_CANCEL_POLL = 0.1
+_EOF = object()
 
 
 def redact_images(messages: list[dict]) -> list[dict]:
@@ -334,7 +337,7 @@ class LLMClient:
                       "approx_prompt_tokens": 0, "llm_seconds": 0.0,
                       "incomplete_calls": 0, "approx_incomplete_output_tokens": 0}
         # The running turn's threading.Event, set by runner.drive(): a call
-        # in flight stops at the next streamed line or retry wait (GH #47).
+        # in flight stops within _CANCEL_POLL, even mid-wait (GH #47).
         self.cancel = None
         # Also set by runner.drive(): called with {"type": "start" | "delta" |
         # "end", ...} as a call streams, so a front end can show the reasoning live.
@@ -345,6 +348,34 @@ class LLMClient:
     def _check_cancel(self) -> None:
         if self.cancel is not None and self.cancel.is_set():
             raise LLMCancelled("LLM call cancelled")
+
+    def _wait_on(self, fn):
+        """Call blocking `fn` (a POST waiting for headers, a read waiting for
+        the next line) on a daemon thread so a cancel stops the wait at once;
+        the abandoned call ends at its next wake (data or read timeout)."""
+        if self.cancel is None:
+            return fn()
+        box: list = []
+        done, abandoned = threading.Event(), threading.Event()
+
+        def run():
+            try:
+                box.append((True, fn()))
+            except BaseException as e:  # noqa: BLE001 — re-raised in the caller
+                box.append((False, e))
+            done.set()
+            if abandoned.is_set() and box[0][0] and hasattr(box[0][1], "close"):
+                box[0][1].close()
+
+        threading.Thread(target=run, daemon=True, name="llm-io").start()
+        while not done.wait(_CANCEL_POLL):
+            if self.cancel.is_set():
+                abandoned.set()
+                raise LLMCancelled("LLM call cancelled")
+        ok, value = box[0]
+        if ok:
+            return value
+        raise value
 
     def _stream_event(self, **ev) -> None:
         if self.on_stream is None:
@@ -479,7 +510,8 @@ class LLMClient:
         # SSE is UTF-8 by spec; with no charset in the Content-Type, requests
         # falls back to ISO-8859-1 for text/* and garbles every non-ASCII char.
         resp.encoding = "utf-8"
-        for raw in resp.iter_lines(chunk_size=None, decode_unicode=True):
+        lines = resp.iter_lines(chunk_size=None, decode_unicode=True)
+        while (raw := self._wait_on(lambda: next(lines, _EOF))) is not _EOF:
             self._check_cancel()
             if time.monotonic() > deadline:
                 raise StreamBudgetExceeded(
@@ -596,10 +628,11 @@ class LLMClient:
             resp = None
             self._check_cancel()
             try:
-                resp = requests.post(f"{ep.base_url}/chat/completions", json=payload,
-                                     headers=headers, verify=ep.verify,
-                                     timeout=(_CONNECT_TIMEOUT, ep.stream_read_timeout),
-                                     stream=True)
+                resp = self._wait_on(lambda: requests.post(
+                    f"{ep.base_url}/chat/completions", json=payload,
+                    headers=headers, verify=ep.verify,
+                    timeout=(_CONNECT_TIMEOUT, ep.stream_read_timeout),
+                    stream=True))
                 # A fast gateway error (proxy up, model backend down/overloaded)
                 # crashes the planner/specialist node otherwise — retry with backoff.
                 # A *slow* 502/503/504 means the proxy's own upstream timeout fired
@@ -643,7 +676,9 @@ class LLMClient:
             except LLMCancelled:
                 log.info("LLM request attempt %d cancelled", attempt)
                 if resp is not None:
-                    resp.close()
+                    # close() waits for a read parked on the socket; let it
+                    # finish when that read wakes instead of holding up Stop
+                    threading.Thread(target=resp.close, daemon=True).start()
                 raise
             except ReasoningBudgetExceeded as e:
                 log.warning("LLM request attempt %d: %s", attempt, e)
