@@ -55,7 +55,8 @@ def test_core_forget_command_refreshes_geom():
     refreshed = []
     backend = SimpleNamespace(poisoned=lambda: False,
                               forget=lambda names: {"ok": True, "removed": list(names)},
-                              refresh=refreshed.append)
+                              refresh=refreshed.append,
+                              run_tool=lambda fn, timeout: fn())
     r = Core(backend).handle({"id": 4, "cmd": "forget", "names": ["box_1"]})
     assert r == {"id": 4, "ok": True, "removed": ["box_1"]}
     assert refreshed == ["GEOM"]

@@ -108,6 +108,13 @@ class GuiBackend:
     def reset(self, scripts):
         return {"ok": False, "error": "no rollback in a live GUI study"}
 
+    def run_tool(self, fn, timeout):
+        try:
+            return self._invoker.run_on_main(fn, timeout)
+        except TimeoutError:
+            self._poisoned = True
+            raise
+
     def refresh(self, module):
         # salome.sg does not exist on this build (Phase 0 spike, 2026-08-31);
         # SALOMEGUI_Swig().updateObjBrowser() does, and runs a direct inline
