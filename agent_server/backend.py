@@ -82,7 +82,7 @@ def hide_names(namespace: dict, names: list, erase) -> dict:
     return {"ok": True, "hidden": hidden}
 
 
-_AGENT_COMPONENTS = ("GEOM", "SMESH")
+_AGENT_COMPONENTS = ("GEOM", "SMESH", "SHAPERSTUDY")
 
 
 def study_objects(namespace: dict) -> list:

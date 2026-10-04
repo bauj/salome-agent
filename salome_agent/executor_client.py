@@ -88,13 +88,18 @@ class ExecutorClient:
     def sanity(self, module, expectations):
         return self._call("sanity", module=module, expectations=expectations)
 
-    def list_tools(self):
-        return self._call("list_tools")
+    def list_tools(self, module=None):
+        if module is None:
+            return self._call("list_tools")
+        return self._call("list_tools", module=module)
 
-    def call_tool(self, name, args, pin=None):
-        if pin is None:
-            return self._call("call_tool", name=name, args=args)
-        return self._call("call_tool", name=name, args=args, pin=pin)
+    def call_tool(self, name, args, pin=None, module=None):
+        extra = {}
+        if pin is not None:
+            extra["pin"] = pin
+        if module is not None:
+            extra["module"] = module
+        return self._call("call_tool", name=name, args=args, **extra)
 
     def forget(self, names):
         return self._call("forget", names=names)
