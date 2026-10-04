@@ -232,3 +232,65 @@ def test_a_rejected_constraint_leaves_the_geometry_as_it_was(agent_client):
     for i, geo in before.items():
         for k, v in geo.items():
             assert after[i][k] == pytest.approx(v, abs=1e-6), (i, k)
+
+
+def _rect(tag, x0, y0, x1, y1):
+    pts = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    return [{"id": f"{tag}{i}", "type": "line", "start": pts[i], "end": pts[(i + 1) % 4]}
+            for i in range(4)]
+
+
+def test_make_face_merges_touching_regions_and_result_py_rebuilds_it(agent_client, tmp_path):
+    # a plus sign drawn as two whole overlapping bars: 5 regions, one outline
+    import re
+    import subprocess
+
+    from salome_agent.nodes.assembler import assemble
+
+    from .conftest import _salome_subprocess_env
+
+    calls = []
+
+    def call(name, **args):
+        r = _call(agent_client, name, **args)
+        assert r["ok"] is True, r.get("error")
+        calls.append({"tool": name, "tool_args": args, "records": r["records"]})
+        return r
+
+    sk = call("create_sketch", plane="XOY")["sketch"]
+    r = call("sketch_add", sketch=sk,
+             entities=_rect("H", -20, -5, 20, 5) + _rect("V", -5, -20, 5, 20))
+    assert len(r["regions"]) == 5
+    face = call("make_face", sketch=sk, regions=[g["index"] for g in r["regions"]])
+    assert face["measure"]["faces"] == 1
+    assert face["measure"]["area"] == pytest.approx(700, abs=1e-6)
+
+    log = [rec for c in calls for rec in c["records"]]
+    script = assemble({"stages": {0: {"module": "shaper", "status": "ok", "script": None,
+                                      "result_names": [face["name"]], "call_log": log,
+                                      "calls": calls}},
+                       "run_id": "t", "user_request": "plus", "plan": []})
+    script += ("from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as _T\n"
+               f"_r = {face['name']}.feature().results()\n"
+               "print('AREA', _T.area(_r[0].shape()), 'RESULTS', len(_r))\n")
+    path = tmp_path / "result.py"
+    path.write_text(script)
+    out = subprocess.run([f"{SALOME_ROOT}/salome", "shell", "--", "python3", str(path)],
+                         env=_salome_subprocess_env(), capture_output=True, text=True,
+                         timeout=240)
+    m = re.search(r"AREA ([0-9.eE+-]+) RESULTS (\d+)", out.stdout)
+    assert m, out.stdout[-2000:] + out.stderr[-2000:]
+    assert float(m.group(1)) == pytest.approx(700, abs=1e-6)
+    assert m.group(2) == "1"
+
+
+def test_a_merged_face_can_be_discarded(agent_client):
+    sk = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
+    r = _call(agent_client, "sketch_add", sketch=sk,
+              entities=_rect("H", -20, -5, 20, 5) + _rect("V", -5, -20, 5, 20))
+    face = _call(agent_client, "make_face", sketch=sk,
+                 regions=[g["index"] for g in r["regions"]])["name"]
+    assert agent_client.forget([face])["removed"] == [face]
+    again = _call(agent_client, "make_face", sketch=sk, regions="all")
+    assert again["ok"] is True, again.get("error")
+    assert again["measure"]["faces"] == 1
