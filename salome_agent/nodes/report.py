@@ -13,6 +13,10 @@ def _usage_lines(usage: dict) -> list[str]:
         lines.append(f"- time waiting on the endpoint: {usage['llm_seconds']:.1f}s")
     if approx:
         lines.append(f"- approx input (all calls, request chars/4): {approx:,}")
+    if usage.get("incomplete_calls"):
+        lines.append(f"- incomplete calls (cut, cancelled or dropped): "
+                     f"{usage['incomplete_calls']}, approx output streamed before "
+                     f"the stop (chars/4): {usage.get('approx_incomplete_output_tokens', 0):,}")
     if metered < calls:
         lines.append(f"- note: {calls - metered} call(s) returned no usage data; "
                      f"provider input/output totals cover the {metered} that did "
