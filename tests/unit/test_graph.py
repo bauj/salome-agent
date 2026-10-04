@@ -203,6 +203,19 @@ def test_endpoint_fatal_message_distinguishes_429_and_4xx():
     assert "backend is" in _llm_endpoint_fatal(_http_error(502))
 
 
+def test_endpoint_fatal_4xx_names_base_url_and_quotes_the_body():
+    from salome_agent.graph import _llm_endpoint_fatal
+
+    err = _http_error(400)
+    err.response._content = b'{"error": {"message":\n  "missing thought_signature"}}'
+    msg = _llm_endpoint_fatal(err)
+    assert "base_url" in msg
+    assert 'endpoint said: {"error": {"message": "missing thought_signature"}}' in msg
+    err.response._content = b"x" * 1000
+    assert _llm_endpoint_fatal(err).endswith("x" * 300 + "…")
+    assert "endpoint said" not in _llm_endpoint_fatal(_http_error(404))
+
+
 def test_plan_node_still_raises_a_non_endpoint_error(monkeypatch):
     from salome_agent import graph
 
