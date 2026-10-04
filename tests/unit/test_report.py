@@ -41,6 +41,16 @@ def test_report_flags_calls_without_usage_data():
     assert "3 call(s) returned no usage data" in out
 
 
+def test_report_estimates_output_of_incomplete_calls():
+    usage = {"calls": 3, "metered_calls": 2, "prompt_tokens": 5000,
+             "completion_tokens": 500, "incomplete_calls": 1,
+             "approx_incomplete_output_tokens": 20123}
+    out = write_report(_state(), usage=usage)
+    assert "incomplete calls (cut, cancelled or dropped): 1" in out
+    assert "20,123" in out
+    assert "incomplete" not in write_report(_state(), usage={**usage, "incomplete_calls": 0})
+
+
 def test_report_omits_usage_section_when_absent():
     assert "## LLM usage" not in write_report(_state())
     assert "## LLM usage" not in write_report(_state(), usage={"calls": 0})

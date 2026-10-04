@@ -178,6 +178,13 @@ def _assemble_message(partial: dict) -> dict:
     return message
 
 
+def _streamed_chars(partial: dict) -> int:
+    return (sum(map(len, partial.get("content", [])))
+            + sum(map(len, partial.get("reasoning", [])))
+            + sum(len(f) for slot in partial.get("tool_frags", {}).values()
+                  for f in slot["args"]))
+
+
 def _loads_first_object(s: str):
     """`json.loads` but tolerant of a trailing repeat — Gemini's shim
     sometimes emits a tool call's arguments twice, yielding "{...}{...}"."""
@@ -316,12 +323,16 @@ class LLMClient:
         # request (messages + FULL tool schemas) summed over every call —
         # the real input cost even when a provider strips its `usage` block,
         # and the only figure that reflects the re-sent tool schemas.
+        # `incomplete_calls` / `approx_incomplete_output_tokens`: calls cut or
+        # dropped mid-stream never get a usage frame, so their streamed output
+        # (reasoning + content + tool args, chars/4) is estimated here.
         # `llm_seconds` sums the wall-clock of each streamed attempt, including
         # one cut or dropped mid-stream (retry backoff sleeps excluded) — graph.py diffs
         # it at stage boundaries to split LLM wait from local/SALOME time.
         self.usage = {"calls": 0, "metered_calls": 0,
                       "prompt_tokens": 0, "completion_tokens": 0,
-                      "approx_prompt_tokens": 0, "llm_seconds": 0.0}
+                      "approx_prompt_tokens": 0, "llm_seconds": 0.0,
+                      "incomplete_calls": 0, "approx_incomplete_output_tokens": 0}
         # The running turn's threading.Event, set by runner.drive(): a call
         # in flight stops at the next streamed line or retry wait (GH #47).
         self.cancel = None
@@ -623,6 +634,8 @@ class LLMClient:
                     # a cut or dropped call still cost a round-trip and its wait
                     self.usage["calls"] += 1
                     self.usage["llm_seconds"] += time.monotonic() - t0
+                    self.usage["incomplete_calls"] += 1
+                    self.usage["approx_incomplete_output_tokens"] += _streamed_chars(partial) // 4
                     self._trace_incomplete(trace_request, attempt, t0, partial, e)
                     self._live_close()
                     raise
