@@ -180,20 +180,30 @@ def image_size(uri: str) -> tuple[int, int] | None:
     return size if size and all(size) else None
 
 
-DECIDE_NOW = ("You have deliberated too long, and that answer was discarded. Stop "
-              "re-reading: take the most likely reading of every unclear feature, "
-              "name each doubt in uncertainties, and answer with the whole JSON "
-              "spec now.")
+DECIDE_NOW = ("You have deliberated too long and were stopped before answering. "
+              "Your reasoning so far is below. Do not start over: conclude from it, "
+              "take the most likely reading of every feature still unclear, name "
+              "each doubt in uncertainties, and answer with the whole JSON spec now.")
+# the tail is where the model was heading; a slow model's 300 s is ~40k chars
+_REASONING_TAIL = 40_000
+
+
+def decide_now(reasoning: str) -> str:
+    if len(reasoning) > _REASONING_TAIL:
+        reasoning = "(earlier part omitted)\n" + reasoning[-_REASONING_TAIL:]
+    return f"{DECIDE_NOW}\n\nYour reasoning so far:\n{reasoning}"
 
 
 def _ask(llm, messages: list[dict]) -> dict:
     """One vision call, cut after half of llm.timeout spent reasoning with no
-    answer and re-asked once with DECIDE_NOW; a second cut propagates."""
+    answer and re-asked once with its own reasoning and a "conclude now"; a
+    second cut propagates."""
     try:
         return llm.chat(messages=messages, module="vision", reasoning_share=0.5)
     except ReasoningTimeExceeded as e:
-        log.warning("vision: %s; asking it to decide", e)
-        return llm.chat(messages=messages + [{"role": "user", "content": DECIDE_NOW}],
+        log.warning("vision: %s; asking it to conclude", e)
+        return llm.chat(messages=messages + [{"role": "user",
+                                              "content": decide_now(e.reasoning)}],
                         module="vision", reasoning_share=0.5)
 
 

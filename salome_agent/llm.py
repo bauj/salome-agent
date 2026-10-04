@@ -103,10 +103,11 @@ class ReasoningTimeExceeded(Exception):
     yet, after that many seconds: a slow model going round in circles. Never
     retried here; the caller re-asks with a "decide now" nudge."""
 
-    def __init__(self, seconds: float, tokens: int):
+    def __init__(self, seconds: float, tokens: int, reasoning: str = ""):
         super().__init__(f"model reasoned {seconds:g}s (~{tokens} tokens) without answering")
         self.seconds = seconds
         self.tokens = tokens
+        self.reasoning = reasoning
 
 
 class LLMCancelled(Exception):
@@ -564,7 +565,8 @@ class LLMClient:
                         raise ReasoningBudgetExceeded(reasoning_chars // 4, reasoning_budget)
                     if (reasoning_seconds and not content and not tool_frags
                             and time.monotonic() - t0 > reasoning_seconds):
-                        raise ReasoningTimeExceeded(reasoning_seconds, reasoning_chars // 4)
+                        raise ReasoningTimeExceeded(reasoning_seconds, reasoning_chars // 4,
+                                                    "".join(reasoning))
                     self._live_write(delta["reasoning_content"], "reasoning")
                     self._stream_event(type="delta", channel="reasoning",
                                        text=delta["reasoning_content"])

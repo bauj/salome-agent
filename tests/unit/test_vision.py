@@ -182,9 +182,9 @@ def test_no_callback_no_endpoint_lookup():
     llm.endpoint.assert_not_called()
 
 
-def _timed_out():
+def _timed_out(reasoning="R36 is a boss, so"):
     from salome_agent.llm import ReasoningTimeExceeded
-    return ReasoningTimeExceeded(300, 9000)
+    return ReasoningTimeExceeded(300, 9000, reasoning)
 
 
 def test_a_vision_call_cut_for_reasoning_too_long_is_re_asked_to_decide():
@@ -197,7 +197,18 @@ def test_a_vision_call_cut_for_reasoning_too_long_is_re_asked_to_decide():
     assert first.kwargs["reasoning_share"] == 0.5
     assert second.kwargs["reasoning_share"] == 0.5
     assert second.kwargs["messages"][:-1] == first.kwargs["messages"]
-    assert second.kwargs["messages"][-1] == {"role": "user", "content": DECIDE_NOW}
+    nudge = second.kwargs["messages"][-1]
+    assert nudge["role"] == "user"
+    assert nudge["content"].startswith(DECIDE_NOW)
+    assert nudge["content"].endswith("R36 is a boss, so")
+
+
+def test_the_conclude_nudge_keeps_only_the_tail_of_long_reasoning():
+    from salome_agent.nodes.vision import decide_now
+    msg = decide_now("a" * 50_000 + "THE END")
+    assert "(earlier part omitted)" in msg
+    assert msg.endswith("THE END")
+    assert len(msg) < 41_000
 
 
 def test_a_second_reasoning_cut_ends_the_vision_step():
