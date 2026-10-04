@@ -128,6 +128,24 @@ def test_session_died_becomes_a_fatal_result():
     assert result["fatal"].startswith("SALOME agent server unavailable")
 
 
+def test_a_session_module_with_no_server_ends_fatal_before_any_llm_call():
+    llm = MagicMock()
+    result = ToolSpecialist(_spec(needs_session=True)).run(
+        {"module": "toy"}, llm, None, iteration_cap=3)
+    assert "toy stage needs a SALOME agent server" in result["fatal"]
+    llm.chat.assert_not_called()
+
+
+def test_geom_needs_a_session_and_script_modules_do_not():
+    from salome_agent.modules import spec_for
+    import salome_agent.specialists.geom  # noqa: F401
+    import salome_agent.specialists.script_modules  # noqa: F401
+
+    assert spec_for("geom").needs_session
+    assert not spec_for("smesh").needs_session
+    assert not spec_for("paravis").needs_session
+
+
 def test_calls_trace_pairs_tool_and_args_with_records():
     llm = MagicMock()
     llm.chat.side_effect = [_resp(("work", {"a": 1}), ("work", {"a": 2})), _resp(("done", {}))]
