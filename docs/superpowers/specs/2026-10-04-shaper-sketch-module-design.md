@@ -172,7 +172,8 @@ fuse that added nothing), as geom does.
 
 ## Naming, finish, publishing
 
-- Results get readable names (`sketch_1`, `face_1`, `extrude_1`) under the same
+- Results get readable names (`sketch_1`, `sh_face_1`, `extrusion_1`,
+  `extrusion_cut_1`, `revolution_1`; geom already owns `face`, `cut`, `fuse`) under the same
   per-run prefix rule as geom in headless mode, so leftovers and forget behave the
   same. Sketch entity ids stay local to their sketch.
 - `finish_stage(result_names)` refuses while any sketch in or under the results
@@ -195,7 +196,8 @@ Each tool call logs records in SHAPER's Python form (`model.addSketch`,
 `Sketch.addLine`, `setCoincident`, `model.addFace` by inside point,
 `model.addExtrusion`, ...). Codegen emits them between a SHAPER preamble
 (`model.begin()`, part creation) and `model.end()` + `publishToShaperStudy()`.
-SHAPER's own dump-to-Python is weighed in the plan as a cross-check.
+Each published name is set by `_name()`, which first runs `model.do()`, so
+result.py's single transaction resolves selections by name as the live calls did.
 
 ## Prompt
 

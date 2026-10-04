@@ -113,3 +113,23 @@ def test_rebuild_all_forgets_everything_and_replays_in_order():
     rebuild_all(c, g, extra_names=["stray_1"])
     assert c.log[0] == ("forget", ["box_1", "box_2", "fuse_1", "stray_1"])
     assert [e[1] for e in c.log[1:]] == ["make_box", "make_box", "fuse"]
+
+
+def test_replay_sends_a_non_geom_node_to_its_module():
+    from salome_agent.replay import replay
+    seen = []
+
+    class Client:
+        def call_tool(self, name, args, pin=None, module=None):
+            seen.append((name, module))
+            return {"ok": True, "records": [{"fn": "f", "emit": "stmt", "code": "",
+                                             "args": [], "out_vars": pin,
+                                             "publish": pin}]}
+
+    g = BuildGraph()
+    b = g.add_block(0, "stage 1/1: shaper", "shaper", ["sketch_1"])
+    nid = g.append(b, "create_sketch", {"plane": "XOY"},
+                   [{"fn": "f", "emit": "stmt", "code": "", "args": [],
+                     "out_vars": ["sketch_1"], "publish": ["sketch_1"]}], 0, module="shaper")
+    replay(Client(), g, [nid])
+    assert seen == [("create_sketch", "shaper")]
