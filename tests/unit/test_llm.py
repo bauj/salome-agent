@@ -1505,6 +1505,7 @@ def test_reasoning_seconds_cuts_a_call_still_reasoning_with_no_answer(monkeypatc
     with pytest.raises(ReasoningTimeExceeded) as e:
         client.chat(messages=[{"role": "user", "content": "x"}], reasoning_share=0.01)
     assert e.value.seconds == 100
+    assert e.value.reasoning and set(e.value.reasoning) == {"x"}
     assert len(calls) == 1  # not retried as an endpoint failure
     assert client.usage["incomplete_calls"] == 1
 
