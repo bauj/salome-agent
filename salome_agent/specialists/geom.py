@@ -165,17 +165,22 @@ def _leaf_result_names(call_log: list[dict], names: list[str]) -> list[str]:
 
 
 def _compact_result(result: dict) -> dict:
-    """A prior tool result, stripped to what the model reads back on later
-    turns. The verbose `records` blob (geompy dispatch detail — only codegen
+    """A tool result as the model reads it, on this turn and later ones.
+    The verbose `records` blob (geompy dispatch detail — only codegen
     needs it, and codegen reads it straight from `call_log`) is dropped;
     linear-growth transcript cost was ~66% of the input on a real run."""
     if not result.get("ok"):
         return {"ok": False, "error": result.get("error")}
     keep = {"ok": True}
+    # Fixed order first so existing tool messages stay byte-identical; then
+    # every other key a tool returns (area, arc end points, ...), task 304.
     for k in ("result_shape", "shape_info", "delta", "colour", "measurements", "names", "sanity",
               "ids", "centres", "distance", "properties"):
         if k in result:
             keep[k] = result[k]
+    for k, v in result.items():
+        if k not in keep and k != "records":
+            keep[k] = v
     published = [n for rec in result.get("records", []) for n in (rec.get("publish") or [])]
     if published:
         keep["published"] = published
