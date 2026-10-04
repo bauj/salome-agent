@@ -358,3 +358,59 @@ def test_show_results_is_best_effort():
     g.append(b, "make_box", {}, [{"fn": "F", "args": [], "out_vars": ["box_1"],
                                   "publish": ["box_1"]}], 0)
     show_results(client, g.to_dict())                     # raises inside: swallowed
+
+
+from types import SimpleNamespace
+
+from salome_agent.runner import drive
+
+
+class _StreamApp:
+    """A compiled graph stand-in: yields fixed (mode, chunk) pairs."""
+
+    def __init__(self, chunks):
+        self.chunks = chunks
+        self.modes = None
+
+    def stream(self, inp, config, stream_mode):
+        self.modes = stream_mode
+        yield from self.chunks
+
+    def get_state(self, cfg):
+        return SimpleNamespace(values={})
+
+
+def test_drive_passes_custom_chunks_through_as_events():
+    m = EventMapper("r1", "/w/r1")
+    app = _StreamApp([("custom", {"kind": "vision_start", "data": {"images": 1}}),
+                      ("updates", {"plan": {"plan": PLAN}})])
+    events = []
+    drive(app, {}, {"configurable": {}}, m, MagicMock(), events.append, None, None)
+    assert app.modes == ["updates", "custom"]
+    assert [e["kind"] for e in events] == ["vision_start", "plan"]
+    assert events[0] == {"kind": "vision_start", "run_id": "r1", "data": {"images": 1}}
+
+
+def test_vision_progress_reaches_on_event_before_the_plan(tmp_path, monkeypatch):
+    from tests.unit.test_vision_spec import box_spec
+    llm = MagicMock()
+    llm.usage = None
+    llm.endpoint.return_value.model = "reader"
+    llm.chat.side_effect = lambda **kw: box_spec() if kw.get("module") == "vision" else ONE_STAGE
+    _fake_llm(monkeypatch, llm)
+    events = []
+    run_request("x", _config(tmp_path), client=None, on_event=events.append,
+                on_gate=lambda p: {"action": "abort"}, run_id="r1",
+                reference_images=["data:image/png;base64,AAAA"])
+    kinds = [e["kind"] for e in events if e["kind"] != "reasoning"]
+    assert kinds[:3] == ["vision_start", "vision_done", "plan"]
+    start = next(e for e in events if e["kind"] == "vision_start")
+    assert start["data"] == {"images": 1, "sizes": [], "model": "reader"}
+
+
+def test_vision_reasoning_has_its_own_source_with_or_without_a_plan():
+    m = EventMapper("r1", "/w/r1")
+    assert m.reasoning("vision", 1, "reasoning", "hmm")["data"]["source"] == "vision"
+    m.events("plan", {"plan": PLAN})
+    d = m.reasoning("vision", 2, "reasoning", "x")["data"]
+    assert (d["source"], d["index"]) == ("vision", None)

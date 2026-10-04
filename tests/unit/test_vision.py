@@ -130,3 +130,53 @@ def test_image_size_survives_truncated_and_garbage_headers():
             image_size(_uri(bytes(junk) + bytes(rng.randrange(256) for _ in range(8))))
     for _ in range(200):
         image_size(_uri(bytes(rng.randrange(256) for _ in range(rng.randrange(40)))))
+
+
+def _recorder():
+    seen = []
+    return seen, lambda kind, **data: seen.append((kind, data))
+
+
+def test_a_clean_read_reports_start_and_done():
+    llm = MagicMock()
+    llm.endpoint.return_value.model = "reader"
+    llm.chat.return_value = box_spec()
+    seen, on_progress = _recorder()
+    describe_images("make this", [_uri(_png(510, 550)), "x"], llm, on_progress=on_progress)
+    llm.endpoint.assert_called_with("vision")
+    assert seen[0] == ("vision_start", {"images": 2, "sizes": ["510x550"], "model": "reader"})
+    kind, data = seen[1]
+    assert kind == "vision_done" and len(seen) == 2
+    assert (data["parts"], data["conflicts"]) == (len(box_spec()["parts"]), 0)
+    assert isinstance(data["seconds"], float)
+
+
+def test_each_fix_round_reports_its_problems():
+    bad = box_spec()
+    bad["parts"][1]["ops"] = [{"op": "fuse", "with": "P9"}]
+    llm = MagicMock()
+    llm.chat.side_effect = [bad, box_spec()]
+    seen, on_progress = _recorder()
+    describe_images("make this", ["x"], llm, fix_retries=2, on_progress=on_progress)
+    assert [k for k, _ in seen] == ["vision_start", "vision_check", "vision_done"]
+    assert seen[1][1] == {"attempt": 1, "of": 2,
+                          "errors": ["P2: ops[1].with must name another part (P1, P2)"]}
+    assert seen[2][1]["conflicts"] == 0
+
+
+def test_problems_left_after_the_last_round_are_counted_as_conflicts():
+    bad = box_spec()
+    bad["parts"][1]["ops"] = [{"op": "fuse", "with": "P9"}]
+    llm = MagicMock()
+    llm.chat.return_value = bad
+    seen, on_progress = _recorder()
+    describe_images("make this", ["x"], llm, fix_retries=1, on_progress=on_progress)
+    assert [k for k, _ in seen] == ["vision_start", "vision_check", "vision_done"]
+    assert seen[2][1]["conflicts"] == 1
+
+
+def test_no_callback_no_endpoint_lookup():
+    llm = MagicMock()
+    llm.chat.return_value = box_spec()
+    describe_images("make this", ["x"], llm)
+    llm.endpoint.assert_not_called()

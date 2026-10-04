@@ -100,3 +100,11 @@ def test_a_failed_specialist_import_does_not_permanently_break_the_registry(monk
     finally:
         # Restore flag so other tests are not affected
         monkeypatch.setattr(modules_module, "_SPECIALISTS_IMPORTED", saved_flag)
+
+
+def test_llm_module_names_lists_every_name_llm_modules_accepts():
+    from salome_agent.modules import llm_module_names
+    names = llm_module_names()
+    assert names[:2] == ["planner", "vision"] and names[-1] == "amend"
+    assert {"geom", "smesh", "paravis"} <= set(names)
+    assert len(names) == len(set(names))
