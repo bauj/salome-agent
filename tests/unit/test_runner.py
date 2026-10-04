@@ -358,3 +358,34 @@ def test_show_results_is_best_effort():
     g.append(b, "make_box", {}, [{"fn": "F", "args": [], "out_vars": ["box_1"],
                                   "publish": ["box_1"]}], 0)
     show_results(client, g.to_dict())                     # raises inside: swallowed
+
+
+from types import SimpleNamespace
+
+from salome_agent.runner import drive
+
+
+class _StreamApp:
+    """A compiled graph stand-in: yields fixed (mode, chunk) pairs."""
+
+    def __init__(self, chunks):
+        self.chunks = chunks
+        self.modes = None
+
+    def stream(self, inp, config, stream_mode):
+        self.modes = stream_mode
+        yield from self.chunks
+
+    def get_state(self, cfg):
+        return SimpleNamespace(values={})
+
+
+def test_drive_passes_custom_chunks_through_as_events():
+    m = EventMapper("r1", "/w/r1")
+    app = _StreamApp([("custom", {"kind": "vision_start", "data": {"images": 1}}),
+                      ("updates", {"plan": {"plan": PLAN}})])
+    events = []
+    drive(app, {}, {"configurable": {}}, m, MagicMock(), events.append, None, None)
+    assert app.modes == ["updates", "custom"]
+    assert [e["kind"] for e in events] == ["vision_start", "plan"]
+    assert events[0] == {"kind": "vision_start", "run_id": "r1", "data": {"images": 1}}
