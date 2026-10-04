@@ -1414,3 +1414,6 @@ def test_a_cut_call_still_counts_in_usage_calls_and_seconds(monkeypatch):
     assert client.usage["calls"] == 1
     assert client.usage["metered_calls"] == 0
     assert client.usage["llm_seconds"] > 0
+    assert client.usage["incomplete_calls"] == 1
+    # cut once past 500 approx tokens: 6 chunks of 400 chars streamed
+    assert client.usage["approx_incomplete_output_tokens"] == 600
