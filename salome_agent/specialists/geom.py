@@ -174,12 +174,13 @@ def _compact_result(result: dict) -> dict:
     keep = {"ok": True}
     # Fixed order first so existing tool messages stay byte-identical; then
     # every other key a tool returns (area, arc end points, ...), task 304.
+    # `id` is the wire envelope's request number, not tool output.
     for k in ("result_shape", "shape_info", "delta", "colour", "measurements", "names", "sanity",
               "ids", "centres", "distance", "properties"):
         if k in result:
             keep[k] = result[k]
     for k, v in result.items():
-        if k not in keep and k != "records":
+        if k not in keep and k not in ("records", "id"):
             keep[k] = v
     published = [n for rec in result.get("records", []) for n in (rec.get("publish") or [])]
     if published:
