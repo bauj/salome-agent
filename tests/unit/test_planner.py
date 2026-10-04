@@ -126,7 +126,7 @@ def test_every_routable_module_contributes_its_catalogue():
     from salome_agent.modules import routable
 
     specs = {s.name for s in routable()}
-    assert specs == {"geom", "smesh"}
+    assert specs == {"geom", "shaper", "smesh"}
     for spec in routable():
         assert spec.catalogue.strip() in PLANNER_SYSTEM_PROMPT
 
@@ -140,3 +140,8 @@ def test_a_module_with_no_catalogue_is_not_routable():
         execute=lambda c, n, a: {"ok": True}, render_result=str,
         tools_for=lambda c: {}, no_tool_nudge="", on_exhausted=lambda c, e: {})
     assert spec not in routable()
+
+
+def test_a_module_named_in_the_request_wins():
+    assert "always wins" in PLANNER_SYSTEM_PROMPT
+    assert "(geom|shaper|smesh)" in PLANNER_SYSTEM_PROMPT

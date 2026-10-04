@@ -1,0 +1,62 @@
+from unittest.mock import MagicMock
+
+from salome_agent.modules import llm_module_names, spec_for
+
+
+def _rec(out, code="x = 1", recv=None, refs=()):
+    r = {"fn": "f", "emit": "stmt", "code": code, "out_vars": [out],
+         "args": [{"kind": "expr", "value": "", "refs": list(refs)}] if refs else [],
+         "publish": [out]}
+    if recv:
+        r["recv"] = recv
+        r["publish"] = None
+    return r
+
+
+def test_shaper_is_a_registered_tool_module():
+    spec = spec_for("shaper")
+    assert spec.needs_session is True
+    assert spec.call_prefix
+    assert spec.forgets is True
+    assert "shaper" in llm_module_names()
+
+
+def test_execute_and_tools_go_to_the_shaper_module():
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [{"name": "create_sketch"}]}
+    client.call_tool.return_value = {"ok": True}
+    spec = spec_for("shaper")
+    assert list(spec.tools_for(client)) == ["create_sketch"]
+    client.list_tools.assert_called_with(module="shaper")
+    spec.execute(client, "create_sketch", {"plane": "XOY"})
+    client.call_tool.assert_called_with("create_sketch", {"plane": "XOY"}, module="shaper")
+
+
+def test_render_result_hides_bookkeeping():
+    text = spec_for("shaper").render_result(
+        {"ok": True, "records": [1], "result_shape": "s", "shape_info": {}, "dof": 2,
+         "regions": []})
+    assert "records" not in text and "shape_info" not in text and "result_shape" not in text
+    assert "'dof': 2" in text
+
+
+def test_gate_refuses_while_a_result_sketch_has_loose_ends():
+    log = [_rec("sketch_1"), _rec("ext_1", refs=["sketch_1"])]
+    infos = {"sketch_1": {"dof": 3, "loose_ends": [{"ref": "L1.end", "at": [1, 0]}]}}
+    gate = spec_for("shaper").gate
+    msg = gate({"result_names": ["ext_1"]}, log, infos)
+    assert "sketch_1" in msg and "L1.end" in msg
+
+
+def test_gate_ignores_closed_and_unreached_sketches():
+    gate = spec_for("shaper").gate
+    log = [_rec("sketch_1"), _rec("sketch_2"), _rec("ext_1", refs=["sketch_1"])]
+    infos = {"sketch_1": {"dof": 0, "loose_ends": []},
+             "sketch_2": {"dof": 0, "loose_ends": [{"ref": "A.end", "at": [0, 0]}]}}
+    assert gate({"result_names": ["ext_1"]}, log, infos) is None
+
+
+def test_finish_returns_result_names_and_call_log():
+    log = [_rec("sketch_1")]
+    out = spec_for("shaper").terminator.handle({"result_names": ["sketch_1"]}, log)
+    assert out == {"result_names": ["sketch_1"], "call_log": log}

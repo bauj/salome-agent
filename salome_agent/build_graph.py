@@ -48,7 +48,7 @@ def _record_refs(records: list) -> set[str]:
     for r in records:
         for arg in r.get("args", []):
             refs |= _refs_in(arg)
-        if not r.get("out_vars") and r.get("recv"):
+        if r.get("recv"):
             refs.add(r["recv"])
     return refs
 

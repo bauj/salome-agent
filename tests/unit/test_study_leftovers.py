@@ -91,7 +91,8 @@ def test_core_clear_study_command_refreshes():
     refreshed = []
     backend = SimpleNamespace(poisoned=lambda: False,
                               clear_study=lambda: {"ok": True, "removed": 4},
-                              refresh=refreshed.append)
+                              refresh=refreshed.append,
+                              run_tool=lambda fn, timeout: fn())
     r = Core(backend).handle({"id": 3, "cmd": "clear_study"})
     assert r == {"id": 3, "ok": True, "removed": 4}
     assert refreshed == ["GEOM"]

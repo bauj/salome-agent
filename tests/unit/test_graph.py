@@ -574,3 +574,10 @@ def test_endpoint_fatal_explains_a_second_reasoning_cut():
     msg = _llm_endpoint_fatal(ReasoningTimeExceeded(300, 9000))
     assert "even after being told to decide" in msg
     assert "300s" in msg
+
+
+def test_shaper_stage_routes_like_a_tool_module():
+    ok = {"stage_idx": 0, "stages": {0: {"module": "shaper", "status": "ok"}}}
+    failed = {"stage_idx": 0, "stages": {0: {"module": "shaper", "status": "failed"}}}
+    assert route_after_run_stage(ok) == "advance"
+    assert route_after_run_stage(failed) == "retry_gate"
