@@ -19,12 +19,12 @@ OUT = os.environ["SA_DUMP_OUT"]
 VIEW = os.environ.get("SA_DUMP_VIEW", "iso")
 LOG = os.environ["SA_DUMP_LOG"]
 
-log = open(LOG, "w")
+_sa_log = open(LOG, "w")  # not "log": activating SHAPER imports math.* into this namespace
 
 
 def _finish():
-    log.write("DONE\n")
-    log.close()
+    _sa_log.write("DONE\n")
+    _sa_log.close()
 
 
 def _names(src: str) -> list[str]:
@@ -49,39 +49,67 @@ def _show():
         salome.salome_init()
         import SalomePyQt
         sg = SalomePyQt.SalomePyQt()
+        with open(RESULT) as f:
+            src = f.read()
+        if "from salome.shaper import model" in src:
+            _show_shaper(salome, sg, src)
+            return
         sg.activateModule("Geometry")
         sg.activateView(sg.createView("OCCViewer"))
         gui = salome.ImportComponentGUI("GEOM")
-        with open(RESULT) as f:
-            src = f.read()
         ns = {}
         exec(src, ns)
         geompy = ns["geompy"]
         for name in _names(src):
             if name not in ns:
-                log.write(f"not in result.py: {name}\n")
+                _sa_log.write(f"not in result.py: {name}\n")
                 continue
             entry = geompy.addToStudy(ns[name], name)
             gui.createAndDisplayGO(entry)
             # shading; objects keep their own colour (set_color) or GEOM's default
             gui.setDisplayMode(entry, 1)
-            log.write(f"shown: {name}\n")
+            _sa_log.write(f"shown: {name}\n")
         salome.sg.updateObjBrowser()
         {"top": salome.sg.ViewTop, "front": salome.sg.ViewFront,
          "left": salome.sg.ViewLeft}.get(VIEW, lambda: None)()
         salome.sg.FitAll()
         QTimer.singleShot(1500, _dump)
     except Exception:
-        log.write(traceback.format_exc())
+        _sa_log.write(traceback.format_exc())
         _finish()
+
+
+def _show_shaper(salome, sg, src):
+    # SHAPER displays the results of the features a script creates in its own
+    # OCC view, so the script only has to run with the module active.
+    sg.activateModule("Shaper")
+    ns = {}
+    exec(src, ns)
+    doc, model = ns.get("shaper_doc"), ns.get("model")
+    if doc is not None and model is not None:
+        # sketch outlines would hide the voids of the faces built from them
+        model.begin()
+        for feat in doc.allFeatures():
+            if feat.getKind() == "Sketch":
+                for res in feat.results():
+                    res.setDisplayed(False)
+        model.end()
+
+    def _fit():
+        # after SHAPER has displayed its results, or FitAll frames an empty view
+        {"top": salome.sg.ViewTop, "front": salome.sg.ViewFront,
+         "left": salome.sg.ViewLeft}.get(VIEW, lambda: None)()
+        salome.sg.FitAll()
+        QTimer.singleShot(1000, _dump)
+    QTimer.singleShot(1500, _fit)
 
 
 def _dump():
     try:
         import SalomePyQt
-        log.write(f"dump={SalomePyQt.SalomePyQt().dumpView(OUT)}\n")
+        _sa_log.write(f"dump={SalomePyQt.SalomePyQt().dumpView(OUT)}\n")
     except Exception:
-        log.write(traceback.format_exc())
+        _sa_log.write(traceback.format_exc())
     _finish()
 
 
