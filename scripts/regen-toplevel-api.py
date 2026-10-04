@@ -12,9 +12,8 @@ Connects to the agent server named in ~/.salome_agent/server.json if one is
 running (GUI plugin or headless); otherwise spawns a throwaway headless server
 (needs $SALOME_ROOT or salome.root in config.json) and tears it down after.
 
-A module whose live introspect comes back empty (e.g. pvsimple on a GUI server,
-where it is loaded lazily) keeps its existing member list rather than being
-wiped.
+A module whose live introspect comes back empty keeps its existing member
+list rather than being wiped.
 """
 import json
 import os
@@ -31,7 +30,7 @@ from salome_agent.executor_client import ExecutorClient  # noqa: E402
 
 HS = Path(os.path.expanduser("~/.salome_agent/server.json"))
 FIXTURE = REPO / "salome_agent" / "verify" / "toplevel_api.json"
-MODULES = ["geompy", "smesh", "pvsimple"]
+MODULES = ["geompy", "smesh"]
 
 
 def _salome_root() -> str:

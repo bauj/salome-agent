@@ -346,7 +346,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         if block:
             blocks.append(block)
     if module == "geom":
-        # smesh/paravis never see the image spec: it only feeds CAD construction
+        # smesh never sees the image spec: it only feeds CAD construction
         image_spec = state.get("image_spec")
         if image_spec:
             from salome_agent.nodes.vision_spec import parts_block, stage_part_ids

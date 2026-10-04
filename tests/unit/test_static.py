@@ -23,7 +23,7 @@ def test_known_toplevel_call_passes_even_with_wrong_arity():
 
 
 def test_derived_object_call_is_not_checked():
-    err = check_static("mesh_obj.Compute()", API_MAP)  # mesh_obj isn't geompy/smesh/pvsimple
+    err = check_static("mesh_obj.Compute()", API_MAP)  # mesh_obj isn't geompy/smesh
     assert err is None
 
 

@@ -6,7 +6,7 @@ from salome_agent.nodes.vision_spec import compact_spec, part_ids
 
 
 _PLANNER_BASE = """You turn a natural-language SALOME request into an
-ordered list of stages. Each stage has: module (geom|smesh|paravis), intent
+ordered list of stages. Each stage has: module (geom|smesh), intent
 (short description of the job for that stage), params (dims in millimetres,
 unconverted), inputs (a plain-words list of what this stage needs from earlier ones), and
 -- for a geom stage -- an optional "tools" list naming the geom tool names you expect
@@ -41,7 +41,7 @@ operations belong to one stage; splitting breaks the object-name handoff.
 For an assembly you MAY give each part (or each group of identical parts)
 its own stage. Do that when the parts are distinct enough to name. A car is
 an assembly: body, cabin, wheels are separate parts. Also use separate
-stages whenever the work crosses modules (geom -> smesh -> paravis) or the
+stages whenever the work crosses modules (geom -> smesh) or the
 request asks for genuinely independent deliverables.
 
 Fuse parts into one solid only when they are one piece of material (a mug
@@ -62,9 +62,6 @@ Module scope:
   AND display properties of geometry (colour, transparency, display mode).
   "make it red", "colour the shape blue", "50% transparent" are geom.
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
-- paravis: post-processing an existing simulation result (a MED file) --
-  contours, cut planes, rendered scenes. NOT for colouring CAD geometry.
-  Only use paravis when the request involves a results/field/MED file.
 
 If the request comes with a "Reference image spec" block, an image-analysis
 agent read it from the user's reference image(s): one entry per part, each with
@@ -76,9 +73,9 @@ not separate parts. Explicit numeric dimensions in the text request still win:
 put those in params. Mention listed uncertainties or conflicts in a stage's
 params rather than inventing detail."""
 
-# The smesh and paravis one-liners stay in _PLANNER_BASE (not restructured);
-# they also appear in their spec.catalogue strings so routable() includes them.
-# Do NOT move those three lines out — the prompt's byte-identity depends on them.
+# The smesh one-liner stays in _PLANNER_BASE (not restructured); it also
+# appears in its spec.catalogue string so routable() includes it.
+# Do NOT move that line out — the prompt's byte-identity depends on it.
 PLANNER_SYSTEM_PROMPT = _PLANNER_BASE + "\n\n" + spec_for("geom").catalogue
 
 _DETAIL_HINT = {
