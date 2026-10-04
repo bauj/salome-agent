@@ -596,6 +596,25 @@ def test_compact_result_keeps_query_payload_keys():
     assert "records" not in compact
 
 
+def test_compact_result_keeps_every_key_a_tool_returns():
+    # Task 304: a fixed keep-list silently dropped keys added by later tools
+    # (area, closed_with_line, arc/curve end points, loose_ends ...).
+    from salome_agent.specialists.geom import _compact_result
+
+    full = {"ok": True, "sanity": {"ok": True},
+            "records": [{"fn": "MakeFaceWires", "args": [], "out_vars": ["face_1"],
+                         "publish": ["face_1"]}],
+            "area": 19380.0, "closed_with_line": [[0, 0, 0], [10, 0, 0]], "length": 40.0,
+            "arc": {"start": [0, 0, 0], "end": [10, 0, 0], "length": 15.7},
+            "closed": False, "loose_ends": [[0, 0, 0]], "some_future_key": 1, "id": 7}
+    compact = _compact_result(full)
+    assert "records" not in compact and "id" not in compact
+    assert compact["published"] == ["face_1"]
+    for k in full:
+        if k not in ("records", "id"):
+            assert compact[k] == full[k], k
+
+
 def test_compact_result_keeps_the_colour_note():
     from salome_agent.specialists.geom import _compact_result
 
