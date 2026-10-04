@@ -6,7 +6,7 @@ from salome_agent.nodes.vision_spec import compact_spec, part_ids
 
 
 _PLANNER_BASE = """You turn a natural-language SALOME request into an
-ordered list of stages. Each stage has: module (geom|smesh), intent
+ordered list of stages. Each stage has: module (geom|shaper|smesh), intent
 (short description of the job for that stage), params (dims in millimetres,
 unconverted), inputs (a plain-words list of what this stage needs from earlier ones), and
 -- for a geom stage -- an optional "tools" list naming the geom tool names you expect
@@ -61,7 +61,13 @@ Module scope:
 - geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
   AND display properties of geometry (colour, transparency, display mode).
   "make it red", "colour the shape blue", "50% transparent" are geom.
+- shaper: parametric sketches with constraints, and faces and solids built from them (extrude, pocket, boss, revolve).
+  Use shaper only when the request names it or asks for a constrained or
+  parametric sketch; all other CAD geometry stays geom.
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
+
+A module the request names ("in shaper", "using GEOM", "with SMESH")
+always wins over these rules.
 
 If the request comes with a "Reference image spec" block, an image-analysis
 agent read it from the user's reference image(s): one entry per part, each with

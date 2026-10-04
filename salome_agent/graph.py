@@ -154,8 +154,10 @@ def _amend_node(state: dict, config: "RunnableConfig"):
 
 
 def route_after_run_stage(state: dict) -> str:
+    from salome_agent.modules import spec_for
+
     stage = state["stages"][state["stage_idx"]]
-    if stage["module"] == "geom":
+    if spec_for(stage["module"]).call_prefix:
         if stage["status"] == "ok":
             return "advance"
         return "retry_gate"
@@ -333,6 +335,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     from salome_agent.specialists.tool_specialist import ToolSpecialist
     import salome_agent.specialists.geom  # noqa: F401 — registers GEOM_SPEC
     import salome_agent.specialists.script_modules  # noqa: F401 — registers the script specs
+    import salome_agent.specialists.shaper  # noqa: F401 — registers SHAPER_SPEC
 
     if module not in MODULES:
         return Command(update={"fatal": f"planner produced unknown module {module!r}"},
@@ -353,6 +356,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             ids = stage_part_ids(state["plan"], idx, image_spec)
             if ids:
                 blocks.append(parts_block(image_spec, ids))
+    if spec.call_prefix:
         retry = retry_context(state, idx, client)
         seed = (retry or {}).get("call_log")
         seed_calls = (retry or {}).get("calls")
@@ -390,13 +394,14 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             stage["status"] = "ok"
             stage["result_names"] = result["result_names"]
             update["last_error"] = None
-            log.info("  geom specialist done: %d tool call(s), %d geompy call(s), results=%s",
-                     len(result.get("calls") or []), len(result.get("call_log") or []),
+            log.info("  %s specialist done: %d tool call(s), %d %s call(s), results=%s",
+                     module, len(result.get("calls") or []),
+                     len(result.get("call_log") or []), spec.call_prefix.rstrip("."),
                      result["result_names"])
         else:
             stage["status"] = "failed"
             update["last_error"] = result.get("last_error")
-            log.warning("  geom specialist failed: %s", result.get("last_error"))
+            log.warning("  %s specialist failed: %s", module, result.get("last_error"))
 
     if snap0 is not None:
         stage["timing"] = _accum_timing(
