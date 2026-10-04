@@ -21,6 +21,7 @@ salome-agent = "salome_agent.cli:main"
 [tool.setuptools]
 packages = ["salome_agent", "salome_agent.nodes", "salome_agent.specialists",
             "salome_agent.verify", "agent_server", "executor", "executor.geom"]
+package-data = {"salome_agent.verify" = ["toplevel_api.json"]}
 
 [tool.pytest.ini_options]
 markers = ["salome: requires a live SALOME install (skipped in CI)"]
