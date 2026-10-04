@@ -36,6 +36,14 @@ def _accum_timing(existing: dict | None, delta: dict) -> dict:
     return t
 
 
+def _body_snippet(resp, limit: int = 300) -> str:
+    try:
+        text = " ".join((resp.text or "").split())
+    except Exception:  # noqa: BLE001 — body already consumed or unreadable
+        return ""
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 def _llm_endpoint_fatal(e: Exception) -> str | None:
     """A terminal LLM-endpoint failure (gateway 5xx after retries, connection
     loss, non-JSON body) — return a one-line abort message so the run ends
@@ -47,8 +55,10 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
             return ("LLM endpoint rate-limited (HTTP 429) after retries — quota "
                     "or requests-per-minute exceeded; wait or use a higher-tier key")
         if isinstance(code, int) and 400 <= code < 500:
-            return (f"LLM endpoint rejected the request (HTTP {code}) — check the "
-                    f"model name, API key and request parameters")
+            body = _body_snippet(e.response)
+            return (f"LLM endpoint rejected the request (HTTP {code}) — check "
+                    f"base_url, model name, API key and request parameters"
+                    + (f"; endpoint said: {body}" if body else ""))
         return (f"LLM endpoint unavailable (HTTP {code}) — the model backend is "
                 f"down or slow; retry later")
     if isinstance(e, StreamBudgetExceeded):
