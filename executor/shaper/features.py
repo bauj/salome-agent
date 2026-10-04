@@ -1,6 +1,7 @@
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
-    feature_shape, measure, model, new_name, publish_study, record, sketch_of, state, tool,
+    feature_shape, measure, new_name, publish_study, record, sketch_of, state, tool,
+    transaction,
 )
 
 _AXES = ("OX", "OY", "OZ")
@@ -59,16 +60,15 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str) -> di
         err = str(e) or type(e).__name__
     if err:
         if name in st.ns:
-            m = model()
-            m.begin()
-            st.ns["shaper_doc"].removeFeature(st.ns.pop(name).feature())
-            m.end()
+            with transaction():
+                st.ns["shaper_doc"].removeFeature(st.ns.pop(name).feature())
         return {"ok": False, "error": f"{fn}: {err}"}
     st.objects[name] = kind
     publish_study(executor)
-    info = measure(executor, name)
+    shape = feature_shape(executor, name)
+    info = measure(executor, name, shape)
     # a later geom stage reaches the result by name (a one-way copy)
-    executor.geom_bindings[name] = feature_shape(executor, name)
+    executor.geom_bindings[name] = shape
     return {"ok": True, "records": [rec], "name": name, "measure": info,
             "result_shape": name, "shape_info": info}
 
@@ -119,18 +119,16 @@ def _region_names(st, sk, regions: list) -> list:
     """SHAPER's naming string for each region (what its own dumps write), found
     by selecting the region by object in a throwaway Face feature."""
     import ModelAPI
-    m = model()
     res = sk.api.feature().firstResult()
     rc = ModelAPI.modelAPI_ResultConstruction(res)
-    m.begin()
-    probe = m.addFace(st.ns["shaper_doc"], [m.selection(res, rc.face(i)) for i in regions])
-    m.end()
-    lst = probe.feature().selectionList("base_objects")
-    names = [lst.value(k).namingName() for k in range(lst.size())]
-    m.begin()
-    st.ns["shaper_doc"].removeFeature(probe.feature())
-    m.end()
-    return names
+    with transaction() as m:
+        probe = m.addFace(st.ns["shaper_doc"], [m.selection(res, rc.face(i)) for i in regions])
+    try:
+        lst = probe.feature().selectionList("base_objects")
+        return [lst.value(k).namingName() for k in range(lst.size())]
+    finally:
+        with transaction():
+            st.ns["shaper_doc"].removeFeature(probe.feature())
 
 
 @tool("extrude", category="feature",
@@ -226,7 +224,7 @@ def tool_revolve(executor, args: dict):
         if ent is None or ent.type != "line":
             raise ValueError(f"{axis!r}: {lid!r} is not a line of {sk_name}")
         axis_src = f"{ent.var}.result()"
-        refs.append(ent.var)
+        refs += [ent.var, sk.name]
     else:
         raise ValueError(f"axis must be OX, OY, OZ or \"<sketch>:<line id>\", got {axis!r}")
     angle = args.get("angle")

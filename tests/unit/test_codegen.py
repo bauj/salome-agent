@@ -312,3 +312,20 @@ def test_publish_line_template_replaces_add_to_study():
     source = generate(shaper, ["sketch_1"], publish_line="_name({var}, {name!r})")
     assert "_name(sketch_1, 'sketch_1')" in source
     assert "addToStudy" not in source
+
+
+def test_a_kept_entity_brings_its_receiver_along():
+    # revolve about another sketch's line: the line's own sketch must be emitted
+    log = [
+        {"fn": "addSketch", "emit": "stmt", "code": "sketch_2 = mk()", "args": [],
+         "out_vars": ["sketch_2"], "publish": ["sketch_2"]},
+        {"fn": "addLine", "emit": "stmt", "recv": "sketch_2",
+         "code": "sketch_2_L1 = sketch_2.addLine(0, 0, 0, 1)", "args": [],
+         "out_vars": ["sketch_2_L1"], "publish": None},
+        {"fn": "addRevolution", "emit": "stmt", "code": "rev_1 = rev(sketch_2_L1)",
+         "args": [{"kind": "expr", "value": "", "refs": ["sketch_2_L1"]}],
+         "out_vars": ["rev_1"], "publish": ["rev_1"]},
+    ]
+    source = generate(log, ["rev_1"])
+    assert "sketch_2 = mk()" in source
+    assert source.index("sketch_2 = mk()") < source.index("sketch_2_L1 =")

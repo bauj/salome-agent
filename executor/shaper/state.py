@@ -5,6 +5,7 @@ Every change is made by executing the same source line that goes into
 result.py, so the live document and the generated script cannot drift."""
 import math
 import re
+from contextlib import contextmanager
 
 from executor.registry import ToolRegistry
 from executor.geom.helpers import _next_name
@@ -33,6 +34,9 @@ PUBLISH_LINE = "_name({var}, {name!r})"
 
 _ID = re.compile(r"[A-Za-z][A-Za-z0-9]*$")
 TOL = 1e-5
+# Set once this server process has opened a SHAPER document: until then every
+# hook (clear, forget) leaves SHAPER unloaded.
+_USED = False
 
 
 class Entity:
@@ -68,15 +72,27 @@ def model():
     return m
 
 
+@contextmanager
+def transaction():
+    """One SHAPER operation, closed even when its body raises: an operation left
+    open breaks every later call on the server."""
+    m = model()
+    m.begin()
+    try:
+        yield m
+    finally:
+        m.end()
+
+
 def state(executor) -> ShaperState:
+    global _USED
     st = executor.__dict__.get("shaper_state")
     if st is None:
         from SketchAPI import SketchAPI_Point
-        m = model()
-        ns = {"model": m, "SketchAPI_Point": SketchAPI_Point}
-        m.begin()
-        ns["shaper_doc"] = m.addPart(m.moduleDocument()).document()
-        m.end()
+        _USED = True
+        ns = {"model": model(), "SketchAPI_Point": SketchAPI_Point}
+        with transaction() as m:
+            ns["shaper_doc"] = m.addPart(m.moduleDocument()).document()
         exec(NAME_HELPER, ns)
         st = executor.__dict__["shaper_state"] = ShaperState(ns)
     return st
@@ -91,16 +107,13 @@ def reset(executor) -> None:
 def clear(executor) -> None:
     """Remove every Part from the SHAPER session (clear_study)."""
     reset(executor)
-    try:
-        m = model()
-    except ImportError:
+    if not _USED:
         return
-    part_set = m.moduleDocument()
-    m.begin()
-    for feat in list(part_set.allFeatures()):
-        if feat.getKind() == "Part":
-            part_set.removeFeature(feat)
-    m.end()
+    with transaction() as m:
+        part_set = m.moduleDocument()
+        for feat in list(part_set.allFeatures()):
+            if feat.getKind() == "Part":
+                part_set.removeFeature(feat)
 
 
 def forget(executor, names: list) -> list:
@@ -110,21 +123,25 @@ def forget(executor, names: list) -> list:
     if st is None:
         return []
     gone = []
-    m = model()
-    m.begin()
-    for name in names:
-        if name in st.sketches:
-            feat = st.sketches.pop(name).api.feature()
-        elif name in st.objects:
-            st.objects.pop(name)
-            feat = st.ns[name].feature()
-        else:
-            continue
-        st.ns["shaper_doc"].removeFeature(feat)
-        st.ns.pop(name, None)
-        executor.geom_bindings.pop(name, None)
-        gone.append(name)
-    m.end()
+    with transaction():
+        for name in names:
+            if name in st.sketches:
+                feats = [st.sketches.pop(name).api.feature()]
+                plane = st.ns.get(f"{name}_plane")
+                if plane is not None:
+                    feats.append(plane.feature())
+                for var in [v for v in st.ns if v.startswith(f"{name}_")]:
+                    st.ns.pop(var)
+            elif name in st.objects:
+                st.objects.pop(name)
+                feats = [st.ns[name].feature()]
+            else:
+                continue
+            for feat in feats:
+                st.ns["shaper_doc"].removeFeature(feat)
+            st.ns.pop(name, None)
+            executor.geom_bindings.pop(name, None)
+            gone.append(name)
     if gone:
         _remove_study_objects(executor, gone)
     return gone
@@ -188,6 +205,21 @@ def geometry(ent: Entity) -> dict:
 
 def snapshot(sk: Sketch) -> dict:
     return {i: geometry(e) for i, e in sk.entities.items()}
+
+
+def restore(sk: Sketch, geos: dict) -> None:
+    """Put entities back where `geos` (a snapshot) had them."""
+    for i, geo in moved(geos, snapshot(sk)).items():
+        old, a = geos[i], sk.entities[i].api
+        if "start" in old:
+            a.startPoint().setValue(*old["start"])
+            a.endPoint().setValue(*old["end"])
+        if "center" in old:
+            a.center().setValue(*old["center"])
+        if sk.entities[i].type == "circle":
+            a.radius().setValue(old["radius"])
+        if "at" in old:
+            a.coordinates().setValue(*old["at"])
 
 
 def moved(before: dict, after: dict) -> dict:
@@ -327,11 +359,12 @@ def feature_shape(executor, name: str):
     return shapes[0] if len(shapes) == 1 else geompy.MakeCompound(shapes)
 
 
-def measure(executor, name: str) -> dict:
+def measure(executor, name: str, shape=None) -> dict:
     from executor.geom.helpers import _check_shape
     from executor.geom.results import _shape_info
     geompy = executor.namespace["geompy"]
-    shape = feature_shape(executor, name)
+    if shape is None:
+        shape = feature_shape(executor, name)
     info = _shape_info(geompy, shape) or {}
     length, area, volume = geompy.BasicProperties(shape)
     valid, msg = _check_shape(geompy, shape)

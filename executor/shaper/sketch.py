@@ -1,8 +1,8 @@
 import math
 
 from executor.shaper.state import (
-    PUBLISH_LINE, Constraint, Entity, Sketch, check_id, geometry, model, new_name,
-    record, run, sketch_of, snapshot, solver_error, state, status, tool,
+    PUBLISH_LINE, Constraint, Entity, Sketch, check_id, geometry, new_name, record,
+    restore, run, sketch_of, snapshot, solver_error, state, status, tool, transaction,
 )
 
 # plane -> the world axes lying in it, offered as sketch references
@@ -11,16 +11,27 @@ _ENTITY_TYPES = ("line", "circle", "arc", "point")
 
 
 def exec_records(st, records: list) -> None:
-    """Run records exactly as result.py will: their code, then their publish line."""
-    m = model()
-    m.begin()
+    """Run records exactly as result.py will: their code, then their publish line.
+    If one fails, the features the batch already made are removed again, so the
+    document never holds what no record describes."""
+    made = []
     try:
-        for r in records:
-            run(st, r["code"])
-            for v in r.get("publish") or ():
-                run(st, PUBLISH_LINE.format(var=v, name=v))
-    finally:
-        m.end()
+        with transaction():
+            for r in records:
+                made += r.get("out_vars") or ()
+                run(st, r["code"])
+                for v in r.get("publish") or ():
+                    run(st, PUBLISH_LINE.format(var=v, name=v))
+    except Exception:
+        with transaction():
+            for var in reversed(made):
+                obj = st.ns.pop(var, None)
+                if obj is not None:
+                    try:
+                        st.ns["shaper_doc"].removeFeature(obj.feature())
+                    except Exception:  # noqa: BLE001 — already gone with its owner
+                        pass
+        raise
 
 
 def _num(v, what: str):
@@ -377,24 +388,27 @@ def tool_sketch_constrain(executor, args: dict):
         sk.next_k = k0
         raise
     before = snapshot(sk)
-    m = model()
     records, rejected = [], []
     for cid, t, var, code, refs, value in planned:
-        rec = record("set" + t, code, out=[var], refs=[r.var for r in refs], recv=sk.name)
+        # result.py solves after each constraint too, as the live calls do
+        rec = record("set" + t, code + "\nmodel.do()", out=[var],
+                     refs=[r.var for r in refs], recv=sk.name)
+        prior = snapshot(sk)
         err = ""
-        m.begin()
         try:
-            run(st, code)
+            with transaction():
+                run(st, rec["code"])
         except Exception as e:  # noqa: BLE001 — reported as a rejected constraint
             err = str(e) or type(e).__name__
-        m.end()
         if not err:
             err = solver_error(sk)
         if err:
-            if var in st.ns:
-                m.begin()
-                st.ns["shaper_doc"].removeFeature(st.ns.pop(var).feature())
-                m.end()
+            # result.py never sees this constraint, so neither may the geometry
+            with transaction():
+                obj = st.ns.pop(var, None)
+                if obj is not None:
+                    st.ns["shaper_doc"].removeFeature(obj.feature())
+                restore(sk, prior)
             rejected.append({"id": cid, "type": t, "message": err})
             continue
         records.append(rec)

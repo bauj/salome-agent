@@ -37,6 +37,11 @@ def _reachable(call_log: list[dict], result_names: list[str]) -> set[str]:
             if call.get("recv") in wanted and not set(call["out_vars"]) <= wanted:
                 wanted |= set(call["out_vars"])
                 changed = True
+            # ...and a kept entity brings its receiver.
+            if (wanted & set(call["out_vars"]) and call.get("recv")
+                    and call["recv"] not in wanted):
+                wanted.add(call["recv"])
+                changed = True
             if wanted & set(call["out_vars"]) or call.get("recv") in wanted:
                 for arg in call["args"]:
                     for ref in _refs_in(arg):

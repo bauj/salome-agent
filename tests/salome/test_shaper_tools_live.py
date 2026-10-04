@@ -215,3 +215,20 @@ def test_result_py_rebuilds_the_same_solid(agent_client, tmp_path):
     assert m, out.stdout[-2000:] + out.stderr[-2000:]
     assert float(m.group(1)) == pytest.approx(live, abs=1e-3)
     assert live == pytest.approx((800 - 3.14159265 * 36) * 10, abs=0.01)
+
+
+def test_a_rejected_constraint_leaves_the_geometry_as_it_was(agent_client):
+    name, _ = _plate(agent_client)
+    r = _call(agent_client, "sketch_constrain", sketch=name, constraints=[
+        {"type": "horizontal", "refs": ["L1"]}, {"type": "horizontal", "refs": ["L3"]},
+        {"type": "vertical", "refs": ["L2"]}, {"type": "vertical", "refs": ["L4"]},
+        {"type": "length", "refs": ["L1"], "value": 40}])
+    assert r["rejected"] == []
+    before = _call(agent_client, "sketch_status", sketch=name)["entities"]
+    r = _call(agent_client, "sketch_constrain", sketch=name, constraints=[
+        {"id": "BAD", "type": "length", "refs": ["L3"], "value": 25}])
+    assert [x["id"] for x in r["rejected"]] == ["BAD"]
+    after = _call(agent_client, "sketch_status", sketch=name)["entities"]
+    for i, geo in before.items():
+        for k, v in geo.items():
+            assert after[i][k] == pytest.approx(v, abs=1e-6), (i, k)
