@@ -110,7 +110,7 @@ def test_follow_up_with_images_is_described_then_amended(tmp_path, monkeypatch):
     from salome_agent.specialists import amend as amend_mod
 
     monkeypatch.setattr(vision_mod, "describe_images",
-                        lambda request, images, llm, fix_retries=2: {"summary": "a D-shaped handle",
+                        lambda request, images, llm, **kw: {"summary": "a D-shaped handle",
                                                                       "parts": []})
     seen = {}
 

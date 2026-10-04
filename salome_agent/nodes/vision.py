@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 import struct
+import time
 
 from salome_agent.llm import with_images
 from salome_agent.logs import log
@@ -177,31 +178,52 @@ def image_size(uri: str) -> tuple[int, int] | None:
     return size if size and all(size) else None
 
 
-def describe_images(request: str, images: list[str], llm, fix_retries: int = 2) -> dict:
+def describe_images(request: str, images: list[str], llm, fix_retries: int = 2,
+                    on_progress=None) -> dict:
     """Run the vision agent: one multimodal call that turns the reference image(s)
     into a structured spec, re-asked with the validator's errors up to
-    fix_retries times; errors still left are attached as conflicts."""
+    fix_retries times; errors still left are attached as conflicts.
+    `on_progress(kind, **data)`: vision_start / vision_check / vision_done, for a
+    front end to show the step while it runs."""
+    t0 = time.monotonic()
+
+    def progress(kind, **data):
+        if on_progress is not None:
+            on_progress(kind, **data)
+
+    def done(spec, conflicts):
+        parts = spec.get("parts") if isinstance(spec, dict) else None
+        progress("vision_done", parts=len(parts) if isinstance(parts, list) else 0,
+                 conflicts=conflicts, seconds=round(time.monotonic() - t0, 1))
+        return spec
+
     text = ("User request (context only -- describe the image(s), do not plan):\n"
             + request)
     # A model that measures in pixels otherwise guesses the image size, and a
     # wrong guess skews every scale it derives.
-    sizes = [f"image {i}: {s[0]} x {s[1]} px"
-             for i, s in enumerate(map(image_size, images), 1) if s]
+    dims = [image_size(uri) for uri in images]
+    sizes = [f"image {i}: {s[0]} x {s[1]} px" for i, s in enumerate(dims, 1) if s]
     if sizes:
         text += "\n\nImage size (width x height): " + "; ".join(sizes) + "."
+    if on_progress is not None:
+        progress("vision_start", images=len(images),
+                 sizes=[f"{s[0]}x{s[1]}" for s in dims if s],
+                 model=str(llm.endpoint("vision").model))
     messages = [{"role": "system", "content": VISION_SYSTEM_PROMPT},
                 {"role": "user", "content": with_images(text, images)}]
     spec = llm.chat(messages=messages, module="vision")
     for attempt in range(fix_retries + 1):
         errors = validate_spec(spec)
         if not errors:
-            return spec
+            return done(spec, 0)
         if attempt == fix_retries:
             log.warning("vision spec still has %d problem(s); passing them on as conflicts",
                         len(errors))
-            return attach_conflicts(spec, errors)
+            return done(attach_conflicts(spec, errors), len(errors))
         log.info("vision spec has %d problem(s), asking for a fix (%d/%d):\n%s",
                  len(errors), attempt + 1, fix_retries, format_errors(errors))
+        progress("vision_check", attempt=attempt + 1, of=fix_retries,
+                 errors=[f"{pid}: {msg}" if pid else msg for pid, msg in errors])
         messages = messages + [
             {"role": "assistant", "content": json.dumps(spec, ensure_ascii=False)},
             {"role": "user", "content":

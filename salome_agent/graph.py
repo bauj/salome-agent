@@ -217,6 +217,18 @@ def retry_context(state: dict, idx: int, client) -> dict | None:
 # msgpack them and fail with "Type is not msgpack serializable: MagicMock"
 # the first time a live end-to-end run actually exercised the checkpointer.
 
+def _progress_writer():
+    """A node's live progress, out through runner.drive's custom stream; None
+    when the node runs outside a graph run (called directly)."""
+    from langgraph.config import get_stream_writer
+
+    try:
+        write = get_stream_writer()
+    except RuntimeError:
+        return None
+    return lambda kind, **data: write({"kind": kind, "data": data})
+
+
 def _describe_image_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
     from salome_agent.nodes.vision import describe_images
@@ -231,7 +243,8 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
     snap0 = _usage_snap(llm)
     t0 = time.monotonic()
     try:
-        spec = describe_images(state["user_request"], images, llm, fix_retries=retries)
+        spec = describe_images(state["user_request"], images, llm, fix_retries=retries,
+                               on_progress=_progress_writer())
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
