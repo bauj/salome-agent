@@ -565,3 +565,12 @@ def test_geom_stage_without_parts_gets_no_spec_when_others_list_theirs(monkeypat
             {"module": "geom", "intent": "colour it", "params": {}, "inputs": []}]
     text = _capture_stage_blocks(monkeypatch, plan, 1, box_spec())
     assert "Reference image spec" not in text
+
+
+def test_endpoint_fatal_explains_a_second_reasoning_cut():
+    from salome_agent.graph import _llm_endpoint_fatal
+    from salome_agent.llm import ReasoningTimeExceeded
+
+    msg = _llm_endpoint_fatal(ReasoningTimeExceeded(300, 9000))
+    assert "even after being told to decide" in msg
+    assert "300s" in msg

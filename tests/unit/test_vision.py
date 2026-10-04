@@ -180,3 +180,45 @@ def test_no_callback_no_endpoint_lookup():
     llm.chat.return_value = box_spec()
     describe_images("make this", ["x"], llm)
     llm.endpoint.assert_not_called()
+
+
+def _timed_out(reasoning="R36 is a boss, so"):
+    from salome_agent.llm import ReasoningTimeExceeded
+    return ReasoningTimeExceeded(300, 9000, reasoning)
+
+
+def test_a_vision_call_cut_for_reasoning_too_long_is_re_asked_to_decide():
+    from salome_agent.nodes.vision import DECIDE_NOW
+    llm = MagicMock()
+    llm.chat.side_effect = [_timed_out(), box_spec()]
+    out = describe_images("make this", ["x"], llm)
+    assert out == box_spec()
+    first, second = llm.chat.call_args_list
+    assert first.kwargs["reasoning_share"] == 0.5
+    assert second.kwargs["reasoning_share"] == 0.5
+    assert second.kwargs["messages"][:-1] == first.kwargs["messages"]
+    nudge = second.kwargs["messages"][-1]
+    assert nudge["role"] == "user"
+    assert nudge["content"].startswith(DECIDE_NOW)
+    assert nudge["content"].endswith("R36 is a boss, so")
+
+
+def test_the_conclude_nudge_keeps_only_the_tail_of_long_reasoning():
+    from salome_agent.nodes.vision import decide_now
+    msg = decide_now("a" * 50_000 + "THE END")
+    assert "(earlier part omitted)" in msg
+    assert msg.endswith("THE END")
+    assert len(msg) < 41_000
+
+
+def test_a_second_reasoning_cut_ends_the_vision_step():
+    import pytest
+    from salome_agent.llm import ReasoningTimeExceeded
+    llm = MagicMock()
+    llm.chat.side_effect = [_timed_out(), _timed_out()]
+    with pytest.raises(ReasoningTimeExceeded):
+        describe_images("make this", ["x"], llm)
+
+
+def test_the_vision_prompt_says_to_move_on_from_an_unclear_feature():
+    assert "do not reopen it" in VISION_SYSTEM_PROMPT
