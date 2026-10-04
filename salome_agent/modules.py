@@ -63,6 +63,13 @@ class ModuleSpec:
     # known shape_info by name -> a report that reopens the stage once, or None
     # to let the terminator close it.
     audit: Callable[..., "str | None"] | None = None
+    # args, call_log, last known shape_info by name -> a refusal sent back on
+    # EVERY finish while it holds (audit reopens once), or None to let it close.
+    gate: Callable[..., "str | None"] | None = None
+    # result.py: closes the script after every module's body; how a published
+    # name is emitted (geom: geompy.addToStudy).
+    postamble: str = ""
+    publish_line: str = "geompy.addToStudy({var}, {name!r})"
     # The module's published names are study objects the loop may remove:
     # offers the discard tool, and a clean finish removes what the results do
     # not reach, so the study matches result.py.
@@ -86,6 +93,7 @@ def _ensure_specialists_registered() -> None:
     # Must be done here, not at module level, to avoid import cycles.
     import salome_agent.specialists.geom  # noqa: F401 — trigger registration
     import salome_agent.specialists.script_modules  # noqa: F401 — trigger registration
+    import salome_agent.specialists.shaper  # noqa: F401 — trigger registration
     _SPECIALISTS_IMPORTED = True
 
 

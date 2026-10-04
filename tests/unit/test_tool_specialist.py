@@ -303,3 +303,44 @@ def test_overrun_after_an_acting_turn_is_nudged_again():
                             ReasoningBudgetExceeded(21000, 20000), _resp(("done", {}))]
     result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=6)
     assert "out" in result
+
+
+def test_prune_drops_records_owned_by_a_discarded_receiver():
+    from salome_agent.specialists.tool_specialist import prune_records
+    sketch = {"fn": "addSketch", "emit": "stmt", "code": "s = ...", "args": [],
+              "out_vars": ["sketch_1"], "publish": ["sketch_1"]}
+    line = {"fn": "addLine", "emit": "stmt", "code": "l = ...", "args": [],
+            "out_vars": ["sketch_1_L1"], "publish": None, "recv": "sketch_1"}
+    other = {"fn": "addSketch", "emit": "stmt", "code": "t = ...", "args": [],
+             "out_vars": ["sketch_2"], "publish": ["sketch_2"]}
+    calls = [{"tool": "create_sketch", "tool_args": {}, "records": [sketch]},
+             {"tool": "sketch_add", "tool_args": {}, "records": [line]},
+             {"tool": "create_sketch", "tool_args": {}, "records": [other]}]
+    log, kept, removed = prune_records([sketch, line, other], calls, {"sketch_1"})
+    assert log == [other]
+    assert removed == [0, 1]
+
+
+def test_gate_refuses_finish_on_every_call_until_it_clears():
+    seen = []
+
+    def gate(args, call_log, infos):
+        seen.append(dict(infos))
+        return None if infos.get("s", {}).get("open") == [] else "close s first"
+
+    results = iter([{"ok": True, "records": [], "result_shape": "s",
+                     "shape_info": {"open": ["x"]}},
+                    {"ok": True, "records": [], "result_shape": "s",
+                     "shape_info": {"open": []}}])
+    client = MagicMock()
+    client.call_tool.side_effect = lambda name, args: next(results)
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("done", {})), _resp(("done", {})),
+                            _resp(("work", {})), _resp(("done", {}))]
+    result = ToolSpecialist(_spec(gate=gate)).run({"module": "toy"}, llm, client,
+                                                  iteration_cap=6)
+    assert result["out"] == {}
+    assert len(seen) == 3
+    refusals = [m["content"] for m in llm.chat.call_args.kwargs["messages"]
+                if m["role"] == "tool" and m["content"] == "close s first"]
+    assert len(refusals) == 2

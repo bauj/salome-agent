@@ -8,6 +8,8 @@ def _fmt_arg(arg: dict) -> str:
         return "[" + ", ".join(_fmt_arg(a) for a in arg["value"]) + "]"
     if kind == "study":
         return f'find_object("{arg["value"]}")'
+    if kind == "expr":
+        return arg["value"]
     if kind == "salomeds_color":
         r, g, b = arg["value"]
         return f"SALOMEDS.Color({r/255:.4f}, {g/255:.4f}, {b/255:.4f})"
@@ -19,6 +21,8 @@ def _refs_in(arg: dict) -> set[str]:
         return {arg["value"]}
     if arg["kind"] == "list":
         return set().union(*(_refs_in(a) for a in arg["value"])) if arg["value"] else set()
+    if arg["kind"] == "expr":
+        return set(arg.get("refs") or ())
     return set()
 
 
@@ -28,7 +32,12 @@ def _reachable(call_log: list[dict], result_names: list[str]) -> set[str]:
     while changed:
         changed = False
         for call in call_log:
-            if wanted & set(call["out_vars"]):
+            # A record on a kept receiver (a sketch's lines and constraints)
+            # comes with it, along with what it references.
+            if call.get("recv") in wanted and not set(call["out_vars"]) <= wanted:
+                wanted |= set(call["out_vars"])
+                changed = True
+            if wanted & set(call["out_vars"]) or call.get("recv") in wanted:
                 for arg in call["args"]:
                     for ref in _refs_in(arg):
                         if ref not in wanted:
@@ -47,7 +56,7 @@ def _reachable_with_display(call_log: list[dict], reachable: set[str]) -> set[tu
         out_vars = call.get("out_vars", [])
         if reachable & set(out_vars):
             reachable_calls.add((i, False))
-        elif not out_vars and call.get("recv") in reachable:
+        elif call.get("recv") in reachable:
             # Display record: no out_vars but recv is reachable
             reachable_calls.add((i, True))
     return reachable_calls
@@ -73,8 +82,12 @@ def roots_for(call_log: list[dict], result_names: list[str]) -> list[str]:
     return [n for call in call_log for n in (call.get("publish") or [])]
 
 
+_ADD_TO_STUDY = "geompy.addToStudy({var}, {name!r})"
+
+
 def generate(call_log: list[dict], result_names: list[str],
-             call_prefix: str = "geompy.", keep: set | None = None) -> str:
+             call_prefix: str = "geompy.", keep: set | None = None,
+             publish_line: str = _ADD_TO_STUDY) -> str:
     if keep is None:
         reachable = _reachable(call_log, roots_for(call_log, result_names))
     else:
@@ -94,7 +107,11 @@ def generate(call_log: list[dict], result_names: list[str],
             if call.get("publish"):
                 for var, name in zip(call["out_vars"], call["publish"]):
                     # geompy.addToStudy is the publish API, not the module's call prefix
-                    lines.append(f"geompy.addToStudy({var}, {name!r})")
+                    lines.append(publish_line.format(var=var, name=name))
+        elif emit == "stmt":
+            lines.append(call["code"])
+            for var, name in zip(call["out_vars"], call.get("publish") or []):
+                lines.append(publish_line.format(var=var, name=name))
         elif emit == "method_call":
             recv = call.get("recv")
             lines.append(f"{recv}.{call['fn']}({args_src})")
@@ -114,6 +131,6 @@ def generate(call_log: list[dict], result_names: list[str],
                 lines.append(f"{var} = {tmp}[{idx}]")
                 if var in pubs:
                     # geompy.addToStudy is the publish API, not the module's call prefix
-                    lines.append(f"geompy.addToStudy({var}, {pubs[var]!r})")
+                    lines.append(publish_line.format(var=var, name=pubs[var]))
 
     return "\n".join(lines)

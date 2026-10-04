@@ -255,3 +255,60 @@ def test_roots_for_falls_back_to_published():
     log = [{"fn": "F", "args": [], "out_vars": ["a"], "publish": ["a"]}]
     assert roots_for(log, ["nope"]) == ["a"]
     assert roots_for(log, ["a"]) == ["a"]
+
+
+def _shaper_log():
+    def expr(src, *refs):
+        return {"kind": "expr", "value": src, "refs": list(refs)}
+    return [
+        {"fn": "addSketch", "emit": "stmt",
+         "code": 'sketch_1 = model.addSketch(shaper_doc, model.defaultPlane("XOY"))',
+         "args": [], "out_vars": ["sketch_1"], "publish": ["sketch_1"]},
+        {"fn": "addLine", "emit": "stmt", "recv": "sketch_1",
+         "code": "sketch_1_L1 = sketch_1.addLine(0, 0, 40, 0)",
+         "args": [], "out_vars": ["sketch_1_L1"], "publish": None},
+        {"fn": "setLength", "emit": "stmt", "recv": "sketch_1",
+         "code": "sketch_1_K1 = sketch_1.setLength(sketch_1_L1.result(), 40)",
+         "args": [expr("sketch_1_L1.result()", "sketch_1_L1")],
+         "out_vars": ["sketch_1_K1"], "publish": None},
+        {"fn": "addExtrusion", "emit": "stmt",
+         "code": 'extrude_1 = model.addExtrusion(shaper_doc, [model.selection("COMPOUND", '
+                 '"all-in-sketch_1")], model.selection(), 10, 0)',
+         "args": [expr("sketch_1", "sketch_1")],
+         "out_vars": ["extrude_1"], "publish": ["extrude_1"]},
+        {"fn": "addSketch", "emit": "stmt",
+         "code": 'sketch_2 = model.addSketch(shaper_doc, model.defaultPlane("XOY"))',
+         "args": [], "out_vars": ["sketch_2"], "publish": ["sketch_2"]},
+    ]
+
+
+def test_stmt_records_emit_their_code_verbatim():
+    source = generate(_shaper_log(), result_names=["extrude_1"])
+    assert 'sketch_1 = model.addSketch(shaper_doc, model.defaultPlane("XOY"))' in source
+    assert "sketch_1_K1 = sketch_1.setLength(sketch_1_L1.result(), 40)" in source
+
+
+def test_records_on_a_kept_receiver_are_kept_with_their_refs():
+    # Nothing references sketch_1_L1 or sketch_1_K1 by out_var from the result;
+    # they belong to sketch_1, which the extrusion reaches.
+    source = generate(_shaper_log(), result_names=["extrude_1"])
+    assert "sketch_1_L1 = sketch_1.addLine" in source
+    assert "sketch_1_K1 =" in source
+    assert "sketch_2" not in source
+
+
+def test_expr_arg_formats_as_source_and_exposes_its_refs():
+    from salome_agent.codegen import _fmt_arg, _refs_in
+    arg = {"kind": "expr", "value": "sketch_1_L1.endPoint()", "refs": ["sketch_1_L1"]}
+    assert _fmt_arg(arg) == "sketch_1_L1.endPoint()"
+    assert _refs_in(arg) == {"sketch_1_L1"}
+
+
+def test_publish_line_template_replaces_add_to_study():
+    log = [{"fn": "MakeBoxDXDYDZ", "args": [{"kind": "literal", "value": 1}] * 3,
+            "out_vars": ["box_1"], "publish": ["box_1"]}]
+    assert "geompy.addToStudy(box_1, 'box_1')" in generate(log, ["box_1"])
+    shaper = _shaper_log()[:1]
+    source = generate(shaper, ["sketch_1"], publish_line="_name({var}, {name!r})")
+    assert "_name(sketch_1, 'sketch_1')" in source
+    assert "addToStudy" not in source
