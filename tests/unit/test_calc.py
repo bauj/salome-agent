@@ -22,8 +22,16 @@ def test_last_expression_none_shows_nothing():
 
 
 def test_import_refused():
-    assert run_calc("import os").startswith("error: imports are not allowed")
-    assert run_calc("from math import sin").startswith("error: imports are not allowed")
+    assert run_calc("import os").startswith("error: only math can be imported")
+    assert run_calc("from os import path").startswith("error: only math can be imported")
+    assert run_calc("import math, os").startswith("error: only math can be imported")
+
+
+def test_math_imports_are_accepted():
+    assert run_calc("import math\nmath.sqrt(16)") == "4.0"
+    assert run_calc("import math as m\nm.sqrt(16)") == "4.0"
+    assert run_calc("from math import sqrt, pi\nsqrt(16)") == "4.0"
+    assert run_calc("from math import *\nfloor(2.5)") == "2"
 
 
 def test_dunder_refused():

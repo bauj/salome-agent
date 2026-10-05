@@ -13,7 +13,8 @@ CALC_DEF = {
     "description": (
         "Run a few lines of Python for arithmetic: trig, intersections, corner "
         "points, areas, is-this-point-inside checks. `math` and its functions "
-        "(sin, cos, radians, sqrt, hypot, atan2, pi, ...) are in scope; no imports. "
+        "(sin, cos, radians, sqrt, hypot, atan2, pi, ...) are in scope; nothing "
+        "else can be imported. "
         "print() what you need; the last expression's value is shown too. Nothing "
         "is built: use the numbers in your next tool calls."),
     "parameters": {"type": "object", "properties": {
@@ -39,6 +40,8 @@ safe = {n: getattr(builtins, n)
                   "enumerate", "zip", "list", "dict", "tuple", "set", "sorted",
                   "reversed", "float", "int", "bool", "str", "any", "all", "map",
                   "filter", "isinstance", "divmod", "pow")}
+# `import math` is written by reflex; only math resolves, _refusal checked names.
+safe["__import__"] = lambda name, *a, **k: math
 ns = {"__builtins__": safe, "math": math}
 ns.update({k: v for k, v in vars(math).items() if not k.startswith("_")})
 try:
@@ -67,8 +70,10 @@ def _refusal(code: str) -> str | None:
     except SyntaxError as e:
         return f"error: SyntaxError: {e.msg} (line {e.lineno})"
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            return "error: imports are not allowed — math is already in scope"
+        if isinstance(node, ast.Import) and any(a.name != "math" for a in node.names):
+            return "error: only math can be imported — and it is already in scope"
+        if isinstance(node, ast.ImportFrom) and (node.module != "math" or node.level):
+            return "error: only math can be imported — and it is already in scope"
         name = (node.id if isinstance(node, ast.Name)
                 else node.attr if isinstance(node, ast.Attribute) else None)
         if name and "__" in name:
