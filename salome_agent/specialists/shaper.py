@@ -151,6 +151,7 @@ SHAPER_SPEC = register(ModuleSpec(
                                                "last_error": last_error},
     gate=_gate,
     forgets=True,
+    checks_results=True,
     calc=True,
     call_prefix="model.",
     preamble=PREAMBLE,

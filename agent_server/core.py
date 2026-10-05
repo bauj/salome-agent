@@ -75,6 +75,14 @@ class Core:
             if r.get("ok"):
                 b.refresh(_REFRESH[module])
             return {"id": rid, **r}
+        if cmd == "check_results":
+            module = req.get("module") or "geom"
+            pkg = _TOOL_MODULES.get(module)
+            if pkg is None:
+                return {"id": rid, "ok": False, "error": f"no tool module {module!r}"}
+            call = lambda: pkg.check_results(b, req["names"])
+            r = call() if module == "geom" else b.run_tool(call, _TOOL_TIMEOUT)
+            return {"id": rid, "ok": True, "results": r}
         if cmd == "forget":
             r = b.forget(req["names"])
             gone = _forget_side_modules(b, req["names"])
