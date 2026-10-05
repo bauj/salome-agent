@@ -286,6 +286,10 @@ class ToolSpecialist:
                                        "results will tell you if it was wrong.", _REASONING_TAIL)
                 else:
                     nudge = _overrun_nudge(e, calc_def is not None)
+                # a cut call adds nothing to the history, so after a cut in a
+                # row the last message is the previous nudge: replace it
+                if cuts > 1:
+                    messages.pop()
                 messages.append({"role": "user", "content": nudge})
                 continue
             cuts = 0
