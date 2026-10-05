@@ -161,7 +161,8 @@ def build_llm(config: dict, request_timeout: float | None = None,
                      module_extra_body=module_extra_body,
                      max_retries=llm_config.get("max_retries", 2),
                      modules=modules,
-                     reasoning_budget=llm_config.get("reasoning_budget", 20000))
+                     reasoning_budget=llm_config.get("reasoning_budget", 20000),
+                     carry_reasoning=llm_config.get("carry_reasoning", True))
 
 
 def main(argv: list[str] | None = None) -> int:

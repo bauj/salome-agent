@@ -525,7 +525,7 @@ def test_hinted_stage_offers_core_plus_hints_plus_meta_tools_only():
         "measure", "check_shape", "list_study_objects", "make_box", "fuse",
         "cut", "translate",
         "set_color",
-        "finish_stage", "load_tools", "discard",
+        "finish_stage", "load_tools", "discard", "calc",
     }
     assert "make_thick_solid" not in offered
 

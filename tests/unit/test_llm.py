@@ -1436,6 +1436,7 @@ def test_reasoning_budget_cuts_a_tool_call_that_only_deliberates(monkeypatch, tm
     with pytest.raises(ReasoningBudgetExceeded) as e:
         client.chat(messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
     assert e.value.tokens > 500
+    assert e.value.reasoning.startswith("x" * 400)
     assert len(calls) == 1  # not retried as an endpoint failure
     assert "incomplete" in trace.read_text()
 
@@ -1532,3 +1533,23 @@ def test_reasoning_seconds_zero_is_off(monkeypatch):
     out = LLMClient("http://x/v1", "", "auto", request_timeout=10_000).chat(
         messages=[{"role": "user", "content": "x"}])
     assert out == {"a": 1}
+
+
+def _reasoned_tool_body():
+    return {"choices": [{"finish_reason": "tool_calls", "message": {
+        "content": None, "reasoning_content": "corners first",
+        "tool_calls": [{"id": "c1", "function": {"name": "mk", "arguments": "{}"}}]}}]}
+
+
+def test_chat_hands_back_reasoning_only_when_carrying(monkeypatch):
+    monkeypatch.setattr("salome_agent.llm.requests.post", _stub_post(_reasoned_tool_body()))
+    msgs = [{"role": "user", "content": "x"}]
+    on = LLMClient("http://x/v1", "", "auto", carry_reasoning=True).chat(msgs, tools=_MK_TOOL)
+    off = LLMClient("http://x/v1", "", "auto").chat(msgs, tools=_MK_TOOL)
+    assert on["reasoning"] == "corners first"
+    assert off["reasoning"] is None
+
+
+def test_assistant_tool_turn_carries_reasoning_when_given():
+    turn = assistant_tool_turn([{"name": "mk", "args": {}, "id": "c1"}], None, "why")
+    assert turn["reasoning_content"] == "why"

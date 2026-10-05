@@ -1,5 +1,6 @@
 import json
 
+from salome_agent.calc import CALC_DEF, run_calc
 from salome_agent.codegen import _reachable, _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.llm import (LLMCancelled, ReasoningBudgetExceeded, assistant_tool_turn,
@@ -30,6 +31,28 @@ _DISCARD_DEF = {"name": "discard", "description": _DISCARD_DESCRIPTION,
                     "names": {"type": "array", "items": {"type": "string"},
                               "description": "published names to remove"}},
                     "required": ["names"]}}
+
+
+# How much of a cut turn's reasoning goes back in the nudge: the tail is where
+# the model was heading. A 20000-token budget cut is ~80k chars.
+_REASONING_TAIL = 40_000
+
+
+def _overrun_nudge(e, calc: bool) -> str:
+    calc_line = " Put any arithmetic still to do in a calc call." if calc else ""
+    if not e.reasoning:
+        return (f"You spent ~{e.tokens} tokens deliberating without acting, and that "
+                "answer was discarded. Pick the most likely reading, state it in one "
+                f"sentence, and make your tool call now.{calc_line} Tool results will "
+                "tell you if it was wrong.")
+    reasoning = e.reasoning
+    if len(reasoning) > _REASONING_TAIL:
+        reasoning = "(earlier part omitted)\n" + reasoning[-_REASONING_TAIL:]
+    return (f"You spent ~{e.tokens} tokens deliberating without acting and were "
+            "stopped. Your reasoning so far is below. Do not start over: continue "
+            f"from it, take the most likely reading, and make your tool call now.{calc_line} "
+            "Tool results will tell you if it was wrong.\n\nYour reasoning so far:\n"
+            + reasoning)
 
 
 def _drops(record: dict, names: set) -> bool:
@@ -186,7 +209,8 @@ class ToolSpecialist:
         # an odd one is reopened with a report and closes on the next (task 217).
         audited = False
         # A call cut for deliberating past llm.reasoning_budget is re-asked once
-        # with a "decide now" nudge; a second cut in a row ends the stage.
+        # with the tail of its own reasoning and a "continue and act" nudge; a
+        # second cut in a row ends the stage.
         overran = False
         shape_infos: dict[str, dict] = {}
         n_seed_calls = len(calls)
@@ -199,6 +223,7 @@ class ToolSpecialist:
                       "description": spec.terminator.description}
         load_def = self._load_tools_def()
         discard_def = _DISCARD_DEF if spec.forgets else None
+        calc_def = CALC_DEF if spec.calc else None
         if tool_selection == "all" or not spec.core_tools:
             offered = set(all_defs)
         else:
@@ -221,7 +246,8 @@ class ToolSpecialist:
             tools = ([all_defs[n] for n in sorted(offered) if n in all_defs]
                      + [finish_def] + extra_defs
                      + ([load_def] if load_def is not None else [])
-                     + ([discard_def] if discard_def is not None else []))
+                     + ([discard_def] if discard_def is not None else [])
+                     + ([calc_def] if calc_def is not None else []))
             # Tool results are stored already compacted (see below), so `messages`
             # is sent verbatim: each turn's request extends the previous one byte
             # for byte, which keeps a gateway's prefix/KV cache alive. `load_tools`
@@ -242,11 +268,8 @@ class ToolSpecialist:
                         call_log, f"stage ended: reasoning budget exceeded twice ({e})"), calls)
                 log.warning("  %s stage: %s; nudging it to decide", spec.name, e)
                 overran = True
-                messages.append({"role": "user", "content": (
-                    f"You spent ~{e.tokens} tokens deliberating without acting, and that "
-                    "answer was discarded. Pick the most likely reading, state it in one "
-                    "sentence, and make your tool call now. Tool results will tell you "
-                    "if it was wrong.")})
+                messages.append({"role": "user",
+                                 "content": _overrun_nudge(e, calc_def is not None)})
                 continue
             overran = False
             if response.get("content"):
@@ -257,7 +280,9 @@ class ToolSpecialist:
                 # tool_choice="auto" — the model replied with prose and no call.
                 # Keep its message, nudge it, and let the loop try again.
                 messages.append({"role": "assistant", "content": response["content"] or "(no reply)",
-                                 **continuity_fields(response.get("raw_message"))})
+                                 **continuity_fields(response.get("raw_message")),
+                                 **({"reasoning_content": response["reasoning"]}
+                                    if response.get("reasoning") else {})})
                 messages.append({"role": "user", "content": spec.no_tool_nudge})
                 continue
             # The assistant's own tool-call turn must be echoed back before any
@@ -269,7 +294,8 @@ class ToolSpecialist:
             for j, c in enumerate(tool_calls):
                 c.setdefault("id", None)
                 c["id"] = c["id"] or f"call_{i}_{j}"
-            messages.append(assistant_tool_turn(tool_calls, response.get("raw_message")))
+            messages.append(assistant_tool_turn(tool_calls, response.get("raw_message"),
+                                                response.get("reasoning")))
             batch_error = None
             finish_call = None
             for k, c in enumerate(tool_calls):
@@ -296,6 +322,11 @@ class ToolSpecialist:
                     obs += _unknown_names_note(names, all_defs, spec.categories)
                     log.info("  load_tools(names=%s, categories=%s) -> +%d, %d available",
                              args.get("names"), args.get("categories"), len(new), len(offered))
+                    messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
+                    continue
+                if name == "calc" and calc_def is not None:
+                    obs = run_calc(args.get("code") or "")
+                    log.info("  calc -> %s", obs if len(obs) <= 200 else obs[:200] + "...")
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
                     continue
                 if name == "discard" and discard_def is not None:
