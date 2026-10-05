@@ -311,6 +311,7 @@ def test_loop_is_nudged_with_the_reasoning_before_it_never_the_loop():
     loop = RepetitionLoopDetected("reasoning", 2800, "The ring is two circles, R50 and R41.5.",
                                   "So the bars point upward.")
     llm.chat.side_effect = [loop, _resp(("done", {"x": 1}))]
+    llm.loop_retries = 3
     result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
     assert result["out"] == {"x": 1}
     nudge = llm.chat.call_args.kwargs["messages"][-1]["content"]
@@ -324,19 +325,60 @@ def test_loop_then_overrun_in_a_row_ends_the_stage():
     llm = MagicMock()
     llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2800, "x", "y y y."),
                             ReasoningBudgetExceeded(22000, 20000)]
+    llm.loop_retries = 3
     result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
     assert result["exhausted"] is True
     assert llm.chat.call_count == 2
 
 
-def test_second_loop_in_a_row_ends_the_stage():
+def test_loops_are_re_asked_up_to_loop_retries_then_the_stage_ends():
     from salome_agent.llm import RepetitionLoopDetected
     llm = MagicMock()
-    llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2800, "x", "y y y."),
-                            RepetitionLoopDetected("reasoning", 2900, "x", "y y y.")]
-    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
+    llm.loop_retries = 2
+    llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2800, "x", "y y y.")] * 3
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=9)
     assert result["exhausted"] is True
     assert "looped" in result["last_error"]
+    assert llm.chat.call_count == 3
+
+
+def test_loops_within_loop_retries_still_reach_the_answer():
+    from salome_agent.llm import RepetitionLoopDetected
+    llm = MagicMock()
+    llm.loop_retries = 3
+    llm.chat.side_effect = ([RepetitionLoopDetected("reasoning", 2800, "x", "y y y.")] * 3
+                            + [_resp(("done", {"x": 1}))])
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=9)
+    assert result["out"] == {"x": 1}
+
+
+def _paraphrase_loop():
+    from pathlib import Path
+    return (Path(__file__).parent.parent / "fixtures" / "repetition"
+            / "loop_nemotron_paraphrase.txt").read_text()
+
+
+def test_a_budget_cut_that_ends_in_a_loop_gets_the_loop_nudge():
+    from salome_agent.llm import ReasoningBudgetExceeded
+    text = _paraphrase_loop()
+    llm = MagicMock()
+    llm.loop_retries = 3
+    llm.chat.side_effect = [ReasoningBudgetExceeded(20002, 20000, text), _resp(("done", {}))]
+    ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
+    nudge = llm.chat.call_args.kwargs["messages"][-1]["content"]
+    assert "repeating" in nudge
+    assert text[-300:] not in nudge
+
+
+def test_a_budget_cut_then_loops_counts_against_loop_retries():
+    from salome_agent.llm import ReasoningBudgetExceeded, RepetitionLoopDetected
+    llm = MagicMock()
+    llm.loop_retries = 3
+    llm.chat.side_effect = [ReasoningBudgetExceeded(20002, 20000, _paraphrase_loop()),
+                            RepetitionLoopDetected("reasoning", 2100, "x", "y y y."),
+                            _resp(("done", {"x": 1}))]
+    result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
+    assert result["out"] == {"x": 1}
 
 
 def test_prune_drops_records_owned_by_a_discarded_receiver():

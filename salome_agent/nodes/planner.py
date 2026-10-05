@@ -119,15 +119,19 @@ def plan(request: str, llm, detail: str = "balanced",
 
 
 def _ask(llm, messages: list[dict]) -> list[dict]:
-    """A planner call that loops is re-asked once without the loop; a second
-    loop propagates (a clean fatal in graph.py)."""
-    try:
-        return llm.chat(messages=messages, module="planner")["stages"]
-    except RepetitionLoopDetected as e:
-        log.warning("planner: %s; nudging it to answer", e)
-        nudge = loop_nudge(e, "answer with the JSON plan now.")
-        return llm.chat(messages=messages + [{"role": "user", "content": nudge}],
-                        module="planner")["stages"]
+    """A planner call that loops is re-asked without the loop, up to
+    llm.loop_retries times; past that it propagates (a clean fatal in graph.py)."""
+    nudge, loops = [], 0
+    while True:
+        try:
+            return llm.chat(messages=messages + nudge, module="planner")["stages"]
+        except RepetitionLoopDetected as e:
+            loops += 1
+            if loops > llm.loop_retries:
+                raise
+            log.warning("planner: %s; nudging it to answer", e)
+            nudge = [{"role": "user", "content": loop_nudge(
+                e.sample, e.before, "answer with the JSON plan now.")}]
 
 
 def _check_parts(stages: list[dict], image_spec: dict, llm, messages: list[dict]) -> list[dict]:

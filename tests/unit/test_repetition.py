@@ -64,3 +64,18 @@ def test_chunking_does_not_change_the_result():
     b, _ = _feed(text, chunk=500)
     assert a is not None and b is not None
     assert a.start == b.start and a.sample == b.sample
+
+
+def test_a_paraphrase_loop_at_the_end_of_a_cut_call_is_found():
+    from salome_agent.repetition import loop_at_end
+    text = (_FIX / "loop_nemotron_paraphrase.txt").read_text()
+    loop = loop_at_end(text)
+    assert loop is not None
+    assert 0 < loop.start < len(text)
+    assert text[loop.start:].count(loop.sample) >= 2
+
+
+@pytest.mark.parametrize("name", ["ok_nemotron_cut_by_budget", "ok_deepseek_shaper"])
+def test_healthy_cut_reasoning_has_no_loop_at_the_end(name):
+    from salome_agent.repetition import loop_at_end
+    assert loop_at_end((_FIX / f"{name}.txt").read_text()) is None

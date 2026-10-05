@@ -81,14 +81,26 @@ class RepetitionWatch:
         return (best if counts[best] >= 2 else sentences[0])[:300]
 
 
-def loop_nudge(e, act: str, keep: int = 40_000) -> str:
-    """Re-ask after a RepetitionLoopDetected `e`: one looped sentence and the
-    text from before the loop (its last `keep` chars), never the loop itself
-    (carried back, it is continued). `act` says what to do now."""
+def loop_at_end(text: str, threshold: float = 0.4) -> Loop | None:
+    """A Loop if the last window of an already-cut text is mostly repeats. The
+    bar is lower than the live cut's: it only picks which nudge a call cut for
+    another reason gets (cut calls that ended healthy measured <= 0.28, a
+    paraphrasing loop 0.53)."""
+    watch = RepetitionWatch(threshold=2)  # never fires while feeding
+    watch.feed(text + " ")
+    tail = watch._flags[-watch.window:]
+    if len(tail) < watch.window or sum(tail) < threshold * watch.window:
+        return None
+    return watch._loop()
+
+
+def loop_nudge(sample: str, before: str, act: str, keep: int = 40_000) -> str:
+    """Re-ask after a loop: one looped `sample` sentence and the text `before`
+    the loop (its last `keep` chars), never the loop itself (carried back, it
+    is continued). `act` says what to do now."""
     text = (f"You started repeating yourself and were stopped. You kept saying: "
-            f"\"{e.sample}\" That point is settled; do not go back to it. Take the "
+            f"\"{sample}\" That point is settled; do not go back to it. Take the "
             f"most likely reading and {act}")
-    before = e.before
     if len(before) > keep:
         before = "(earlier part omitted)\n" + before[-keep:]
     if before.strip():

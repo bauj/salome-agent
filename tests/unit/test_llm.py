@@ -1645,3 +1645,8 @@ def test_long_healthy_reasoning_is_not_cut(monkeypatch):
     out = LLMClient("http://x/v1", "", "auto").chat(
         messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
     assert out["tool_call"] == "mk"
+
+
+def test_loop_retries_defaults_to_three():
+    assert LLMClient("http://x/v1", "", "auto").loop_retries == 3
+    assert LLMClient("http://x/v1", "", "auto", loop_retries=5).loop_retries == 5
