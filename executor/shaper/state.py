@@ -135,6 +135,8 @@ def forget(executor, names: list) -> list:
             elif name in st.objects:
                 st.objects.pop(name)
                 feats = [st.ns[name].feature()]
+                for var in [v for v in st.ns if v.startswith(f"{name}_")]:
+                    feats.append(st.ns.pop(var).feature())   # make_face's region helper
             else:
                 continue
             for feat in feats:

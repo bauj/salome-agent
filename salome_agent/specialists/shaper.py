@@ -27,8 +27,15 @@ Read every sketch reply before the next step:
 
 Lines that are dimensioned but are not material — centre lines, axes of
 symmetry, construction circles — are entities with construction: true;
-constrain the drawn curves against them. Curves that cross split the sketch into
-regions; make_face takes the region indices you want.
+constrain the drawn curves against them.
+
+The sketch does the intersection work. When a part is described as pieces —
+bars of a given width along centre lines, rings, overlapping outlines — draw
+each piece whole, as its own closed outline, overlapping the others freely. Do
+not compute where pieces meet or trace the combined outline yourself: curves
+that cross split the sketch into regions, the reply lists each with its area and
+a point inside, and make_face on the regions that are material gives one face
+(touching regions are merged). Holes are the regions you leave out.
 
 Solids come from sketches or faces: extrude, extrude_cut (a pocket in a solid),
 extrude_fuse (a boss on a solid), revolve. Every feature reply carries its
