@@ -401,3 +401,14 @@ def test_result_py_rebuilds_a_boolean(agent_client, tmp_path):
     assert m, out.stdout[-2000:] + out.stderr[-2000:]
     assert float(m.group(1)) == pytest.approx(684, abs=1e-6)
     assert m.group(2) == "1"
+
+
+def test_region_names_use_only_published_entity_names(agent_client):
+    # SHAPER's own counters (SketchLine_N) differ in result.py once anything
+    # built live was discarded, so a face selected by them is lost on replay
+    name = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
+    r = _call(agent_client, "sketch_add", sketch=name, entities=_rect("R", 0, 0, 10, 5))
+    face = _call(agent_client, "make_face", sketch=name, regions=[0])
+    assert face["ok"] is True, face.get("error")
+    code = "\n".join(rec["code"] for rec in face["records"])
+    assert "SketchLine_" not in code and "SketchCircle_" not in code, code
