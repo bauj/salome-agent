@@ -199,8 +199,17 @@ def assistant_tool_turn(parsed_calls: list[dict], raw_message: dict | None,
             for i, c in enumerate(parsed_calls)
         ],
         **continuity_fields(raw_message),
-        **({"reasoning_content": reasoning} if reasoning else {}),
+        **reasoning_field(reasoning, raw_message),
     }
+
+
+def reasoning_field(reasoning: str | None, raw_message: dict | None) -> dict:
+    """Carried reasoning under the field the provider streamed it in: a
+    provider reads back only its own name (Ollama reads `reasoning` and
+    drops `reasoning_content`)."""
+    if not reasoning:
+        return {}
+    return {(raw_message or {}).get("_reasoning_key", "reasoning_content"): reasoning}
 
 
 def _is_json_object(s: str) -> bool:
@@ -219,6 +228,7 @@ def _assemble_message(partial: dict) -> dict:
     message: dict = {"role": "assistant", "content": "".join(partial.get("content", [])) or None}
     if partial.get("reasoning"):
         message["reasoning_content"] = "".join(partial["reasoning"])
+        message["_reasoning_key"] = partial.get("reasoning_key", "reasoning_content")
     if partial.get("tool_frags"):
         message["tool_calls"] = [
             {"id": slot["id"], "type": "function",
@@ -612,8 +622,10 @@ class LLMClient:
                     if prose:
                         self._stream_event(type="delta", channel="prose", text=delta["content"])
                 # `reasoning_content` (DeepSeek style) or `reasoning` (Ollama, OpenRouter)
-                thought = delta.get("reasoning_content") or delta.get("reasoning")
+                key = "reasoning_content" if delta.get("reasoning_content") else "reasoning"
+                thought = delta.get(key)
                 if thought:
+                    partial["reasoning_key"] = key
                     reasoning.append(thought)
                     reasoning_chars += len(thought)
                     watch("reasoning", thought, reasoning)
