@@ -185,7 +185,7 @@ def test_a_planner_answering_within_loop_retries_is_kept():
 
 
 def test_planner_prompt_lists_shaper_tool_catalogue():
-    assert "shaper tools available to a single shaper stage" in PLANNER_SYSTEM_PROMPT
+    assert "SHAPER tools available to a single SHAPER stage" in PLANNER_SYSTEM_PROMPT
     assert "make_face -- flat face" in PLANNER_SYSTEM_PROMPT
 
 
@@ -210,7 +210,7 @@ def test_named_module_is_told_to_the_planner():
     llm.chat.return_value = {"stages": []}
     plan("a gasket in shaper", llm)
     system = llm.chat.call_args.kwargs["messages"][0]["content"]
-    assert system.endswith("every CAD geometry stage uses module shaper.")
+    assert system.endswith('every CAD geometry stage uses module "shaper".')
 
 
 def test_named_module_moves_cad_stages_and_keeps_smesh():

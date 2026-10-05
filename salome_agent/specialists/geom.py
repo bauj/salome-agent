@@ -349,7 +349,7 @@ def _geom_catalogue_str() -> str:
     # Names + one-liners only (no arg schemas) so the planner knows what a
     # single geom stage can actually do and stops over-splitting parts.
     lines = [f"  {n} -- {d}" for n, d in TOOL_DESCRIPTIONS.items()]
-    return "geom tools available to a single geom stage:\n" + "\n".join(lines)
+    return "GEOM tools available to a single GEOM stage:\n" + "\n".join(lines)
 
 
 GEOM_SPEC = register(ModuleSpec(

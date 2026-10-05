@@ -12,22 +12,23 @@ _PLANNER_BASE = """You turn a natural-language SALOME request into an
 ordered list of stages. Each stage has: module (geom|shaper|smesh), intent
 (short description of the job for that stage), params (dims in millimetres,
 unconverted), inputs (a plain-words list of what this stage needs from earlier ones), and
--- for a geom stage -- an optional "tools" list naming the geom tool names you expect
-that stage to use (from the geom catalogue below; names only, e.g.
+-- for a GEOM stage -- an optional "tools" list naming the GEOM tool names you expect
+that stage to use (from the GEOM catalogue below; names only, e.g.
 ["make_box", "translate", "set_color"]). The "tools" list is a hint that
-narrows what the geom specialist is offered; omit it if unsure. Respond as
+narrows what the GEOM specialist is offered; omit it if unsure. Respond as
 JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
 prose before or after it.
 
-A flat part whose outline has rounded corners, holes or slots (a plate, a
-bracket, a gasket) is one make_profile_face (outline and holes in one call)
-extruded with make_prism: hint those two, not the make_box + fillet_edges +
-cut route. Add other tools only for work the outline cannot do, such as
-rounding the top edges.
+In a GEOM stage, a flat part whose outline has rounded corners, holes or
+slots (a plate, a bracket, a gasket) is one make_profile_face (outline and
+holes in one call) extruded with make_prism: hint those two, not the make_box +
+fillet_edges + cut route. Add other tools only for work the outline cannot do,
+such as rounding the top edges. A SHAPER stage draws such a part in a sketch.
 
 Keep your reasoning brief -- a few sentences at most. Do not enumerate every
 possible interpretation or walk through each stage in detail; decide and emit
-the plan.
+the plan. You pick each stage's module and job; how the part is drawn is the
+stage's work, not yours.
 
 Object names are assigned automatically and you cannot know them. Never put
 a guessed object name in `inputs` -- describe what the stage needs. Every
@@ -44,7 +45,7 @@ operations belong to one stage; splitting breaks the object-name handoff.
 For an assembly you MAY give each part (or each group of identical parts)
 its own stage. Do that when the parts are distinct enough to name. A car is
 an assembly: body, cabin, wheels are separate parts. Also use separate
-stages whenever the work crosses modules (geom -> smesh) or the
+stages whenever the work crosses modules (GEOM -> SMESH) or the
 request asks for genuinely independent deliverables.
 
 Fuse parts into one solid only when they are one piece of material (a mug
@@ -61,17 +62,17 @@ others -- a fillet radius below the wall thickness it rounds, no feature
 overlapping another.
 
 Module scope:
-- geom: all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
+- geom (GEOM): all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
   AND display properties of geometry (colour, transparency, display mode).
-  "make it red", "colour the shape blue", "50% transparent" are geom.
-- shaper: parametric sketches with constraints, and faces and solids built from them (extrude, pocket, boss, revolve).
-  Use shaper only when the request names it or asks for a constrained or
-  parametric sketch; all other CAD geometry stays geom. A shaper stage builds
-  the whole part on its own, a flat face included (make_face): never add a geom
-  stage to finish a shaper part.
+  "make it red", "colour the shape blue", "50% transparent" are GEOM.
+- shaper (SHAPER): parametric sketches with constraints, and faces and solids built from them (extrude, pocket, boss, revolve).
+  Use SHAPER only when the request names it or asks for a constrained or
+  parametric sketch; all other CAD geometry stays GEOM. A SHAPER stage builds
+  the whole part on its own, a flat face included (make_face): never add a GEOM
+  stage to finish a SHAPER part.
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
 
-A module the request names ("in shaper", "using GEOM", "with SMESH")
+A module the request names ("in SHAPER", "using GEOM", "with SMESH")
 always wins over these rules.
 
 If the request comes with a "Reference image spec" block, an image-analysis
@@ -126,8 +127,8 @@ def plan(request: str, llm, detail: str = "balanced",
     system = PLANNER_SYSTEM_PROMPT + _DETAIL_HINT.get(detail, "")
     pinned = named_cad_module(request)
     if pinned:
-        system += (f"\n\nThe request names {pinned}: every CAD geometry stage uses "
-                   f"module {pinned}.")
+        system += (f"\n\nThe request names {pinned.upper()}: every CAD geometry stage "
+                   f'uses module "{pinned}".')
     if image_spec:
         request = f"{request}\n\n{compact_spec(image_spec)}"
     messages = [{"role": "system", "content": system},
