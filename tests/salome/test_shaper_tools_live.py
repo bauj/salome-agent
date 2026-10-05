@@ -319,6 +319,15 @@ def test_fuse_of_overlapping_faces_is_one_face(agent_client):
     assert r["measure"]["valid"] is True
 
 
+def test_measure_marks_the_operands_a_fuse_used_up(agent_client):
+    a = _rect_face(agent_client, -20, -5, 20, 5)
+    b = _rect_face(agent_client, -5, -20, 5, 20)
+    f = _call(agent_client, "fuse", objects=[a, b])["name"]
+    m = _call(agent_client, "measure", names=[a, b, f])["measurements"]
+    assert m[a]["concealed"] is True and m[b]["concealed"] is True
+    assert "concealed" not in m[f]
+
+
 def test_cut_and_common_of_faces(agent_client):
     a = _rect_face(agent_client, 0, 0, 40, 20)
     b = _rect_face(agent_client, 30, 0, 50, 20)

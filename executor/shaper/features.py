@@ -342,6 +342,9 @@ def tool_measure(executor, args: dict):
             out[name] = status(executor, st.sketches[name])
         elif name in st.objects:
             out[name] = measure(executor, name)
+            results = st.ns[name].feature().results()
+            if results and all(r.isConcealed() for r in results):
+                out[name]["concealed"] = True
         else:
             out[name] = None
     return {"ok": True, "records": [], "measurements": out}
