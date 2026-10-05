@@ -66,3 +66,29 @@ def test_prompt_offers_both_routes_for_a_part_in_pieces():
     from salome_agent.specialists.shaper import SHAPER_SYSTEM_PROMPT
     assert "make_face on the regions" in SHAPER_SYSTEM_PROMPT
     assert "fuse, cut and common" in SHAPER_SYSTEM_PROMPT
+
+
+def test_upstream_block_names_and_measures_earlier_results():
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": True, "measurements": {
+        "face_1": {"bbox": [-50.0, 50.0, -50.0, 50.0, 0.0, 0.0], "size": [100.0, 100.0, 0.0],
+                   "centre": [0.0, 0.0, 0.0], "area": 2443.3737, "volume": 0.0,
+                   "faces": 1, "edges": 4, "valid": True},
+        "sketch_1": {"dof": 0, "loose_ends": [], "regions": [{"area": 1.0}, {"area": 2.0}]},
+        "box_1": None}}
+    block = spec_for("shaper").render_upstream(client, ["face_1", "sketch_1", "box_1"])
+    client.call_tool.assert_called_with(
+        "measure", {"names": ["face_1", "sketch_1", "box_1"]}, module="shaper")
+    lines = block.splitlines()
+    assert "EARLIER stage" in lines[0]
+    assert lines[1].startswith("  face_1 — ") and "area 2443.3737" in lines[1]
+    assert "1 face" in lines[1] and "volume" not in lines[1]
+    assert lines[2] == "  sketch_1 — a sketch, 2 regions"
+    assert lines[3] == "  box_1"
+
+
+def test_upstream_block_names_alone_when_measure_fails():
+    client = MagicMock()
+    client.call_tool.side_effect = RuntimeError("down")
+    assert spec_for("shaper").render_upstream(client, ["face_1"]).splitlines()[1:] == ["  face_1"]
+    assert spec_for("shaper").render_upstream(client, []) is None

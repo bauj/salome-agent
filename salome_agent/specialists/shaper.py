@@ -1,5 +1,6 @@
 from executor.shaper.state import POSTAMBLE, PREAMBLE, PUBLISH_LINE
 from salome_agent.calc import CALC_PROMPT
+from salome_agent.logs import log
 from salome_agent.codegen import _reachable, roots_for
 from salome_agent.modules import ModuleSpec, Terminator, register
 from salome_agent.specialists.geom import FINISH_STAGE_DESCRIPTION, FINISH_STAGE_SCHEMA
@@ -128,6 +129,40 @@ def _gate(args: dict, call_log: list, infos: dict) -> str | None:
             "remove the stray curves, then call finish_stage again.")
 
 
+def _upstream_line(name: str, info) -> str:
+    if not isinstance(info, dict):
+        return f"  {name}"
+    if "regions" in info:
+        return f"  {name} — a sketch, {len(info['regions'])} regions"
+    n = info.get("faces", 0)
+    line = (f"  {name} — bbox {info.get('bbox')}, area {info.get('area')}, "
+            f"{n} face{'' if n == 1 else 's'}")
+    if info.get("volume"):
+        line += f", volume {info['volume']}"
+    if info.get("valid") is False:
+        line += ", NOT valid"
+    return line
+
+
+def _upstream(client, names: list[str]) -> str | None:
+    """Without it a later SHAPER stage never learns what earlier ones built,
+    and redraws them instead of fusing them."""
+    if not names:
+        return None
+    info = {}
+    try:
+        m = client.call_tool("measure", {"names": list(names)}, module="shaper")
+        if m.get("ok"):
+            info = m.get("measurements") or {}
+        else:
+            log.warning("  measure(upstream) failed: %s", m.get("error"))
+    except Exception as e:  # noqa: BLE001 — best-effort, must not abort the stage
+        log.warning("  measure(upstream) errored: %s", e)
+    return ("Objects built by an EARLIER stage — use them by these exact names "
+            "(fuse, cut, measure); do not rebuild them:\n"
+            + "\n".join(_upstream_line(n, info.get(n)) for n in names))
+
+
 def _render(result: dict) -> str:
     hidden = {"records", "result_shape", "shape_info"}
     return str({k: v for k, v in result.items() if k not in hidden})
@@ -140,6 +175,7 @@ SHAPER_SPEC = register(ModuleSpec(
                           description=FINISH_STAGE_DESCRIPTION, handle=_finish),
     execute=lambda client, name, args: client.call_tool(name, args, module="shaper"),
     render_result=_render,
+    render_upstream=_upstream,
     tools_for=lambda client: {t["name"]: t
                               for t in client.list_tools(module="shaper")["tools"]},
     needs_session=True,
