@@ -352,6 +352,18 @@ def test_loops_within_loop_retries_still_reach_the_answer():
     assert result["out"] == {"x": 1}
 
 
+def test_a_new_cut_nudge_replaces_the_previous_one():
+    from salome_agent.llm import RepetitionLoopDetected
+    llm = MagicMock()
+    llm.loop_retries = 3
+    llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2800, "x", f"sample {i} here.")
+                            for i in range(3)] + [_resp(("done", {"x": 1}))]
+    ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=9)
+    sent = llm.chat.call_args.kwargs["messages"]
+    nudges = [m["content"] for m in sent if "You kept saying" in str(m.get("content"))]
+    assert len(nudges) == 1 and "sample 2 here." in nudges[0]
+
+
 def _paraphrase_loop():
     from pathlib import Path
     return (Path(__file__).parent.parent / "fixtures" / "repetition"
