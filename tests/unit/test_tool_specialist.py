@@ -344,3 +344,43 @@ def test_gate_refuses_finish_on_every_call_until_it_clears():
     refusals = [m["content"] for m in llm.chat.call_args.kwargs["messages"]
                 if m["role"] == "tool" and m["content"] == "close s first"]
     assert len(refusals) == 2
+
+
+def test_calc_is_offered_and_answered_locally_when_the_spec_asks():
+    llm = MagicMock()
+    client = MagicMock()
+    llm.chat.side_effect = [_resp(("calc", {"code": "2 * 21"})), _resp(("done", {}))]
+    ToolSpecialist(_spec(calc=True)).run({"module": "toy"}, llm, client, iteration_cap=3)
+    first_tools = [t["name"] for t in llm.chat.call_args_list[0].kwargs["tools"]]
+    assert "calc" in first_tools
+    assert _tool_messages(llm) == ["42"]
+    client.call_tool.assert_not_called()
+
+
+def test_calc_not_offered_by_default():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {}))]
+    ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert "calc" not in [t["name"] for t in llm.chat.call_args.kwargs["tools"]]
+
+
+def test_turn_reasoning_is_kept_in_history_when_returned():
+    llm = MagicMock()
+    first = _resp(("work", {"a": 1}))
+    first["reasoning"] = "corners first"
+    llm.chat.side_effect = [first, _resp(("done", {}))]
+    ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    turn = [m for m in llm.chat.call_args.kwargs["messages"] if m["role"] == "assistant"][0]
+    assert turn["reasoning_content"] == "corners first"
+
+
+def test_overrun_nudge_carries_the_cut_reasoning_tail_and_names_calc():
+    from salome_agent.llm import ReasoningBudgetExceeded
+    llm = MagicMock()
+    llm.chat.side_effect = [ReasoningBudgetExceeded(21000, 20000, "x" * 50_000 + "THE END"),
+                            _resp(("done", {}))]
+    ToolSpecialist(_spec(calc=True)).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
+    nudge = llm.chat.call_args.kwargs["messages"][-1]["content"]
+    assert "THE END" in nudge and "earlier part omitted" in nudge
+    assert "calc" in nudge
+    assert len(nudge) < 42_000

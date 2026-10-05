@@ -1,10 +1,11 @@
 from executor.shaper.state import POSTAMBLE, PREAMBLE, PUBLISH_LINE
+from salome_agent.calc import CALC_PROMPT
 from salome_agent.codegen import _reachable, roots_for
 from salome_agent.modules import ModuleSpec, Terminator, register
 from salome_agent.specialists.geom import FINISH_STAGE_DESCRIPTION, FINISH_STAGE_SCHEMA
 
 SHAPER_SYSTEM_PROMPT = """You build parametric geometry in SHAPER by calling
-tools, not by writing code. Lengths are millimetres, unconverted; angles are in
+tools. Lengths are millimetres, unconverted; angles are in
 degrees. Reference sketches and features by the name they were published under.
 
 A sketch is entities (lines, circles, arcs, points) tied together by
@@ -86,7 +87,7 @@ def _render(result: dict) -> str:
 
 SHAPER_SPEC = register(ModuleSpec(
     name="shaper",
-    prompt=lambda cadence: SHAPER_SYSTEM_PROMPT,
+    prompt=lambda cadence: SHAPER_SYSTEM_PROMPT + "\n\n" + CALC_PROMPT,
     terminator=Terminator(name="finish_stage", schema=FINISH_STAGE_SCHEMA,
                           description=FINISH_STAGE_DESCRIPTION, handle=_finish),
     execute=lambda client, name, args: client.call_tool(name, args, module="shaper"),
@@ -102,6 +103,7 @@ SHAPER_SPEC = register(ModuleSpec(
                                                "last_error": last_error},
     gate=_gate,
     forgets=True,
+    calc=True,
     call_prefix="model.",
     preamble=PREAMBLE,
     postamble=POSTAMBLE,
