@@ -158,6 +158,10 @@ def _upstream(client, names: list[str]) -> str | None:
             log.warning("  measure(upstream) failed: %s", m.get("error"))
     except Exception as e:  # noqa: BLE001 — best-effort, must not abort the stage
         log.warning("  measure(upstream) errored: %s", e)
+    # A result a later boolean used up is hidden in SHAPER: naming it fails.
+    names = [n for n in names if not (info.get(n) or {}).get("concealed")]
+    if not names:
+        return None
     return ("Objects built by an EARLIER stage — use them by these exact names "
             "(fuse, cut, measure); do not rebuild them:\n"
             + "\n".join(_upstream_line(n, info.get(n)) for n in names))
