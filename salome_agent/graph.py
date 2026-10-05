@@ -93,6 +93,18 @@ def _graph_upstream(state: dict) -> list[str]:
     return BuildGraph.from_dict(state["build_graph"]).result_names()
 
 
+def _request_block(state: dict) -> str:
+    """The planner's brief can drop what the user wrote; the specialist reads the
+    original text too, but builds only its own stage."""
+    request = (state.get("user_request") or "").strip()
+    if not request:
+        return ""
+    others = (" Other stages build the rest; do not build their parts."
+              if len(state.get("plan") or []) > 1 else "")
+    return ("The user's request, as written. Your job is the stage above; use this "
+            f"for any detail the stage leaves out.{others}\n" + request)
+
+
 def _earlier_requests(state: dict, last: int = 5) -> str:
     """A follow-up such as "retry" means nothing to the planner on its own."""
     turns = [h for h in state.get("history") or [] if h.get("event") == "turn"][-last:]
@@ -356,6 +368,9 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             ids = stage_part_ids(state["plan"], idx, image_spec)
             if ids:
                 blocks.append(parts_block(image_spec, ids))
+    request_block = _request_block(state)
+    if request_block:
+        blocks.append(request_block)
     if spec.call_prefix:
         retry = retry_context(state, idx, client)
         seed = (retry or {}).get("call_log")
