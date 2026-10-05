@@ -87,6 +87,24 @@ class StreamBudgetExceeded(requests.Timeout):
     burns another full budget on the same stuck backend."""
 
 
+class StreamErrorFrame(requests.ConnectionError):
+    """The provider sent an error frame mid-stream for a server-side failure
+    (5xx, 429, or an OpenAI-style server_error/api_error type with no status):
+    retried like a dropped stream (task 322). Other error frames stay fatal."""
+
+
+_SERVER_ERROR_TYPES = {"server_error", "api_error"}
+
+
+def _transient_error(err) -> bool:
+    if not isinstance(err, dict):
+        return False
+    status = next((v for v in (err.get("status"), err.get("code")) if isinstance(v, int)), None)
+    if status is not None:
+        return status >= 500 or status == 429
+    return err.get("type") in _SERVER_ERROR_TYPES
+
+
 class ReasoningBudgetExceeded(Exception):
     """A tool-calling round-trip reasoned past `llm.reasoning_budget` (approx
     tokens) before starting any tool call or content: the model is deliberating
@@ -581,7 +599,8 @@ class LLMClient:
             frames += 1
             partial["frames"] = frames
             if frame.get("error"):
-                raise RuntimeError(f"LLM stream returned an error frame: {frame['error']}")
+                msg = f"LLM stream returned an error frame: {frame['error']}"
+                raise (StreamErrorFrame if _transient_error(frame["error"]) else RuntimeError)(msg)
             if frame.get("usage"):
                 usage = frame["usage"]
             for choice in frame.get("choices") or []:
