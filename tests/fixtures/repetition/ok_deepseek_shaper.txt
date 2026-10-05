@@ -1,0 +1,209 @@
+Let me understand the task. Build a flat 2D badge as one face in XY plane, no thickness. Origin O at centre.
+
+Ring: outer circle diameter 100 (radius 50), centred on O, ring width 8.5, inner circle radius 41.5. So ring is annulus between radius 41.5 and 50.
+
+Bars: 4 bars, width 10, centred on centre lines, merge with ring and each other where overlapping.
+
+Central bars: 2 bars, centre lines pass through O, angle 24 degrees either side of +Y axis. Extent: each runs across the inner circle from ring to ring. So the centre lines are lines through O at ±24° from +Y. Each central bar is a strip of width 10 (5 each side of centre line), running across from ring to ring (i.e., spanning the whole outer circle diameter region, from one side of outer circle to the other? "across the inner circle from ring to ring" means the bar extends from the ring (inner edge? outer?) across the inner circle to the other side of the ring. Since it merges with ring, bar overlaps ring. So each central bar can be a rectangle of width 10 centred on line, long enough to overshoot the ring outer circle on both ends.
+
+Outer bars: left centre line through [-28.7, 0], parallel to the central bar whose top end is on the left. Right mirrors left about Y axis, through [28.7, 0]. Extent: each runs from the ring at the top down to the central bar it meets near the bottom (the W lower points), stopping at that bar far edge; does not reach into the space between the two central bars below O.
+
+Gap: horizontal strip 2.5 high centred on X axis, y from -1.25 to 1.25, cut from the two central bars where they cross at O. Outer bars not cut.
+
+Result: one face: ring plus bars merged, everything else inside inner circle empty as holes.
+
+So we need to create a sketch with all entities (ring outer circle, ring inner circle, bars as rectangles/strips), overlapping, then make_face on appropriate regions to get one face with holes inside inner circle left empty.
+
+Actually the face should be: ring annulus plus bars merged. Inside inner circle, only the central bars and parts of outer bars that extend into inner circle are material? Wait, "everything else inside the inner circle empty as holes". So inside the inner circle, the material should be only where bars overlap inside inner circle? Let's think.
+
+The badge: ring (annulus) fused with 4 bars. Central bars cross through O at ±24° from +Y. Outer bars are parallel to central bars (the left outer bar parallel to left central bar, right outer bar parallel to right central bar), running from ring at top down to central bar near bottom, stopping at far edge.
+
+The gap cuts a horizontal strip 2.5 high across the two central bars where they cross at O (y from -1.25 to 1.25), effectively removing part of central bars near O. This creates the "W" shape of bars? The description mentions "the W lower points".
+
+Let me visualize. Central bars are at ±24° from +Y. So one goes up-right (top end on left? Let's define). Angle 24 degrees either side of +Y axis: one central bar at +24° (measured from +Y towards +X, i.e., up-right), the other at -24° (up-left). "the central bar whose top end is on the left" is the one at -24° (up-left). So left outer bar is parallel to that central bar (up-left direction).
+
+Outer left bar centre line through [-28.7, 0], parallel to central bar at -24°? Wait "parallel to the central bar whose top end is on the left" — the central bar going up-left (angle -24° from +Y, i.e., direction vector with top end left). Its centre line passes through O with slope... At angle 24° left of +Y, direction from bottom to top is up-left. The line direction vector could be (sin24? Let's compute: +Y axis rotated 24° towards -X: direction = (-sin24°, cos24°). That's up-left. So slope = cos24/(-sin24) = negative.
+
+Left outer bar parallel to that, through [-28.7, 0].
+
+Right mirrors left about Y axis, through [28.7, 0], parallel to central bar whose top end is on the right (up-right).
+
+Extent of outer bars: "each runs from the ring at the top down to the central bar it meets near the bottom (the W lower points), stopping at that bar far edge; it does not reach into the space between the two central bars below O."
+
+So each outer bar starts at the ring at the top (intersects outer circle near top), extends down along its parallel direction to where it meets the central bar near bottom, stopping at that bar's far edge (the edge farther away?).
+
+The central bars cross forming an X shape. The two central bars at ±24° cross at O, making an X. The lower parts of the X form a V below O. Outer bars come down parallel to the upper parts and stop at the lower part of the opposite? Let's see.
+
+Actually the shape is a "W" lower points. The central bars make an X. The gap cuts horizontal strip at O, splitting the X into four separate arms (two top arms, two bottom arms). Wait, cut from the two central bars where they cross at O: horizontal strip from y=-1.25 to 1.25. This cuts both central bars, so the X is broken: the central bars become 4 separate pieces (upper-left, upper-right, lower-left, lower-right)? No, if cut across the crossing, each central bar becomes two pieces: top arm and bottom arm. So the two central bars become 4 arms total. The lower two arms form a V pointing down (the "W lower points"?). Hmm.
+
+Actually "the W lower points" might refer to the overall badge shape. Let me think of the geometry as a known badge? Possibly a Scout badge? A ring with an X and W shapes.
+
+Let me just carefully construct.
+
+The outer bars: left outer bar runs from ring at top down to the central bar it meets near the bottom. It's parallel to central bar (top-left direction). Wait if it's parallel to the up-left central bar, then it goes from bottom-right to top-left (or top-left to bottom-right). Through [-28.7, 0]. Extends from ring at the top down to the central bar it meets near the bottom.
+
+Hmm, the left outer bar is at x=-28.7 (near left side of inner circle? inner radius 41.5, so -28.7 is inside inner circle). It is parallel to up-left central bar. Starting from the ring at the top: as you go up-left along the line, it hits the ring (outer circle) at top-left. Going down along the line (down-right), it meets the central bar near the bottom. Which central bar? "the central bar it meets near the bottom". The left outer bar going down-right would meet the lower-right central arm? Actually the central bars: up-left and up-right. The lower-right arm belongs to the up-left central bar? Let's define central bars:
+
+Central bar A: centre line through O, top end on left (up-left), so extends from bottom-right to top-left. Its direction: up-left. 
+Central bar B: top end on right (up-right), extends bottom-left to top-right.
+
+The left outer bar is parallel to A (up-left). Through [-28.7, 0]. If it runs from ring at top down to central bar near bottom, which central bar does it meet? It is parallel to A, so it never meets A (parallel). It meets B near the bottom. The lower arm of B goes down-left (bottom-left) from O. So the left outer bar (up-left direction) going down-right would cross B's lower-left arm? Let's check directions.
+
+Central bar B direction: up-right. Its lower arm extends down-left (opposite direction). The left outer bar direction up-left; its "down" direction is down-right. Down-right crosses the lower-left arm of B. Yes, they cross somewhere below O. The left outer bar, travelling down-right from top, meets B's lower arm (down-left) near bottom. It stops at B's far edge (the far edge of B's lower arm). 
+
+So the W lower points: B's lower-left arm and A's lower-right arm form a V; the outer bars stop at these lower arms, creating W-like points? Maybe.
+
+Actually, maybe the shape is like a compass rose? Let me not overthink; just build.
+
+We need to construct the face. The key is to draw all pieces as closed outlines overlapping, then select regions.
+
+Let's define the geometry in XY plane.
+
+Ring: outer circle radius 50, inner circle radius 41.5, centred at origin.
+
+Central bars: strips width 10 centred on lines through O at angles ±24° from +Y. We need closed outlines (rectangles) long enough to overshoot the outer circle. Each bar spans across the entire circle from ring to ring, so length should be > 100 (diameter). Let's make the central bars as rectangles centered at O, width 10 (perpendicular), length maybe 110 along centre line, so they extend from ring to ring beyond outer circle. Actually "each runs across the inner circle from ring to ring" — from ring (outer circle) to ring. So it must reach the outer circle radius 50 on both ends. A rectangle centred at O with half-length 55 along centre line, half-width 5, will overshoot outer circle (50) on both ends. Good.
+
+But wait: the gap cuts the central bars at O. If we draw central bars as full rectangles, and later cut a horizontal gap region, we can just leave the gap region as empty (not selected) when making face. So we can draw a horizontal strip rectangle for the gap and leave it out of face selection. Or draw gap as a separate rectangle that overlaps the central bars, then when selecting regions, exclude the gap region. But the gap is y from -1.25 to 1.25 for all x? "horizontal strip 2.5 high centred on the X axis, y from -1.25 to 1.25" — cut from the two central bars where they cross at O. So the gap is a horizontal strip across the central bars (maybe full width of the central bars crossing). We can draw a rectangle that covers the crossing region. Actually the strip is horizontal, full extent across the two central bars where they cross. It could be a long horizontal rectangle, but "cut from the two central bars where they cross at O" means only removes material from central bars (not from ring or outer bars). If we draw a long horizontal rectangle, it would also cut ring if it extends to ring. So we should limit the gap rectangle to just cover the crossing of central bars, not reaching ring.
+
+But wait: "outer_bars_not_cut": outer bars not cut by gap. Outer bars are elsewhere (left and right), so as long as gap doesn't extend there, fine.
+
+Simplest: draw the gap as a rectangle covering the crossing area of central bars near O, then leave that rectangle's region out when making face. But if gap rectangle overlaps the central bars only, and we exclude it from face, it creates a hole (empty) in the central bars. Actually the gap is an empty region; the material around it remains. In the sketch regions, the gap rectangle (if drawn as its own closed outline) will split regions. We then select all material regions except gap region? Hmm.
+
+Let me think about the region approach. The instructions: "draw each piece whole, as its own closed outline, overlapping the others freely. Do not compute where pieces meet or trace the combined outline yourself: curves that cross split the sketch into regions, the reply lists each with its area and a point inside, and make_face on the regions that are material gives one face (touching regions are merged). Holes are the regions you leave out."
+
+So we draw:
+- Outer circle (ring outer boundary)
+- Inner circle (hole boundary)
+- 4 bar rectangles (2 central full, 2 outer)
+- Gap rectangle (to be cut) — but the gap should be an empty region. If we draw the gap as a rectangle, the region inside the gap rectangle (overlapping central bars) would be a separate region to leave out. But careful: the gap rectangle overlapping central bars: inside the gap rectangle and inside a central bar = region to leave out. But the gap rectangle also overlaps empty space inside inner circle; those empty regions are already holes anyway.
+
+Actually we might not need to draw the gap at all if we can construct the central bars as two pieces each (top and bottom) separated by a 2.5 gap. But the instruction says draw pieces whole and let regions handle it. We could draw the gap strip as a closed outline (rectangle) and exclude its interior region from the face.
+
+Wait, but the gap is only "cut from the two central bars where they cross at O". The gap strip is horizontal y in [-1.25, 1.25], presumably extending across the central bars' crossing, i.e., a rectangle whose width spans enough to cover both central bars' widths near O. Since central bars are at ±24°, their crossing near O: the horizontal strip should cover the crossing region. If the strip extends across the entire inner circle (x from -? to ?), it would cut ring too (if it reaches ring). But ring is outside inner circle (radius > 41.5), and at y in [-1.25, 1.25], ring is at x ≈ ±50 (outer) and ±41.5 (inner). If the gap rectangle extends horizontally to x=±50, it would overlap the ring region and cut the ring, which is wrong ("cut from the two central bars"). So gap rectangle should be limited to x range covering only the central bars near O, not reaching ring.
+
+Let's compute the horizontal extent of the two central bars at y = ±1.25. The central bars are strips of half-width 5 about lines at ±24°. At the crossing near O, the union of the two central bars is an X shape. The horizontal strip from y=-1.25 to 1.25 cuts through the X. To cut all material of the two central bars within that strip, the gap rectangle should span x from the leftmost edge to rightmost edge of the X within y in [-1.25, 1.25].
+
+Let's compute. Central bar A (up-left, angle -24° from +Y): direction vector dA = (-sin24, cos24) ≈ (-0.4067, 0.9135). Normal (perpendicular) nA = (cos24, sin24) ≈ (0.9135, 0.4067). Half-width 5.
+
+Central bar B (up-right): dB = (sin24, cos24) ≈ (0.4067, 0.9135). Normal nB = (cos24, -sin24)? Actually perpendicular: (-cos24? let's not worry).
+
+At y=0, the bars cross at O. Each bar occupies a band of width 10 about its centre line. The horizontal cross-section of bar A at y=0 is from x = -5/cos... hmm.
+
+Let's just compute the x-extent of the union at y=1.25 and y=-1.25. But since the strip is symmetric in y, the max extents likely at the ends. Actually the gap needs to cover the bars within the strip; we can just draw a gap rectangle with x from -some to +some and y from -1.25 to 1.25 that covers the crossing. Let's compute the widest x extent of both bars for y in [-1.25,1.25].
+
+For a bar with centre line direction (dx, dy) and normal (nx, ny), half-width w=5, the bar is points p = t*(dx,dy) + s*(nx,ny) with |s|≤5. Given y, solve for x range: y = t*dy + s*ny => t = (y - s*ny)/dy. x = t*dx + s*nx = (y - s*ny)*dx/dy + s*nx = y*dx/dy + s*(nx - ny*dx/dy).
+
+For bar A: dx=-sin24=-0.40674, dy=cos24=0.91355. dx/dy = -tan24 = -0.44523. Normal nA = (cos24, sin24) = (0.91355, 0.40674). nx - ny*dx/dy = 0.91355 - 0.40674*(-0.44523) = 0.91355 + 0.18110 = 1.09465. So x = y*(-0.44523) + s*1.09465, s∈[-5,5]. At y=1.25: x = -0.55654 + s*1.09465, so x from -6.0298 to 4.9167. At y=-1.25: x = 0.55654 + s*1.09465, x from -4.9167 to 6.0298.
+
+For bar B: dx=sin24=0.40674, dy=cos24=0.91355. dx/dy = tan24=0.44523. Normal nB = (cos24, -sin24)? Let's choose normal (cos24, -sin24) = (0.91355, -0.40674) (perpendicular, pointing right-down). nx - ny*dx/dy = 0.91355 - (-0.40674)*0.44523 = 0.91355 + 0.18110 = 1.09465. x = y*0.44523 + s*1.09465. At y=1.25: x = 0.55654 + s*1.09465, from -4.9167 to 6.0298. At y=-1.25: x = -0.55654 + s*1.09465, from -6.0298 to 4.9167.
+
+So the union at any y in strip spans x from about -6.03 to 6.03 (at the ends) and at y=0 maybe -? At y=0, bar A x from -5.473 to 5.473, bar B x from -5.473 to 5.473, union same. So the widest extent is about ±6.03. So a gap rectangle from x=-7 to 7, y=-1.25 to 1.25 covers all central bar material in the strip and stays well inside inner circle (radius 41.5). Good, it won't touch the ring.
+
+But wait, the gap rectangle corners: x=±7, y=±1.25. Distance from origin sqrt(49+1.5625)=7.11, well inside inner circle 41.5. Good.
+
+So gap rectangle: corners (-7,-1.25) to (7,1.25). This will overlap the central bars. When we make face, we leave out the gap region(s) that overlap central bars? Actually we select material regions: ring annulus, bar pieces. The gap rectangle interior, where it overlaps central bars, will be a separate region (or multiple). We leave those out. But the gap rectangle also overlaps empty space inside the inner circle; those empty regions are already holes. The sketch regions will be many small pieces because of all the intersections. We need to identify which regions are material.
+
+Alternatively, we can construct the central bars already with the gap cut, by drawing each central bar as two rectangles (top and bottom) separated by the gap. That might be simpler? But the gap is horizontal and central bars are at an angle; the cut of a bar by a horizontal strip at O yields two pieces, each a parallelogram/trapezoid? Actually the gap cut is just removing the portion of the bar between y=-1.25 and 1.25. So each central bar becomes a top rectangle and bottom rectangle, each still a rectangle (since gap boundaries are horizontal, and bar is a rectangle at an angle, cutting it horizontally gives parallelograms, not rectangles). We could draw them as closed polygons, but that requires computing corner points. The instruction encourages drawing whole pieces overlapping and using regions. So let's use the gap rectangle approach.
+
+But wait, do we even need to draw the gap rectangle? The face is made by selecting regions. The gap is empty. If we don't draw the gap rectangle, the central bars would be continuous through O, and we'd have no way to leave the gap empty (the material region would include the crossing). So we need the gap rectangle to split the central bars into regions, so we can leave out the gap region.
+
+Actually, another approach: draw the central bars as two separate pieces each (upper and lower) with a gap between them. But the instruction says "draw each piece whole" and "the gap ... cut from the two central bars". It's fine to draw a gap rectangle.
+
+Now the outer bars. Let's compute their geometry precisely.
+
+Outer left bar: centre line through P = (-28.7, 0), parallel to central bar A (up-left, direction (-sin24, cos24)). It runs from ring at top down to central bar B near bottom, stopping at B's far edge.
+
+So the left outer bar is a strip of width 10 (half-width 5) centred on line through P parallel to A. It extends from the ring (outer circle) at the top (where its centre line or bar intersects outer circle at top end) down to the central bar B (lower-left arm) near bottom, stopping at B's far edge.
+
+We need to determine the bar's extent along its direction. Let's set up.
+
+Direction of left outer bar (same as A): d = (-sin24, cos24) ≈ (-0.40674, 0.91355). This points up-left. The opposite direction -d = (0.40674, -0.91355) points down-right.
+
+The bar runs "from the ring at the top down to the central bar it meets near the bottom". So the top end is at the outer circle (ring outer edge? or inner edge?). "from the ring at the top" likely the outer edge of the ring (outer circle radius 50). The bar merges with ring, so it should overshoot into the ring or at least reach the outer circle. We can extend it to overshoot the outer circle a bit, or exactly to outer circle. Since bar merges with ring, overshooting is fine (like central bars overshoot).
+
+Actually "from the ring at the top" might mean from the inner edge of the ring (inner circle radius 41.5)? But "ring" is the annulus; the top of the ring could be the outer circle. To merge with ring, the bar must reach into the ring. Overshooting outer circle is fine and simplest.
+
+The bottom end: "down to the central bar it meets near the bottom ... stopping at that bar far edge; it does not reach into the space between the two central bars below O". So the left outer bar's bottom end stops at the far edge of central bar B (the lower-left arm). The "far edge" is the edge of bar B's lower arm that is farther from...? Let's think: The left outer bar approaches B's lower-left arm from the top-right (coming down-right). It first hits the near edge, then passes through the bar, and stops at the far edge. The far edge would be the edge on the other side (lower-left side). Stopping at the far edge means the outer bar merges with central bar B's lower arm, ending flush at its far edge, not protruding beyond into the space between the two central bars below O.
+
+But actually, if we draw the outer bar as a full rectangle overlapping central bar B and extending slightly beyond (to overshoot), then the union region selection will merge them and we don't need to compute the exact stop. The instruction "stopping at that bar far edge; it does not reach into the space between the two central bars below O" matters for the resulting shape: the outer bar should not extend beyond B into the gap between central bars below O. If we overshoot, we might incorrectly fill that space. But if we select regions, we can choose not to include the part beyond B's far edge. However, regions are determined by all intersections; the part of outer bar beyond B would create a region in the space between the central bars below O, which should be empty. We could leave it out. But it's easier to just draw the outer bar as a rectangle that stops at (or near) B's far edge, not overshooting much.
+
+Let's compute the exact geometry to draw the outer bar rectangle. Actually we can draw it as a rectangle with a given centre line segment from top ring point to bottom stop point. But drawing a rectangle at an angle requires computing 4 corners. Alternatively, we can draw the outer bar as a closed outline using 4 lines (a parallelogram) or use two parallel lines + ends. The simplest is to compute the 4 corner points.
+
+Alternatively, we can draw the outer bar as a single rectangle by defining its centre line and width, but the sketch tools only support lines, circles, arcs, points. We must draw 4 lines for a rectangle. So compute corners.
+
+But maybe we can exploit regions: draw the outer bar as a long rectangle that clearly overshoots both ends (top into ring, bottom past B's far edge), then when making face, select the correct regions and leave out the parts that extend into the space between central bars. But the bottom overshoot into the space between central bars below O would create an extra region; leaving it out is fine. However, the region between central bars below O is a specific wedge; if the outer bar extends into it, that part becomes a region we'd need to exclude. But it might also overlap and split regions in complex ways. To keep it simpler, let's compute proper endpoints.
+
+Actually, since the sketch solver does the intersection work, we can draw the outer bar as a rectangle that extends from top (overshooting ring) to bottom (stopping at B's far edge). Let's compute the bottom stop precisely, and top just overshoot.
+
+Let me define all lines/geometry and compute intersections with calc.
+
+Set:
+- Outer circle radius R = 50.
+- Inner circle radius r = 41.5.
+- Central bars angle θ = 24° from +Y. So direction vectors:
+  - A (left central, top end left): dA = (-sin24, cos24).
+  - B (right central, top end right): dB = (sin24, cos24).
+- Central bars width 10, half-width w = 5.
+
+Central bar A: centre line through O direction dA. Band: points p = t dA + s nA, s∈[-5,5], where nA is unit normal to dA. Choose nA = (cos24, sin24) (since dA=(-sin24,cos24), normal (cos24, sin24): dot = -sin24 cos24 + cos24 sin24 = 0). Good.
+
+Central bar B: dB=(sin24,cos24), normal nB = (cos24, -sin24) (dot = sin24 cos24 + cos24*(-sin24)=0). Band s∈[-5,5].
+
+Left outer bar: through P=(-28.7,0), direction dA = (-sin24, cos24) (up-left). Band p = P + t dA + s nA, s∈[-5,5].
+
+Right outer bar: mirror about Y axis, through Q=(28.7,0), direction dB = (sin24, cos24), normal nB. Symmetric.
+
+Extent left outer bar:
+- Top: runs to ring at top. Along dA (up-left), it crosses outer circle. Centre line crossing outer circle: solve |P + t dA| = 50. Since P is inside (28.7 < 50), there are two intersections; the one in the direction dA (t>0) is the top end (up-left). Let's compute t_top. Then the bar should extend at least to t_top, maybe plus a bit. The bar's top corner points at t = t_top (or overshoot). Since bar merges with ring, we can overshoot: choose top edge at t_top_overshoot = t_top + 5 (or some). But if overshoot beyond outer circle, the rectangle extends outside ring; that's fine because region selection will merge with ring and the outside is just part of the bar material (but outside ring there's nothing else). Wait, the bar outside the ring would create material outside the ring, but the badge is ring plus bars; bars merge with ring, but do bars extend outside the ring? The central bars run "from ring to ring", so they may extend slightly beyond outer circle? "runs across the inner circle from ring to ring" suggests they span the ring, maybe flush with outer circle. Typically bars go across the whole badge to the outer edge, not beyond. Hmm, "from ring to ring" could mean they terminate at the ring's inner edge? Let's parse: "each runs across the inner circle from ring to ring" — runs across the inner circle (the empty hole) from ring (inner edge) to ring (inner edge). That means the bar spans the inner circle, connecting opposite sides of the ring. It doesn't necessarily extend outside the ring. Actually the bar is fused with the ring; the bar occupies the region inside inner circle plus overlaps ring? The bar width 10; at the inner circle, the bar merges with ring. It might extend to the outer edge or not; "from ring to ring" ambiguous. But central bars crossing at O: they must at least span the inner circle (diameter 83) to reach ring on both sides. They don't need to extend to outer circle; but they merge with ring, meaning the bar material should overlap the ring so they fuse. To fuse, the bar must overlap the ring annulus (between radius 41.5 and 50). So the bar should extend into the ring, at least to some radius > 41.5, ideally to outer circle 50 or beyond. If the bar stops at inner edge (41.5), it would just touch the ring, not merge? Touching regions merge too (make_face merges touching regions). But to be safe, extend into the ring.
+
+Let's make central bars extend to overshoot the outer circle slightly (half-length 55 > 50). That ensures they merge with ring and the face is the union. But does that create material outside the ring that's wrong? The badge's outer boundary: ring plus bars. If bars extend beyond the outer circle, the badge would have protrusions outside the circle. Is that intended? The description "a ring fused with four straight bars that merge with the ring" suggests the outer boundary might be the bars' ends flush with ring outer circle, or the bars protrude. "central_bars extent: each runs across the inner circle from ring to ring" strongly suggests bars only cross the inner circle, connecting ring to ring, so their ends are at the ring (inner edge?). Hmm.
+
+Let's reconsider: The bars merge with ring and each other where overlapping. The result is one face. The outer boundary is likely the outer circle of the ring, with bars inside. Actually if bars only span the inner circle and merge with ring, the bars would be entirely inside the inner circle plus overlap the ring annulus? But "merge with the ring" means where the bar meets the ring, they become one solid; the bar material connects to ring material. The bar's ends are at the ring's inner edge (radius 41.5), so they touch the ring. Then the face has the ring annulus plus bars inside the inner circle. The outer boundary is the outer circle, inner holes are the regions inside inner circle not occupied by bars.
+
+But wait "each runs across the inner circle from ring to ring" = from one side of the ring (inner edge) to the other side (inner edge), across the inner circle. So the bar spans the inner circle and stops at the inner circle boundary. Its length along centre line would be the chord length of the inner circle at that angle, i.e., 2*41.5 = 83 (since centre line passes through O, the chord through centre is the diameter 83). So central bars have length 83 along centre line, width 10, ending exactly at inner circle (radius 41.5). Then the bar ends coincide with the inner circle, and the ring starts at radius 41.5. They touch along a line? The bar end (a line segment of width 10) at radius 41.5 lies on the inner circle? Actually the end of a rectangle at radius 41.5 perpendicular to centre line is a chord of the inner circle? Let's see: the rectangle end is a line segment of length 10 (width) perpendicular to centre line at distance 41.5 from O. Its endpoints are at distance sqrt(41.5² + 5²) = 41.8, which is > 41.5, so the bar corners extend into the ring slightly, and the middle of the end touches the inner circle. So the bar overlaps the ring a bit near the corners. Fine, they merge.
+
+But if the bar ends at radius 41.5 along centre line, the bar's side edges (parallel to centre line) are at perpendicular distance 5 from the centre line, so they lie along lines parallel to the centre line offset by 5. These side edges intersect the inner circle at some points. The bar's end at distance 41.5 is a line perpendicular to centre line. This forms a rectangle that overlaps the ring annulus near its ends? Let's compute: the rectangle from t=-41.5 to t=41.5 along centre line, s∈[-5,5]. At t=41.5, points have radius sqrt(41.5² + s²), from 41.5 to 41.8, all ≥41.5, so the end face is outside the inner circle (in the ring annulus) for |s|>0. Actually for s=0, radius 41.5 (on inner circle). So the rectangle slightly pokes into the ring. Good, merges.
+
+If instead we overshoot to outer circle (t=50 along centre line), the bar extends to radius 50, i.e., through the ring to the outer edge, making the bar flush with outer circle. Then "from ring to ring" would be interpreted as from outer edge to outer edge. Hmm.
+
+The phrase "from ring to ring" with "across the inner circle" — I think it means the bar spans the whole diameter, from the ring on one side to the ring on the other side, i.e., it connects two points on the ring. The "ring" being the annulus; "from ring to ring" likely means from the inner edge of the ring on one side to the inner edge on the other. But in many badge designs, the bars go all the way across the ring to the outer edge? Let me look at the numbers: ring outer diameter 100, inner radius 41.5 (so ring width 8.5 = 50-41.5). Central bars width 10, at ±24° from Y. Outer bars through x=±28.7. The outer bars "run from the ring at the top down to the central bar it meets near the bottom". So outer bars start at the ring at top — likely at the inner edge of the ring? Or outer edge? If the outer bars start at the ring's outer edge at top, they'd be longer. If at inner edge, shorter.
+
+Let's visualize the badge shape. There is a ring (annulus). Inside the inner circle, there's a design made of 4 bars: two central crossing at O (X shape), two outer bars on left/right forming a W lower points. This is reminiscent of a "two crossed arrows" or some badge. The outer bars run from ring at top down to central bar near bottom. The W lower points suggests the two outer bars + two central lower arms form a W shape at the bottom.
+
+If the outer bars start at the ring at top, "ring" likely means the inner edge of the ring (where the interior design meets the ring). Actually the design is inside the inner circle, touching the ring. The bars likely span from the ring's inner boundary. Let's interpret "from the ring at the top" as the outer bar's top end touches the inner circle (or the ring annulus) at the top. And "down to the central bar it meets near the bottom" the bottom end touches the central bar's far edge.
+
+Given the region-based approach, exact endpoint of outer bar top matters only for whether it merges with ring. If we draw outer bar top overshooting into the ring, we get a merge. If we stop at inner circle, it touches. Either way, make_face merges touching/overlapping regions. But if we overshoot beyond outer circle, we get protrusions. Let's avoid overshooting beyond outer circle; we can overshoot into the ring annulus (between 41.5 and 50) so it clearly merges without protruding outside.
+
+Actually, simpler: draw each bar as a rectangle that extends clearly beyond the boundaries where it should stop, but not beyond the outer circle. For top ends at ring: extend to radius just under 50 (like 48) or to 50. For central bars, "from ring to ring" could mean extend to radius 50 (outer edge) or 41.5 (inner edge). Hmm.
+
+Let me search my memory: This could be a specific badge, maybe the "Canadian Armed Forces" or "World Scout" badge? A fleur-de-lis? The numbers: ring 100 dia, inner 41.5, ring width 8.5, 4 bars width 10, central bars at 24° from vertical, outer bars through ±28.7. The gap 2.5 high across the crossing. This might be a specific vector design.
+
+Let me just carefully follow the description literally:
+
+- Ring: outer circle Ø100 (R50), inner radius 41.5 (ring width 8.5). ✓.
+- Bars count 4, width 10, centred on centre lines.
+- Central bars (2): centre lines through O, angle 24° either side of +Y. Extent: each runs across the inner circle from ring to ring. → The bar spans across the inner circle, from ring to ring. I think this means the bar goes from the inner edge of the ring on one side to the inner edge on the other side, crossing the inner circle. So its ends are at the ring (inner boundary). The bar's length along its centre line = 2 * inner radius = 83 (since the centre line passes through O). But to merge with the ring, the bar should overlap the ring; ending at inner boundary with width 10 means its corners are in the ring. Good enough.
+
+Actually wait, if the bar is a rectangle of length 83 centred at O along the centre line, its ends (t=±41.5) are chords... no, ends are lines perpendicular to centre line at distance 41.5 from O. The bar's corners at t=41.5, s=±5 have radius 41.8 > 41.5, so they're inside the ring annulus. The side edges (s=±5) intersect the inner circle at t where sqrt(t²+5²)=41.5 → t = sqrt(41.5²-5²)=41.198. So along the side edges, the bar enters the inner circle at t=41.198 and its end is at t=41.5 (inside ring). So the bar overlaps the ring in small triangular-ish regions near the ends. Good, merges.
+
+- Outer bars: left through [-28.7,0] parallel to the left central bar; right mirrored about Y through [28.7,0]. Extent: each runs from the ring at the top down to the central bar it meets near the bottom (the W lower points), stopping at that bar far edge; it does not reach into the space between the two central bars below O.
+
+So the outer bars are also inside the inner circle? The centre line through x=-28.7 is inside inner circle (28.7 < 41.5). The outer bar runs from ring at top (inner edge at top? "ring" meaning the annulus boundary). It's parallel to the left central bar (direction up-left). Going up-left from (-28.7,0), it hits the ring at the top-left. Going down-right, it meets the right central bar's lower arm near the bottom.
+
+Wait, the left outer bar is parallel to the left central bar, so it won't meet the left central bar; it meets the right central bar (B) near the bottom. Let's confirm B's lower arm is down-left; the left outer bar going down-right crosses B's lower arm. Yes.
+
+"stopping at that bar far edge; it does not reach into the space between the two central bars below O." The space between the two central bars below O is the V-shaped wedge between the two lower arms (B lower-left arm and A lower-right arm). The left outer bar approaches B's lower-left arm from the upper-right (outside the wedge). The far edge of B's lower arm is the edge that borders the wedge (the lower-left side? Let's define). B's lower arm direction down-left. Its band has two edges (parallel to dB, offset ±5). The wedge between the two central bars below O: the two lower arms diverge downward; the space between them is below O, between A's lower-right arm and B's lower-left arm. The left outer bar comes from top-right, hits B's lower-left arm. The first edge it hits is the "near edge" (upper-right side), the far edge is the one on the other side (lower-left side), which is the edge bordering the wedge? Actually B's lower-left arm: its centre line goes down-left. Its edges: one edge is offset to the upper-right (towards inside of the X? no), one to lower-left. The wedge between A and B below O is bounded by A's lower-right arm (which goes down-right) and B's lower-left arm (which goes down-left). The interior of the wedge is between them, below O. B's lower-left arm's edge facing the wedge is its upper-right edge? Let's see: B lower-left arm goes down-left (direction -dB = (-sin24, -cos24)). A point on B lower-left arm near its centre line. The wedge interior is to the right of B's lower-left arm (towards the +X side?) Actually below O, B's lower-left arm is on the left side, A's lower-right arm is on the right side. The wedge interior is between them, i.e., to the right of B's arm and to the left of A's arm. So B's arm's right edge borders the wedge; that's the "far edge" from the left outer bar? The left outer bar approaches from the upper-right, so it hits the right edge first. Hmm, then the near edge is the right edge (bordering wedge), and far edge is the left edge (outside the wedge). Stopping at the far edge means the outer bar would pass through the whole arm and stop at the left edge, protruding into the space to the left of B's arm, which is not "between the two central bars" (that's outside the wedge). That would be fine but creates material to the left of B's lower arm.
+
+Wait, "it does not reach into the space between the two central bars below O" — the space between the two central bars below O is the wedge. The outer bar should not reach into that wedge. So the outer bar should stop at the edge of B's lower arm that borders the wedge, i.e., it should NOT pass through into the wedge. But it says "stopping at that bar far edge" — far edge from the direction of approach. If approaching from the upper-right (outside the wedge), the near edge is the wedge-bordering edge, and the far edge is the opposite (left) edge. Stopping at the far edge would mean it goes through the wedge? No: the wedge is on the near side (right side of B's arm). If the bar stops at the far edge, it passes entirely through B's arm, so it would occupy the wedge region too (since the bar material between near and far edge includes the wedge-bordering edge and extends into... hmm wait the outer bar approaches from the right/up, it first touches the right edge (near). If it stops at the far (left) edge, the outer bar material fills from the right edge through the arm to the left edge. The wedge is to the right of B's arm? Let me re-evaluate.
+
+Let me set coordinates: B's lower arm goes from O down-left. Its centre line direction u = (-sin24, -cos24) ≈ (-0.4067, -0.9135). Points on B's arm: p = t u, t>0. The band width 10 with normal nB = (cos24, -sin24) ≈ (0.9135, -0.4067)? Wait nB defined earlier = (cos24, -sin24). For B's arm (both upper and lower parts same bar B), the band is p = t dB + s nB, s∈[-5,5], where dB=(sin24,cos24). For lower arm, t<0 (since dB points up-right, lower arm is t<0). nB=(cos24,-sin24) points right-down? Let's check direction: nB=(0.9135,-0.4067) points to the right and down. So for the lower arm (t<0), points p = t dB + s nB. As s varies from -5 to 5, we move in direction ±nB. The centre line is at s=0.
+
+The wedge between A and B below O: A's lower arm is dB? No A's lower arm: A centre line direction dA=(-sin24,cos24) (up-left); lower arm of A is t<0 direction -dA=(sin24,-cos24) (down-right). B's lower arm is -dB=(-sin24,-cos24) (down-left). The wedge between them below O is the region between these two downward arms, i.e., roughly below O and between the two arms. Points in the wedge have x between the two arms' centre lines? At a given y<0, A's lower arm centre line x = y*tan24 (since A lower direction (sin24,-cos24): x/y = sin24/cos24 = tan24, so x = y*tan24, negative). B's lower arm centre line x = -y*tan24 (positive? B lower direction (-sin24,-cos24): x/y = -sin24/-cos24 = tan24, so x = y*tan24, negative as well? Wait y<0, x = y*tan24 <0. Hmm both lower arms go down-left and down-right? Let me recompute.
+
+Central bar A: top end left, so direction up-left dA=(-sin24, cos24). Its lower end is opposite direction (sin24, -cos24) = down-right. So A's lower arm goes down-right (positive x as y decreases). At y=-1, A lower centre line x = y*? For direction (sin24, -cos24), x/y = sin24/(-cos24) = -tan24. So x = -tan24 * y = tan24 * |y| > 0. Yes down-right.
+
+Central bar B: top end right, dB=(sin24, cos24). Lower arm -dB=(-sin24, -cos24) down-left. x/y = (-sin24)/(-cos24) = tan24, so x = tan24 * y <0 (for y<0). So B lower arm down-left.
+
+So below O: A lower arm is on the right (down-right), B lower arm is on the left (down-left). The wedge between them is between x = tan24*y (left arm, negative) and x = -tan24*y (right arm, positive), for y<0. Wait at y=-1, left arm x = tan24*(-1) = -0.445, right arm x = -tan24*(-1) = 0.445. So wedge between x=-0.445 and x=0.445. Yes.
+
+B's lower arm band: centre line x = tan24*y (negative), with normal nB=(cos24,-sin24) = (0.9135,-0.4067) (right-down). So band s∈[-5,5] adds x offset s*cos24, y offset -s*sin24. The edge toward the wedge (right side) is s=+5? At s=5, x increases by 4.57, y decreases by 2.03. So the edge at s=5 is to the right of centre line → borders the wedge (wedge interior is to the right of B's arm). The far edge from approach? The left outer bar approaches B's lower arm from the upper-right, moving down-right along direction dA? Wait left outer bar direction is dA=(-sin24,cos24) up-left, so its downward direction is -dA=(sin24,-cos24) down-right. The left outer bar centre line passes through 

@@ -576,6 +576,14 @@ def test_endpoint_fatal_explains_a_second_reasoning_cut():
     assert "300s" in msg
 
 
+def test_endpoint_fatal_explains_a_repetition_loop():
+    from salome_agent.graph import _llm_endpoint_fatal
+    from salome_agent.llm import RepetitionLoopDetected
+
+    msg = _llm_endpoint_fatal(RepetitionLoopDetected("reasoning", 2400, "x", "y"))
+    assert "repeating itself" in msg
+
+
 def test_shaper_stage_routes_like_a_tool_module():
     ok = {"stage_idx": 0, "stages": {0: {"module": "shaper", "status": "ok"}}}
     failed = {"stage_idx": 0, "stages": {0: {"module": "shaper", "status": "failed"}}}

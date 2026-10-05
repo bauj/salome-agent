@@ -3,10 +3,11 @@ import json
 from salome_agent.calc import CALC_DEF, run_calc
 from salome_agent.codegen import _reachable, _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
-from salome_agent.llm import (LLMCancelled, ReasoningBudgetExceeded, assistant_tool_turn,
-                              continuity_fields)
+from salome_agent.llm import (LLMCancelled, ReasoningBudgetExceeded, RepetitionLoopDetected,
+                              assistant_tool_turn, continuity_fields)
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec
+from salome_agent.repetition import loop_at_end, loop_nudge
 from salome_agent.specialists.tool_selection import (
     initial_offered, resolve_load, suggest_tool_names,
 )
@@ -210,8 +211,10 @@ class ToolSpecialist:
         audited = False
         # A call cut for deliberating past llm.reasoning_budget is re-asked once
         # with the tail of its own reasoning and a "continue and act" nudge; a
-        # second cut in a row ends the stage.
-        overran = False
+        # second cut in a row ends the stage. A call cut for looping (or a
+        # budget cut whose reasoning ends in a loop) is re-asked without the
+        # loop, up to llm.loop_retries cuts in a row (task 317).
+        cuts = 0
         shape_infos: dict[str, dict] = {}
         n_seed_calls = len(calls)
         # Per-stage tool retrieval: offer CORE_TOOLS + the planner's hints, not the
@@ -261,17 +264,35 @@ class ToolSpecialist:
             except LLMCancelled:
                 log.info("  %s stage: cancelled mid-call", spec.name)
                 return _with_calls(spec.on_exhausted(call_log, last_error), calls)
-            except ReasoningBudgetExceeded as e:
-                if overran:
-                    log.warning("  %s stage: %s again after the nudge; giving up", spec.name, e)
+            except (ReasoningBudgetExceeded, RepetitionLoopDetected) as e:
+                cuts += 1
+                if isinstance(e, RepetitionLoopDetected):
+                    loop = (e.sample, e.before)
+                else:
+                    found = loop_at_end(e.reasoning)
+                    loop = found and (found.sample, e.reasoning[:found.start])
+                if cuts > (llm.loop_retries if loop else 1):
+                    log.warning("  %s stage: %s, cut %d in a row; giving up", spec.name, e, cuts)
+                    what = "looped" if loop else "reasoning budget exceeded"
                     return _with_calls(spec.on_exhausted(
-                        call_log, f"stage ended: reasoning budget exceeded twice ({e})"), calls)
-                log.warning("  %s stage: %s; nudging it to decide", spec.name, e)
-                overran = True
-                messages.append({"role": "user",
-                                 "content": _overrun_nudge(e, calc_def is not None)})
+                        call_log, f"stage ended: {what} {cuts} times in a row ({e})"), calls)
+                log.warning("  %s stage: %s%s; nudging it to act", spec.name, e,
+                            " (ends in a loop)" if loop and not isinstance(
+                                e, RepetitionLoopDetected) else "")
+                if loop:
+                    calc_line = (" Put any arithmetic still to do in a calc call."
+                                 if calc_def else "")
+                    nudge = loop_nudge(*loop, f"make your tool call now.{calc_line} Tool "
+                                       "results will tell you if it was wrong.", _REASONING_TAIL)
+                else:
+                    nudge = _overrun_nudge(e, calc_def is not None)
+                # a cut call adds nothing to the history, so after a cut in a
+                # row the last message is the previous nudge: replace it
+                if cuts > 1:
+                    messages.pop()
+                messages.append({"role": "user", "content": nudge})
                 continue
-            overran = False
+            cuts = 0
             if response.get("content"):
                 log.debug("    LLM reasoning: %s", response["content"])
             tool_calls = response["tool_calls"]
