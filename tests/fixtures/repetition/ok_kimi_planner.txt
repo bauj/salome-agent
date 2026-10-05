@@ -1,0 +1,68 @@
+Let me analyze this request. The user wants a flat 2D badge in the XY plane, a face only, no thickness, built in shaper (they explicitly say "In shaper").
+
+The module is shaper because the request names it: "In shaper".
+
+The geometry: a ring (outer circle Ø100, so R50, inner circle R41.5), with four straight bars inside, merged with the ring and each other where they overlap. There's a gap cut at the centre. The result is one face with holes.
+
+This is one part — a single face. All operations belong to one stage. The module is shaper.
+
+Since it's shaper, I don't provide geom tools (tools list is only for geom stages). The intent should describe the job, params carry the dimensions.
+
+Let me think about the structure:
+- Ring: outer R50, inner R41.5 (ring 8.5 wide).
+- Four bars, each 10 wide, centred on centre lines:
+  - Two central bars: centre lines pass through O at 24° either side of +Y axis. Each runs across the inner circle from ring to ring (i.e., from inner circle edge to inner circle edge, but "from ring to ring" — they merge with the ring, so they extend to the ring, meaning to the outer circle? Actually "running across the inner circle from ring to ring" — the bars span the inner circle, touching the ring on both ends. Since bars merge with the ring, they probably extend to at least the inner circle; merging means the union is one face. For the union to be a single face, the bars must touch/overlap the ring. If a bar ends exactly at the inner circle R41.5, it touches the ring's inner edge — union would be one face but tangency might be an issue. Better to extend slightly into the ring. But that's the specialist's job. I just describe it.)
+  - Two outer bars: left one centre line through (-28.7, 0), parallel to the central bar whose top end is on the left. Hmm, "parallel to the central bar whose top end is on the left" — the two central bars are at ±24° from +Y. One has its top end leaning left, the other right. The left outer bar is parallel to the central bar whose top end is on the left. The right outer bar mirrors it about the Y axis, through (28.7, 0). Each outer bar runs from the ring at the top down to the central bar it meets near the bottom (the W's lower points) and stops at that bar's far edge — it does not reach into the space between the two central bars below O.
+- Gap: where the two central bars cross at O, a horizontal strip 2.5 high centred on X axis (y from -1.25 to 1.25) is cut out of them; outer bars not cut.
+- Everything else inside inner circle is empty. Result is one face: ring plus bars, with empty regions as holes.
+
+This is like a "W" logo inside a ring (sounds like a Wolfram or similar badge... actually it sounds like the Waze or... a W made of bars — maybe the "Westinghouse"? Or it's like a "W" formed by four slanted bars — this resembles the logo of... whatever, doesn't matter).
+
+So one stage, module shaper, intent describing building the badge face, params with all the dims.
+
+Params (unconverted, in mm as given):
+- outer circle diameter 100 (R50), centred at O (origin)
+- ring width 8.5, inner circle R41.5
+- four bars, each 10 wide, centred on centre lines
+- central bars: centre lines through O at 24° either side of +Y axis, running from ring to ring across the inner circle
+- outer bars: left centre line through (-28.7, 0), parallel to the central bar whose top end is on the left; right mirrors about Y axis through (28.7, 0); each runs from the ring at top down to the central bar it meets near the bottom, stopping at that bar's far edge, not reaching into the space between the two central bars below O
+- gap: horizontal strip 2.5 high, y from -1.25 to 1.25, centred on X axis, cut from the central bars where they cross at O; outer bars not cut
+- everything else inside inner circle empty; result one face with holes
+
+Since it's a shaper stage, no tools list. Inputs: none (first stage).
+
+Should this be one stage? Yes — it's one part (one face). All in shaper.
+
+The bars merge with the ring — union. The gap is a cut. The empty regions become holes. In shaper, this could be done as a sketch with the profile, or as faces fused. The shaper specialist handles it.
+
+Intent: "Build the flat 2D badge face in the XY plane: a ring (outer Ø100, inner R41.5) fused with four 10-wide slanted bars forming a W, with a 2.5-high horizontal gap cut at the centre crossing; one face with the empty inner regions as holes."
+
+Params: keep the user's words, structured. Let me write params as a dict or a list? The format says params (dims in millimetres, unconverted). I'll use an object with keys.
+
+Let me draft:
+
+{
+  "stages": [
+    {
+      "module": "shaper",
+      "intent": "Create the flat 2D badge as a single face in the XY plane, origin at centre: a ring (outer Ø100, inner R41.5) merged with four 10-wide straight bars forming a W, with a 2.5-high horizontal gap cut where the central bars cross at O; empty regions inside the inner circle are holes in the face.",
+      "params": {
+        "plane": "XY, origin O = centre",
+        "ring": {"outer_diameter": 100, "width": 8.5, "inner_radius": 41.5},
+        "bars": {
+          "width": 10,
+          "count": 4,
+          "central_bars": "two bars, centre lines through O at 24° either side of the +Y axis, each running across the inner circle from ring to ring (merging with the ring)",
+          "outer_bars": "left bar centre line through (-28.7, 0), parallel to the central bar whose top end is on the left; right bar mirrors it about the Y axis, centre line through (28.7, 0); each runs from the ring at the top down to the central bar it meets near the bottom (the W's lower points), stopping at that bar's far edge — not reaching into the space between the two central bars below O"
+        },
+        "gap": {"height": 2.5, "y_range": [-1.25, 1.25], "note": "horizontal strip centred on the X axis, cut out of the two central bars where they cross at O; outer bars not cut"},
+        "result": "one face: ring plus bars merged where they overlap, everything else inside the inner circle empty (holes); no thickness"
+      },
+      "inputs": []
+    }
+  ]
+}
+
+That looks good. One stage, shaper module, no tools (tools only for geom).
+
+The instruction says keep reasoning brief and output only JSON. Let me finalize.

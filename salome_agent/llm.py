@@ -7,6 +7,7 @@ import time
 import requests
 
 from salome_agent.logs import log
+from salome_agent.repetition import RepetitionWatch
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 _CANCEL_POLL = 0.1
@@ -109,6 +110,20 @@ class ReasoningTimeExceeded(Exception):
         self.seconds = seconds
         self.tokens = tokens
         self.reasoning = reasoning
+
+
+class RepetitionLoopDetected(Exception):
+    """The streamed reasoning or content started repeating itself (task 317):
+    small models loop until the timeout. Never retried here; the caller
+    re-asks with `before` (that channel's text up to the loop) and `sample`
+    (one looped sentence), never the looped text itself."""
+
+    def __init__(self, channel: str, words: int, before: str, sample: str):
+        super().__init__(f"model {channel} looped (repeating itself after ~{words} words)")
+        self.channel = channel
+        self.words = words
+        self.before = before
+        self.sample = sample
 
 
 class LLMCancelled(Exception):
@@ -523,6 +538,13 @@ class LLMClient:
         frames = 0
         done = False
         reasoning_chars = 0
+        watches = {"reasoning": RepetitionWatch(), "content": RepetitionWatch()}
+
+        def watch(channel: str, text: str, gathered: list):
+            loop = watches[channel].feed(text)
+            if loop:
+                raise RepetitionLoopDetected(channel, loop.words,
+                                             "".join(gathered)[:loop.start], loop.sample)
         budget = self.request_timeout if budget is None else budget
         deadline = t0 + budget
         # chunk_size=None: iter_lines() with a fixed size uses read(amt)
@@ -563,6 +585,7 @@ class LLMClient:
                 delta = choice.get("delta") or {}
                 if delta.get("content"):
                     content.append(delta["content"])
+                    watch("content", delta["content"], content)
                     self._live_write(delta["content"], "content")
                     if prose:
                         self._stream_event(type="delta", channel="prose", text=delta["content"])
@@ -571,6 +594,7 @@ class LLMClient:
                 if thought:
                     reasoning.append(thought)
                     reasoning_chars += len(thought)
+                    watch("reasoning", thought, reasoning)
                     if (reasoning_budget and not content and not tool_frags
                             and reasoning_chars // 4 > reasoning_budget):
                         raise ReasoningBudgetExceeded(reasoning_chars // 4, reasoning_budget,
@@ -712,7 +736,7 @@ class LLMClient:
                     # finish when that read wakes instead of holding up Stop
                     threading.Thread(target=resp.close, daemon=True).start()
                 raise
-            except (ReasoningBudgetExceeded, ReasoningTimeExceeded) as e:
+            except (ReasoningBudgetExceeded, ReasoningTimeExceeded, RepetitionLoopDetected) as e:
                 log.warning("LLM request attempt %d: %s", attempt, e)
                 resp.close()
                 raise

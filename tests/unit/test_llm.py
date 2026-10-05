@@ -1582,3 +1582,66 @@ def test_reasoning_budget_counts_the_reasoning_field(monkeypatch):
     with pytest.raises(ReasoningBudgetExceeded):
         LLMClient("http://x/v1", "", "auto", reasoning_budget=500).chat(
             messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+
+
+# --- repetition loop guard (task 317) ----------------------------------------
+
+def _fixture(name):
+    from pathlib import Path
+    return (Path(__file__).parent.parent / "fixtures" / "repetition" / f"{name}.txt").read_text()
+
+
+def _chunks(text, n=40):
+    return [text[i:i + n] for i in range(0, len(text), n)]
+
+
+def test_a_reasoning_loop_is_cut_and_not_retried(monkeypatch, tmp_path):
+    from salome_agent.llm import RepetitionLoopDetected
+    text = _fixture("loop_nemotron_shaper")
+    calls = []
+
+    def post(*a, **k):
+        calls.append(1)
+        return _FakeResp(None, lines=_ollama_lines(_chunks(text), {}))
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    trace = tmp_path / "t.jsonl"
+    with pytest.raises(RepetitionLoopDetected) as e:
+        LLMClient("http://x/v1", "", "auto", trace_path=str(trace)).chat(
+            messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+    assert len(calls) == 1
+    assert e.value.channel == "reasoning"
+    assert text.startswith(e.value.before)
+    assert 0 < len(e.value.before) < len(text)
+    assert e.value.sample in text[len(e.value.before):]
+    assert "incomplete" in trace.read_text()
+
+
+def test_the_planner_call_is_guarded_too(monkeypatch):
+    from salome_agent.llm import RepetitionLoopDetected
+    lines = _reasoning_lines(_chunks(_fixture("loop_gpt_oss_planner")), then={"content": "{}"})
+    monkeypatch.setattr("salome_agent.llm.requests.post", lambda *a, **k: _FakeResp(None, lines=lines))
+    with pytest.raises(RepetitionLoopDetected):
+        LLMClient("http://x/v1", "", "auto").chat(messages=[{"role": "user", "content": "plan"}])
+
+
+def test_a_content_loop_is_cut(monkeypatch):
+    from salome_agent.llm import RepetitionLoopDetected
+    text = " ".join(f"w{i}" for i in range(700)) + ". " + "I will now draw the ring and the bars. " * 200
+    lines = ["data: " + json.dumps({"choices": [{"delta": {"content": c}}]}) for c in _chunks(text)]
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=lines + ["data: [DONE]"]))
+    with pytest.raises(RepetitionLoopDetected) as e:
+        LLMClient("http://x/v1", "", "auto").chat(
+            messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+    assert e.value.channel == "content"
+
+
+def test_long_healthy_reasoning_is_not_cut(monkeypatch):
+    tc = {"tool_calls": [{"index": 0, "id": "c1", "type": "function",
+                          "function": {"name": "mk", "arguments": "{}"}}]}
+    lines = _ollama_lines(_chunks(_fixture("ok_deepseek_shaper")), tc)
+    monkeypatch.setattr("salome_agent.llm.requests.post", lambda *a, **k: _FakeResp(None, lines=lines))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+    assert out["tool_call"] == "mk"
