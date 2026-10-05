@@ -145,3 +145,40 @@ def test_a_module_with_no_catalogue_is_not_routable():
 def test_a_module_named_in_the_request_wins():
     assert "always wins" in PLANNER_SYSTEM_PROMPT
     assert "(geom|shaper|smesh)" in PLANNER_SYSTEM_PROMPT
+
+
+def test_a_looping_planner_is_re_asked_once_without_the_loop():
+    from salome_agent.llm import RepetitionLoopDetected
+    llm = MagicMock()
+    stages = [{"module": "shaper", "intent": "badge", "params": {}, "inputs": []}]
+    llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2400, "Ring R50, bars 10 wide.",
+                                                   "But we need to specify holes."),
+                            {"stages": stages}]
+    llm.loop_retries = 2
+    assert plan("a badge", llm) == stages
+    nudge = llm.chat.call_args.kwargs["messages"][-1]
+    assert nudge["role"] == "user"
+    assert "Ring R50, bars 10 wide." in nudge["content"]
+    assert "But we need to specify holes." in nudge["content"]
+    assert "JSON plan" in nudge["content"]
+
+
+def test_a_planner_that_keeps_looping_past_loop_retries_raises():
+    import pytest
+    from salome_agent.llm import RepetitionLoopDetected
+    llm = MagicMock()
+    llm.loop_retries = 2
+    llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2400, "x", "y y y.")] * 3
+    with pytest.raises(RepetitionLoopDetected):
+        plan("a badge", llm)
+    assert llm.chat.call_count == 3
+
+
+def test_a_planner_answering_within_loop_retries_is_kept():
+    from salome_agent.llm import RepetitionLoopDetected
+    llm = MagicMock()
+    llm.loop_retries = 2
+    stages = [{"module": "shaper", "intent": "badge", "params": {}, "inputs": []}]
+    llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2400, "x", "y y y.")] * 2 + [
+        {"stages": stages}]
+    assert plan("a badge", llm) == stages

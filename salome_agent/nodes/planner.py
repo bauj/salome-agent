@@ -1,8 +1,10 @@
 import json
 
+from salome_agent.llm import RepetitionLoopDetected
 from salome_agent.logs import log
 from salome_agent.modules import spec_for
 from salome_agent.nodes.vision_spec import compact_spec, part_ids
+from salome_agent.repetition import loop_nudge
 
 
 _PLANNER_BASE = """You turn a natural-language SALOME request into an
@@ -110,10 +112,26 @@ def plan(request: str, llm, detail: str = "balanced",
         request = f"{request}\n\n{compact_spec(image_spec)}"
     messages = [{"role": "system", "content": system},
                 {"role": "user", "content": request}]
-    stages = llm.chat(messages=messages, module="planner")["stages"]
+    stages = _ask(llm, messages)
     if image_spec:
         stages = _check_parts(stages, image_spec, llm, messages)
     return stages
+
+
+def _ask(llm, messages: list[dict]) -> list[dict]:
+    """A planner call that loops is re-asked without the loop, up to
+    llm.loop_retries times; past that it propagates (a clean fatal in graph.py)."""
+    nudge, loops = [], 0
+    while True:
+        try:
+            return llm.chat(messages=messages + nudge, module="planner")["stages"]
+        except RepetitionLoopDetected as e:
+            loops += 1
+            if loops > llm.loop_retries:
+                raise
+            log.warning("planner: %s; nudging it to answer", e)
+            nudge = [{"role": "user", "content": loop_nudge(
+                e.sample, e.before, "answer with the JSON plan now.")}]
 
 
 def _check_parts(stages: list[dict], image_spec: dict, llm, messages: list[dict]) -> list[dict]:
@@ -128,7 +146,7 @@ def _check_parts(stages: list[dict], image_spec: dict, llm, messages: list[dict]
             {"role": "user", "content":
                 f'Unknown part id(s) {", ".join(unknown)} in "parts"; the parts are '
                 f'{", ".join(known)}. Answer with the whole corrected JSON plan.'}]
-        stages = llm.chat(messages=messages, module="planner")["stages"]
+        stages = _ask(llm, messages)
     for s in stages:
         if "parts" in s:
             s["parts"] = [i for i in part_ids(s) if i in known]

@@ -4,7 +4,7 @@ import time
 import requests
 from langchain_core.runnables import RunnableConfig
 
-from salome_agent.llm import ReasoningTimeExceeded, StreamBudgetExceeded
+from salome_agent.llm import ReasoningTimeExceeded, RepetitionLoopDetected, StreamBudgetExceeded
 from salome_agent.logs import log
 
 
@@ -69,6 +69,9 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
         return (f"LLM kept reasoning without answering, even after being told to "
                 f"decide ({e}) — use a faster model for this step or lower its "
                 f"reasoning effort")
+    if isinstance(e, RepetitionLoopDetected):
+        return (f"LLM got stuck repeating itself ({e}) — this model loops on this "
+                f"step; try another model or reword the request")
     if isinstance(e, (requests.ConnectionError, requests.Timeout)):
         return f"LLM endpoint unreachable ({type(e).__name__}) — retry later"
     if isinstance(e, RuntimeError):

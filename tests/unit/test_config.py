@@ -58,6 +58,7 @@ def test_salome_root_is_optional(tmp_path):
 def test_vision_fix_retries_is_a_known_llm_key():
     from salome_agent.config import LLM_KNOWN_KEYS
     assert "vision_fix_retries" in LLM_KNOWN_KEYS
+    assert "loop_retries" in LLM_KNOWN_KEYS
 
 
 def test_llm_modules_is_known_and_its_unknown_subkeys_warn(tmp_path, caplog):
