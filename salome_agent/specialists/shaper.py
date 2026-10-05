@@ -94,7 +94,7 @@ PLANNER_TOOL_LINES = {
     "measure": "area, volume, face count, validity of shaper objects",
 }
 
-_CATALOGUE = ("shaper tools available to a single shaper stage:\n"
+_CATALOGUE = ("SHAPER tools available to a single SHAPER stage:\n"
               + "\n".join(f"  {n} -- {d}" for n, d in PLANNER_TOOL_LINES.items()))
 
 
