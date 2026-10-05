@@ -459,3 +459,20 @@ def test_result_py_selects_a_merged_face_by_its_name(agent_client, tmp_path):
     m = re.search(r"AREA ([0-9.eE+-]+) RESULTS (\d+)", out.stdout)
     assert m, out.stdout[-2000:] + out.stderr[-2000:]
     assert float(m.group(1)) == pytest.approx(740, abs=1e-6)
+
+
+def test_check_results_sees_a_face_whose_sketch_was_edited(agent_client):
+    # session 77: make_face, then sketch_remove of the lines it was built from
+    sk = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
+    _call(agent_client, "sketch_add", sketch=sk, entities=_rect("R", 0, 0, 10, 5))
+    face = _call(agent_client, "make_face", sketch=sk, regions="all")["name"]
+    good = _rect_face(agent_client, 20, 0, 30, 5)
+    r = agent_client.check_results([face, good, sk, "nope"], module="shaper")
+    assert r["ok"] is True, r
+    assert r["results"][face]["status"] == "ok"
+    assert r["results"][sk]["status"] == "skip"
+    assert r["results"]["nope"]["status"] == "missing"
+    _call(agent_client, "sketch_remove", sketch=sk, ids=["R0", "R1", "R2", "R3"])
+    r = agent_client.check_results([face, good], module="shaper")
+    assert r["results"][face]["status"] == "broken", r
+    assert r["results"][good]["status"] == "ok"
