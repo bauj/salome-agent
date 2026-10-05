@@ -140,4 +140,7 @@ SHAPER tools available to a single SHAPER stage:
   extrude_cut -- pocket: extrude and cut from a solid
   extrude_fuse -- boss: extrude and fuse onto a solid
   revolve -- solid of revolution from a face or sketch
+  fuse -- fuse faces or solids into one
+  cut -- cut faces or solids from faces or solids
+  common -- keep only where faces or solids overlap
   measure -- area, volume, face count, validity of shaper objects

@@ -214,6 +214,10 @@ def tool_sketch_add(executor, args: dict):
         var = f"{sk.name}_{e['id']}"
         records.append(record("add" + e["type"].capitalize(), _entity_code(sk, e, var),
                               out=[var], recv=sk.name))
+    # A rename does not mark the sketch for recompute, so without this its
+    # result keeps SHAPER's own name (SketchLine_N) for the last entity, and a
+    # face selected by that name is lost in result.py.
+    records.append(record("execute", f"{sk.name}.feature().execute()", recv=sk.name))
     exec_records(st, records)
     for e in entities:
         var = f"{sk.name}_{e['id']}"

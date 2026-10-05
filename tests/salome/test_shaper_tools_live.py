@@ -294,3 +294,168 @@ def test_a_merged_face_can_be_discarded(agent_client):
     again = _call(agent_client, "make_face", sketch=sk, regions="all")
     assert again["ok"] is True, again.get("error")
     assert again["measure"]["faces"] == 1
+
+
+def _rect_face(client, x0, y0, x1, y1):
+    sk = _call(client, "create_sketch", plane="XOY")["sketch"]
+    _call(client, "sketch_add", sketch=sk, entities=_rect("R", x0, y0, x1, y1))
+    face = _call(client, "make_face", sketch=sk, regions="all")
+    assert face["ok"] is True, face.get("error")
+    return face["name"]
+
+
+def test_list_tools_has_the_booleans(agent_client):
+    names = {t["name"] for t in agent_client.list_tools(module="shaper")["tools"]}
+    assert {"fuse", "cut", "common"} <= names
+
+
+def test_fuse_of_overlapping_faces_is_one_face(agent_client):
+    a = _rect_face(agent_client, -20, -5, 20, 5)
+    b = _rect_face(agent_client, -5, -20, 5, 20)
+    r = _call(agent_client, "fuse", objects=[a, b])
+    assert r["ok"] is True, r.get("error")
+    assert r["measure"]["faces"] == 1
+    assert r["measure"]["area"] == pytest.approx(700, abs=1e-6)
+    assert r["measure"]["valid"] is True
+
+
+def test_cut_and_common_of_faces(agent_client):
+    a = _rect_face(agent_client, 0, 0, 40, 20)
+    b = _rect_face(agent_client, 30, 0, 50, 20)
+    r = _call(agent_client, "common", objects=[a], tools=[b])
+    assert r["ok"] is True, r.get("error")
+    assert r["measure"]["area"] == pytest.approx(200, abs=1e-6)
+    a = _rect_face(agent_client, 0, 0, 40, 20)
+    b = _rect_face(agent_client, 30, 0, 50, 20)
+    r = _call(agent_client, "cut", objects=[a], tools=[b])
+    assert r["ok"] is True, r.get("error")
+    assert r["measure"]["area"] == pytest.approx(600, abs=1e-6)
+    assert r["measure"]["faces"] == 1
+
+
+def test_fuse_of_solids(agent_client):
+    a = _call(agent_client, "extrude", base=_rect_face(agent_client, 0, 0, 10, 10), size=10)
+    b = _call(agent_client, "extrude", base=_rect_face(agent_client, 5, 0, 15, 10), size=10)
+    r = _call(agent_client, "fuse", objects=[a["name"], b["name"]])
+    assert r["ok"] is True, r.get("error")
+    assert r["measure"]["volume"] == pytest.approx(1500, abs=1e-6)
+    assert r["measure"]["faces"] == 6
+
+
+def test_a_cut_that_misses_carries_a_note(agent_client):
+    a = _rect_face(agent_client, 0, 0, 10, 10)
+    b = _rect_face(agent_client, 50, 50, 60, 60)
+    r = _call(agent_client, "cut", objects=[a], tools=[b])
+    assert r["ok"] is True, r.get("error")
+    assert "delta" in r
+
+
+def test_a_boolean_refuses_a_sketch(agent_client):
+    a = _rect_face(agent_client, 0, 0, 10, 10)
+    sk = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
+    _call(agent_client, "sketch_add", sketch=sk, entities=_rect("R", 5, 5, 15, 15))
+    r = _call(agent_client, "fuse", objects=[a, sk])
+    assert r["ok"] is False
+    assert "make_face" in r["error"]
+
+
+def test_result_py_rebuilds_a_boolean(agent_client, tmp_path):
+    import re
+    import subprocess
+
+    from salome_agent.nodes.assembler import assemble
+
+    from .conftest import _salome_subprocess_env
+
+    calls = []
+
+    def call(name, **args):
+        r = _call(agent_client, name, **args)
+        assert r["ok"] is True, r.get("error")
+        calls.append({"tool": name, "tool_args": args, "records": r["records"]})
+        return r
+
+    faces = []
+    for x0, y0, x1, y1 in ((-20, -5, 20, 5), (-5, -20, 5, 20), (-2, -2, 2, 2)):
+        sk = call("create_sketch", plane="XOY")["sketch"]
+        call("sketch_add", sketch=sk, entities=_rect("R", x0, y0, x1, y1))
+        faces.append(call("make_face", sketch=sk, regions="all")["name"])
+    plus = call("fuse", objects=faces[:2])["name"]
+    holed = call("cut", objects=[plus], tools=[faces[2]])
+    assert holed["measure"]["area"] == pytest.approx(684, abs=1e-6)
+
+    log = [rec for c in calls for rec in c["records"]]
+    script = assemble({"stages": {0: {"module": "shaper", "status": "ok", "script": None,
+                                      "result_names": [holed["name"]], "call_log": log,
+                                      "calls": calls}},
+                       "run_id": "t", "user_request": "plus", "plan": []})
+    script += ("from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as _T\n"
+               f"_r = {holed['name']}.feature().results()\n"
+               "print('AREA', _T.area(_r[0].shape()), 'RESULTS', len(_r))\n")
+    path = tmp_path / "result.py"
+    path.write_text(script)
+    out = subprocess.run([f"{SALOME_ROOT}/salome", "shell", "--", "python3", str(path)],
+                         env=_salome_subprocess_env(), capture_output=True, text=True,
+                         timeout=240)
+    m = re.search(r"AREA ([0-9.eE+-]+) RESULTS (\d+)", out.stdout)
+    assert m, out.stdout[-2000:] + out.stderr[-2000:]
+    assert float(m.group(1)) == pytest.approx(684, abs=1e-6)
+    assert m.group(2) == "1"
+
+
+def test_region_names_use_only_published_entity_names(agent_client):
+    # SHAPER's own counters (SketchLine_N) differ in result.py once anything
+    # built live was discarded, so a face selected by them is lost on replay
+    name = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
+    r = _call(agent_client, "sketch_add", sketch=name, entities=_rect("R", 0, 0, 10, 5))
+    face = _call(agent_client, "make_face", sketch=name, regions=[0])
+    assert face["ok"] is True, face.get("error")
+    code = "\n".join(rec["code"] for rec in face["records"])
+    assert "SketchLine_" not in code and "SketchCircle_" not in code, code
+
+
+def test_result_py_selects_a_merged_face_by_its_name(agent_client, tmp_path):
+    # make_face on several regions publishes a fuse made after a helper face;
+    # result.py must give the name to the fuse, or a later selection by that
+    # name lands on the helper, which the fuse has consumed
+    import re
+    import subprocess
+
+    from salome_agent.nodes.assembler import assemble
+
+    from .conftest import _salome_subprocess_env
+
+    calls = []
+
+    def call(name, **args):
+        r = _call(agent_client, name, **args)
+        assert r["ok"] is True, r.get("error")
+        calls.append({"tool": name, "tool_args": args, "records": r["records"]})
+        return r
+
+    sk = call("create_sketch", plane="XOY")["sketch"]
+    r = call("sketch_add", sketch=sk,
+             entities=_rect("H", -20, -5, 20, 5) + _rect("V", -5, -20, 5, 20))
+    plus = call("make_face", sketch=sk, regions=[g["index"] for g in r["regions"]])["name"]
+    sk2 = call("create_sketch", plane="XOY")["sketch"]
+    call("sketch_add", sketch=sk2, entities=_rect("R", 15, -2, 30, 2))
+    bar = call("make_face", sketch=sk2, regions="all")["name"]
+    both = call("fuse", objects=[plus, bar])
+    assert both["measure"]["area"] == pytest.approx(700 + 40, abs=1e-6)
+
+    log = [rec for c in calls for rec in c["records"]]
+    script = assemble({"stages": {0: {"module": "shaper", "status": "ok", "script": None,
+                                      "result_names": [both["name"]], "call_log": log,
+                                      "calls": calls}},
+                       "run_id": "t", "user_request": "plus", "plan": []})
+    script += ("from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as _T\n"
+               f"_r = {both['name']}.feature().results()\n"
+               "print('AREA', _T.area(_r[0].shape()), 'RESULTS', len(_r))\n")
+    path = tmp_path / "result.py"
+    path.write_text(script)
+    out = subprocess.run([f"{SALOME_ROOT}/salome", "shell", "--", "python3", str(path)],
+                         env=_salome_subprocess_env(), capture_output=True, text=True,
+                         timeout=240)
+    m = re.search(r"AREA ([0-9.eE+-]+) RESULTS (\d+)", out.stdout)
+    assert m, out.stdout[-2000:] + out.stderr[-2000:]
+    assert float(m.group(1)) == pytest.approx(740, abs=1e-6)

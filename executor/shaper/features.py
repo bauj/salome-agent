@@ -221,6 +221,78 @@ def tool_extrude_fuse(executor, args: dict):
     return _boolean_extrusion(executor, args, "Fuse")
 
 
+def _operands(executor, names, field: str) -> tuple[list, list]:
+    st = state(executor)
+    if isinstance(names, str):
+        names = [names]
+    if not isinstance(names, list) or not names:
+        raise ValueError(f"{field} must be a non-empty list of names")
+    sels = []
+    for name in names:
+        if name in st.sketches:
+            raise ValueError(f"{name!r} is a sketch — make a face from it first "
+                             "(make_face) or a solid (extrude)")
+        if name not in st.objects:
+            raise ValueError(_unknown(st, name))
+        sels += _result_selections(st, name)
+    return sels, list(names)
+
+
+def _boolean(executor, args: dict, op: str) -> dict:
+    objs, refs = _operands(executor, args.get("objects"), "objects")
+    name = new_name(executor, op.lower())
+    if op == "Fuse":
+        if len(refs) < 2:
+            raise ValueError("fuse needs at least two objects")
+        code = f"{name} = model.addFuse(shaper_doc, [{', '.join(objs)}], True)"
+        return _build(executor, name, "addFuse", code, refs, "boolean")
+    tools, trefs = _operands(executor, args.get("tools"), "tools")
+    before = _amount([measure(executor, n) for n in refs])
+    code = f"{name} = model.add{op}(shaper_doc, [{', '.join(objs)}], [{', '.join(tools)}])"
+    out = _build(executor, name, f"add{op}", code, refs + trefs, "boolean")
+    if out["ok"] and op == "Cut":
+        if abs(_amount([out["measure"]]) - before) <= 1e-6 * max(1.0, before):
+            out["delta"] = (f"{name}: nothing was removed — {', '.join(trefs)} does not "
+                            f"overlap {', '.join(refs)}")
+    return out
+
+
+def _amount(infos: list) -> float:
+    """Volume of solids, area of faces."""
+    return sum(m.get("volume") or m.get("area") or 0 for m in infos)
+
+
+_BOOL_SCHEMA = {"type": "object", "properties": {
+    "objects": {"type": "array", "items": {"type": "string"}},
+    "tools": {"type": "array", "items": {"type": "string"}}},
+    "required": ["objects", "tools"]}
+
+
+@tool("fuse", category="feature",
+      description=(
+          "Fuse faces or solids into one: `objects` is two or more published names. "
+          "Shared edges between coplanar faces are removed."),
+      schema={"type": "object", "properties": {
+          "objects": {"type": "array", "items": {"type": "string"}}},
+          "required": ["objects"]})
+def tool_fuse(executor, args: dict):
+    return _boolean(executor, args, "Fuse")
+
+
+@tool("cut", category="feature",
+      description="Remove the faces or solids `tools` from the faces or solids `objects`.",
+      schema=_BOOL_SCHEMA)
+def tool_cut(executor, args: dict):
+    return _boolean(executor, args, "Cut")
+
+
+@tool("common", category="feature",
+      description="Keep only where `objects` and `tools` overlap (faces or solids).",
+      schema=_BOOL_SCHEMA)
+def tool_common(executor, args: dict):
+    return _boolean(executor, args, "Common")
+
+
 @tool("revolve", category="feature",
       description=(
           "Revolve a face or sketch by `angle` degrees about `axis`: OX, OY, OZ, or a "
