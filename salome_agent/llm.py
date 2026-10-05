@@ -91,11 +91,12 @@ class ReasoningBudgetExceeded(Exception):
     tokens) before starting any tool call or content: the model is deliberating
     instead of acting. Never retried here; the specialist re-asks with a nudge."""
 
-    def __init__(self, tokens: int, budget: int):
+    def __init__(self, tokens: int, budget: int, reasoning: str = ""):
         super().__init__(f"model reasoned ~{tokens} tokens without acting "
                          f"(llm.reasoning_budget {budget})")
         self.tokens = tokens
         self.budget = budget
+        self.reasoning = reasoning
 
 
 class ReasoningTimeExceeded(Exception):
@@ -125,9 +126,9 @@ _STREAM_DROP = (requests.Timeout, requests.ConnectionError,
 # Opaque provider-specific fields on an assistant message that MUST be echoed
 # back verbatim in later requests for multi-turn continuity — e.g. Gemini 3
 # carries a `thought_signature` inside `extra_content` and rejects the next
-# request (HTTP 400) if it is missing. Deliberately excludes `reasoning_content`:
-# it is bulky, not required for continuity, and gets re-billed as input if fed
-# back.
+# request (HTTP 400) if it is missing. Excludes `reasoning_content`: it is bulky
+# and re-billed as input, so carrying it is opt-in (llm.carry_reasoning, passed
+# to assistant_tool_turn as `reasoning`).
 _CONTINUITY_KEYS = ("extra_content",)
 
 
@@ -140,11 +141,13 @@ def continuity_fields(obj: dict | None) -> dict:
     return {k: obj[k] for k in _CONTINUITY_KEYS if obj and k in obj}
 
 
-def assistant_tool_turn(parsed_calls: list[dict], raw_message: dict | None) -> dict:
+def assistant_tool_turn(parsed_calls: list[dict], raw_message: dict | None,
+                        reasoning: str | None = None) -> dict:
     """Rebuild the assistant tool-call turn for history, carrying every
-    provider continuity field (per-call and message-level) but not the bulky
-    reasoning text. `parsed_calls` items are {name, args, id}; `raw_message` is
-    the verbatim provider message, used only to recover continuity fields."""
+    provider continuity field (per-call and message-level), and the turn's
+    reasoning when given (llm.carry_reasoning). `parsed_calls` items are
+    {name, args, id}; `raw_message` is the verbatim provider message, used only
+    to recover continuity fields."""
     raw_calls = (raw_message or {}).get("tool_calls") or []
     raw_by_id = {c.get("id"): c for c in raw_calls if c.get("id") is not None}
     # Match a parsed call to its raw counterpart by id, falling back to position
@@ -163,6 +166,7 @@ def assistant_tool_turn(parsed_calls: list[dict], raw_message: dict | None) -> d
             for i, c in enumerate(parsed_calls)
         ],
         **continuity_fields(raw_message),
+        **({"reasoning_content": reasoning} if reasoning else {}),
     }
 
 
@@ -286,7 +290,8 @@ class LLMClient:
                  trace_path: str | None = None, extra_headers: dict | None = None,
                  extra_body: dict | None = None, json_retries: int = 2,
                  module_extra_body: dict | None = None, max_retries: int = 2,
-                 modules: dict | None = None, reasoning_budget: int = 0):
+                 modules: dict | None = None, reasoning_budget: int = 0,
+                 carry_reasoning: bool = False):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -320,6 +325,10 @@ class LLMClient:
         # Tool-calling calls only: approx reasoning tokens (chars/4) a model may
         # spend before its first tool call or content; 0 = no limit.
         self.reasoning_budget = reasoning_budget
+        # Tool-calling calls only: hand back each turn's reasoning (chat()'s
+        # "reasoning" key) so the loop can keep it in history and the model
+        # resumes its own thinking after a tool result instead of starting over.
+        self.carry_reasoning = carry_reasoning
         # modules: {"<module>": {<config.MODULE_LLM_KEYS subset>}} — that module's calls
         # go to its own endpoint/model (e.g. a better drawing reader for vision);
         # keys left out keep the shared value. Its extra_body, when given, wins
@@ -562,7 +571,8 @@ class LLMClient:
                     reasoning_chars += len(delta["reasoning_content"])
                     if (reasoning_budget and not content and not tool_frags
                             and reasoning_chars // 4 > reasoning_budget):
-                        raise ReasoningBudgetExceeded(reasoning_chars // 4, reasoning_budget)
+                        raise ReasoningBudgetExceeded(reasoning_chars // 4, reasoning_budget,
+                                                      "".join(reasoning))
                     if (reasoning_seconds and not content and not tool_frags
                             and time.monotonic() - t0 > reasoning_seconds):
                         raise ReasoningTimeExceeded(reasoning_seconds, reasoning_chars // 4,
@@ -799,16 +809,18 @@ class LLMClient:
                        "args": _loads_first_object(c["function"]["arguments"]),
                        "id": c.get("id")}
                       for c in calls]
+            reasoning = message.get("reasoning_content") if self.carry_reasoning else None
             if not parsed:
                 return {"tool_call": None, "args": None, "tool_call_id": None,
-                        "tool_calls": [], "content": content, "raw_message": message}
+                        "tool_calls": [], "content": content, "raw_message": message,
+                        "reasoning": reasoning}
             # tool_calls: every call the model emitted this turn (tool_choice=
             # "auto" allows several). The singular keys mirror the first call,
             # kept for backward compatibility with callers that expect only one.
             first = parsed[0]
             return {"tool_call": first["name"], "args": first["args"],
                     "tool_call_id": first["id"], "tool_calls": parsed,
-                    "content": content, "raw_message": message}
+                    "content": content, "raw_message": message, "reasoning": reasoning}
 
         # No-tools (planner) path: the response must be a JSON object. If it
         # will not parse, hand the model its own answer plus the exact parser

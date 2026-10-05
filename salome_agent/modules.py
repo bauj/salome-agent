@@ -74,6 +74,8 @@ class ModuleSpec:
     # offers the discard tool, and a clean finish removes what the results do
     # not reach, so the study matches result.py.
     forgets: bool = False
+    # Offers the calc tool (sandboxed Python arithmetic, answered agent-side).
+    calc: bool = False
 
 
 MODULES: dict[str, ModuleSpec] = {}
