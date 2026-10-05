@@ -3,10 +3,11 @@ import json
 from salome_agent.calc import CALC_DEF, run_calc
 from salome_agent.codegen import _reachable, _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
-from salome_agent.llm import (LLMCancelled, ReasoningBudgetExceeded, assistant_tool_turn,
-                              continuity_fields)
+from salome_agent.llm import (LLMCancelled, ReasoningBudgetExceeded, RepetitionLoopDetected,
+                              assistant_tool_turn, continuity_fields)
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec
+from salome_agent.repetition import loop_nudge
 from salome_agent.specialists.tool_selection import (
     initial_offered, resolve_load, suggest_tool_names,
 )
@@ -270,6 +271,18 @@ class ToolSpecialist:
                 overran = True
                 messages.append({"role": "user",
                                  "content": _overrun_nudge(e, calc_def is not None)})
+                continue
+            except RepetitionLoopDetected as e:
+                if overran:
+                    log.warning("  %s stage: %s again after the nudge; giving up", spec.name, e)
+                    return _with_calls(spec.on_exhausted(
+                        call_log, f"stage ended: {e}, again after a nudge"), calls)
+                log.warning("  %s stage: %s; nudging it to act", spec.name, e)
+                overran = True
+                calc_line = " Put any arithmetic still to do in a calc call." if calc_def else ""
+                messages.append({"role": "user", "content": loop_nudge(
+                    e, f"make your tool call now.{calc_line} Tool results will tell you "
+                       "if it was wrong.", _REASONING_TAIL)})
                 continue
             overran = False
             if response.get("content"):

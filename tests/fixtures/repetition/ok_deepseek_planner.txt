@@ -1,0 +1,77 @@
+Let me analyze this request carefully.
+
+The user asks for a flat 2D badge in the XY plane, a face only, no thickness. Origin O = centre. This is in **shaper** module (explicitly named: "In shaper").
+
+The geometry:
+- Ring: outer circle Ø100 (R50) centred on O, ring 8.5 wide, so inner circle R41.5.
+- Inside the ring, four straight bars, each 10 wide, centred on their centre lines:
+  - Two central bars whose centre lines pass through O at 24° either side of the +Y axis, each running across the inner circle from ring to ring.
+  - Two outer bars: left one has centre line through (-28.7, 0), parallel to the central bar whose top end is on the left (i.e., the one at 24° on the left side of +Y); the right one mirrors it about the Y axis, through (28.7, 0). Each outer bar runs from the ring at the top down to the central bar it meets near the bottom (the W's lower points) and stops at that bar's far edge: it does not reach into the space between the two central bars below O.
+- Gap: where the two central bars cross at O, a horizontal strip 2.5 high centred on the X axis (y from -1.25 to 1.25) is cut out of them; the outer bars are not cut.
+- Everything else inside the inner circle is empty. The result is one face: ring plus bars, with the empty regions as holes.
+
+This is a single part — one face. It's in shaper. The module is shaper since the user explicitly says "In shaper".
+
+So the plan: one stage, module shaper, intent describing the badge face construction, params with all the dimensions, inputs: none (first stage).
+
+The shaper module: "parametric sketches with constraints, and faces and solids built from them (extrude, pocket, boss, revolve). Use shaper only when the request names it or asks for a constrained or parametric sketch". Here the request names shaper, so shaper wins.
+
+Since it's one part (one face), it should be one stage. All operations belong to one stage.
+
+Params should include:
+- outer circle Ø100 (R50) centred on O
+- ring width 8.5, inner circle R41.5
+- four bars, each 10 wide, centred on centre lines
+- two central bars: centre lines through O at 24° either side of +Y axis, running across inner circle from ring to ring
+- two outer bars: left centre line through (-28.7, 0), parallel to left central bar (the one whose top end is on the left); right mirrors about Y axis through (28.7, 0); each runs from ring at top down to the central bar it meets near the bottom, stopping at that bar's far edge (not reaching into space between central bars below O)
+- gap: horizontal strip 2.5 high (y from -1.25 to 1.25) cut out of central bars where they cross at O; outer bars not cut
+- everything else inside inner circle empty; result one face with holes
+
+The tools list is only for geom stages — "for a geom stage — an optional 'tools' list". Since this is a shaper stage, no tools list.
+
+Inputs: none, it's the first (and only) stage.
+
+So the JSON:
+
+{
+  "stages": [
+    {
+      "module": "shaper",
+      "intent": "Build the flat 2D badge face in the XY plane: a ring plus four merged bars with a gap at the centre, as one face with empty regions as holes, no thickness.",
+      "params": {
+        "plane": "XY, origin O at centre",
+        "ring": {"outer_diameter": 100, "ring_width": 8.5, "inner_radius": 41.5},
+        "bars": {"width": 10, "count": 4, "centred_on_centre_lines": true},
+        "central_bars": {"angle_from_plus_y": 24, "each_side": true, "run": "across inner circle from ring to ring, centre lines through O"},
+        "outer_bars": {"left_centre_line_through": [-28.7, 0], "parallel_to": "left central bar (top end on left)", "right_mirrored_about_y_through": [28.7, 0], "run": "from ring at top down to the central bar met near the bottom, stopping at that bar's far edge, not entering the space between the central bars below O"},
+        "gap": {"strip_height": 2.5, "y_range": [-1.25, 1.25], "cut_from": "central bars only where they cross at O", "outer_bars_not_cut": true},
+        "result": "one face, ring plus bars merged, empty regions inside inner circle as holes, no thickness"
+      },
+      "inputs": []
+    }
+  ]
+}
+
+Hmm, but should I keep params as a plain structure? The instructions say params (dims in millimetres, unconverted). The format seems flexible. Let me keep it reasonably structured but not overly verbose.
+
+Actually, let me reconsider whether this should be one stage or multiple. It's one part — one face. All operations (ring, bars, gap cut, merge) belong to that one face. So one stage. Module shaper.
+
+The instruction says "Never split one part's construction across stages". So one stage it is.
+
+Should the intent mention it's a face only, no thickness? Yes.
+
+Let me write the params more carefully, keeping the user's words where possible:
+
+- "outer circle Ø100 centred on O" → outer_diameter: 100
+- "ring 8.5 wide (inner circle R41.5)" → ring_width: 8.5, inner_radius: 41.5
+- "four straight bars, each 10 wide and centred on its centre line" → bar_width: 10
+- "two central bars whose centre lines pass through O at 24° either side of the +Y axis, each running across the inner circle from ring to ring" → central bars: angle 24° either side of +Y, through O, from ring to ring
+- "two outer bars: the left one has its centre line through (-28.7, 0), parallel to the central bar whose top end is on the left; the right one mirrors it about the Y axis, through (28.7, 0). Each outer bar runs from the ring at the top down to the central bar it meets near the bottom (the W's lower points) and stops at that bar's far edge: it does not reach into the space between the two central bars below O."
+- "Gap: where the two central bars cross at O, a horizontal strip 2.5 high centred on the X axis (y from -1.25 to 1.25) is cut out of them; the outer bars are not cut."
+- "Everything else inside the inner circle is empty. The result is one face: ring plus bars, with the empty regions as holes."
+
+I'll structure params as a dict with these descriptions. Since the shaper specialist will handle it, giving the geometry description in params is appropriate.
+
+One consideration: the "tools" hint is only for geom stages. This is shaper, so omit tools.
+
+Final JSON with one stage.
