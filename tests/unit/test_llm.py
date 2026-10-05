@@ -1553,3 +1553,32 @@ def test_chat_hands_back_reasoning_only_when_carrying(monkeypatch):
 def test_assistant_tool_turn_carries_reasoning_when_given():
     turn = assistant_tool_turn([{"name": "mk", "args": {}, "id": "c1"}], None, "why")
     assert turn["reasoning_content"] == "why"
+
+
+def _ollama_lines(chunks, then):
+    """Ollama/OpenRouter stream the thinking under `reasoning`, not `reasoning_content`."""
+    lines = ["data: " + json.dumps({"choices": [{"delta": {"content": "", "reasoning": c}}]})
+             for c in chunks]
+    lines.append("data: " + json.dumps({"choices": [{"delta": then, "finish_reason": "tool_calls"}]}))
+    lines.append("data: [DONE]")
+    return lines
+
+
+def test_reasoning_field_is_read_like_reasoning_content(monkeypatch):
+    tc = {"tool_calls": [{"index": 0, "id": "c1", "type": "function",
+                          "function": {"name": "mk", "arguments": "{}"}}]}
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=_ollama_lines(["We need", " a box"], tc)))
+    out = LLMClient("http://x/v1", "", "auto").chat(
+        messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+    assert out["tool_call"] == "mk"
+    assert out["raw_message"]["reasoning_content"] == "We need a box"
+
+
+def test_reasoning_budget_counts_the_reasoning_field(monkeypatch):
+    from salome_agent.llm import ReasoningBudgetExceeded
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=_ollama_lines(["x" * 400] * 10, {})))
+    with pytest.raises(ReasoningBudgetExceeded):
+        LLMClient("http://x/v1", "", "auto", reasoning_budget=500).chat(
+            messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)

@@ -566,9 +566,11 @@ class LLMClient:
                     self._live_write(delta["content"], "content")
                     if prose:
                         self._stream_event(type="delta", channel="prose", text=delta["content"])
-                if delta.get("reasoning_content"):
-                    reasoning.append(delta["reasoning_content"])
-                    reasoning_chars += len(delta["reasoning_content"])
+                # `reasoning_content` (DeepSeek style) or `reasoning` (Ollama, OpenRouter)
+                thought = delta.get("reasoning_content") or delta.get("reasoning")
+                if thought:
+                    reasoning.append(thought)
+                    reasoning_chars += len(thought)
                     if (reasoning_budget and not content and not tool_frags
                             and reasoning_chars // 4 > reasoning_budget):
                         raise ReasoningBudgetExceeded(reasoning_chars // 4, reasoning_budget,
@@ -577,9 +579,8 @@ class LLMClient:
                             and time.monotonic() - t0 > reasoning_seconds):
                         raise ReasoningTimeExceeded(reasoning_seconds, reasoning_chars // 4,
                                                     "".join(reasoning))
-                    self._live_write(delta["reasoning_content"], "reasoning")
-                    self._stream_event(type="delta", channel="reasoning",
-                                       text=delta["reasoning_content"])
+                    self._live_write(thought, "reasoning")
+                    self._stream_event(type="delta", channel="reasoning", text=thought)
                 for key in _CONTINUITY_KEYS:
                     if delta.get(key):
                         msg_extra[key] = delta[key]
