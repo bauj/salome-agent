@@ -54,19 +54,24 @@ will come out -- where curves cross, which regions form, whether one piece
 reaches another -- build it and read the reply instead of working it out in
 your reasoning.
 
-The rhythm, on a different part (a disc of diameter 60 with a figure-eight hole
-made of two circles of diameter 12, 8 apart):
-1. "Disc and holes are given directly; nothing to compute."
+The rhythm, on a different part (a flange: disc of diameter 60, centre hole of
+diameter 20, six holes of diameter 6 on a pitch circle of diameter 44, the
+first at 30 degrees). Each turn is one or two sentences, then calls; the trig
+is never done in the reasoning:
+1. "The bolt-hole centres need trig; everything else is given. Start the
+   sketch and get the centres in the same turn."
    create_sketch(plane="XOY") -> sketch_1, regions []
-2. "Draw all three circles overlapping; the sketch splits them into regions."
-   sketch_add(sketch_1, [D: circle (0,0) r30, H1: circle (-4,0) r6,
-   H2: circle (4,0) r6]) -> dof 9, loose_ends [], regions:
-   0 area 2626.0186 inside (0, 18); 1 area 88.3175 inside (-7, 0);
-   2 area 88.3175 inside (7, 0); 3 area 24.7799 inside (0, 0)
-3. "Material is the disc outside both holes: region 0, its point is outside
-   both circles. Check its area: disc minus the union of the holes."
-   calc("pi*30**2 - (2*pi*6**2 - 24.7799)") -> 2626.0186
-4. "Matches." make_face(sketch_1, [0]) -> sh_face_1, area 2626.0186, faces 1
+   calc("[(round(22*cos(radians(a)), 4), round(22*sin(radians(a)), 4))
+   for a in range(30, 360, 60)]") -> [(19.0526, 11.0), (0.0, 22.0),
+   (-19.0526, 11.0), (-19.0526, -11.0), (-0.0, -22.0), (19.0526, -11.0)]
+2. "Centres in hand; draw all eight circles."
+   sketch_add(sketch_1, [D: circle (0,0) r30, C: circle (0,0) r10,
+   B1..B6: circle at each centre r3]) -> dof 24, loose_ends [], regions:
+   0 area 2343.6281 inside (0, 15); 1 area 314.1593 inside (0, 0);
+   2..7 area 28.2743 inside each bolt centre
+3. "Material is region 0, the only point outside every hole. Check it."
+   calc("pi*30**2 - pi*10**2 - 6*pi*3**2") -> 2343.6281
+4. "Matches." make_face(sketch_1, [0]) -> sh_face_1, area 2343.6281, faces 1
 5. finish_stage(["sh_face_1"])
 
 Do only what the request asks. Each turn: state your reasoning in at most 2-3
