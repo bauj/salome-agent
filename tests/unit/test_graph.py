@@ -581,3 +581,43 @@ def test_shaper_stage_routes_like_a_tool_module():
     failed = {"stage_idx": 0, "stages": {0: {"module": "shaper", "status": "failed"}}}
     assert route_after_run_stage(ok) == "advance"
     assert route_after_run_stage(failed) == "retry_gate"
+
+
+def _blocks_for(monkeypatch, plan, request):
+    from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+    captured = {}
+
+    def fake_run(self, stage_plan, llm, client, iteration_cap, *, blocks=(), **kw):
+        captured["blocks"] = blocks
+        return {"call_log": [], "result_names": ["x_1"]}
+
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
+    state = {
+        "user_request": request, "stage_idx": 0, "plan": plan,
+        "stages": {i: {"module": "geom", "status": "pending"} for i in range(len(plan))},
+        "config": {"policy": {"tool_iteration_cap": 5, "on_stage_failure": "abort"}},
+        "last_error": None,
+    }
+    graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
+                                                   "executor_client": MagicMock()}})
+    return captured["blocks"]
+
+
+def test_stage_gets_the_users_request_as_written(monkeypatch):
+    stage = {"module": "geom", "intent": "badge", "params": {}, "inputs": []}
+    blocks = _blocks_for(monkeypatch, [stage], "a badge: ring, four bars, gap cut from the central bars")
+    assert blocks[-1].endswith("\na badge: ring, four bars, gap cut from the central bars")
+    assert "Other stages" not in blocks[-1]
+
+
+def test_multi_stage_request_block_says_other_stages_build_the_rest(monkeypatch):
+    stage = {"module": "geom", "intent": "part", "params": {}, "inputs": []}
+    blocks = _blocks_for(monkeypatch, [stage, dict(stage)], "a table and a chair")
+    assert "Other stages build the rest" in blocks[-1]
+
+
+def test_no_request_block_without_a_request(monkeypatch):
+    stage = {"module": "geom", "intent": "box", "params": {}, "inputs": []}
+    assert _blocks_for(monkeypatch, [stage], "  ") == ()
