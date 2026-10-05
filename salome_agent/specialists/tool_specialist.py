@@ -274,8 +274,9 @@ class ToolSpecialist:
                 if cuts > (llm.loop_retries if loop else 1):
                     log.warning("  %s stage: %s, cut %d in a row; giving up", spec.name, e, cuts)
                     what = "looped" if loop else "reasoning budget exceeded"
-                    return _with_calls(spec.on_exhausted(
-                        call_log, f"stage ended: {what} {cuts} times in a row ({e})"), calls)
+                    return _with_calls(spec.on_exhausted(call_log, {
+                        "phase": "llm",
+                        "message": f"stage ended: {what} {cuts} times in a row ({e})"}), calls)
                 log.warning("  %s stage: %s%s; nudging it to act", spec.name, e,
                             " (ends in a loop)" if loop and not isinstance(
                                 e, RepetitionLoopDetected) else "")
