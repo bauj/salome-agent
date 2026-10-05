@@ -11,7 +11,7 @@ REQUIRED = [("llm", "base_url"), ("llm", "model")]
 LLM_KNOWN_KEYS = {
     "base_url", "api_key", "ssl_cert_file", "model", "temperature", "timeout",
     "json_retries", "max_retries", "extra_headers", "extra_body", "module_extra_body",
-    "vision_fix_retries", "modules", "reasoning_budget", "carry_reasoning",
+    "vision_fix_retries", "modules", "reasoning_budget", "carry_reasoning", "loop_retries",
 }
 
 # llm.modules.<module> keys: each one replaces the shared llm value of the same

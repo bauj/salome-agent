@@ -306,7 +306,7 @@ class LLMClient:
                  extra_body: dict | None = None, json_retries: int = 2,
                  module_extra_body: dict | None = None, max_retries: int = 2,
                  modules: dict | None = None, reasoning_budget: int = 0,
-                 carry_reasoning: bool = False):
+                 carry_reasoning: bool = False, loop_retries: int = 3):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -344,6 +344,9 @@ class LLMClient:
         # "reasoning" key) so the loop can keep it in history and the model
         # resumes its own thinking after a tool result instead of starting over.
         self.carry_reasoning = carry_reasoning
+        # a call cut for looping is re-asked without the loop this many times
+        # in a row before the stage (or the plan) gives up
+        self.loop_retries = loop_retries
         # modules: {"<module>": {<config.MODULE_LLM_KEYS subset>}} — that module's calls
         # go to its own endpoint/model (e.g. a better drawing reader for vision);
         # keys left out keep the shared value. Its extra_body, when given, wins
