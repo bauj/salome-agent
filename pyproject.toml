@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-xdist"]
 
 [project.scripts]
 salome-agent = "salome_agent.cli:main"
