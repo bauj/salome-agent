@@ -339,10 +339,11 @@ rollback itself fails. Ctrl-C cancels the turn in progress and returns to `chat>
 ## Development
 
 ```bash
-# fast unit tests (no SALOME needed)
-pytest tests/unit
+# fast unit tests (no SALOME needed), in parallel (pytest-xdist)
+pytest tests/unit -n auto
 
-# live tests — require a working SALOME install, ~15-20s startup each
+# live tests — require a working SALOME install, ~15-20s startup each;
+# keep these serial (no -n): they share one SALOME server
 pytest -m salome
 ```
 
