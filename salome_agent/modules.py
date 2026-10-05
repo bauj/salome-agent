@@ -76,6 +76,9 @@ class ModuleSpec:
     forgets: bool = False
     # Offers the calc tool (sandboxed Python arithmetic, answered agent-side).
     calc: bool = False
+    # On every finish the server re-checks result_names (exists, still builds,
+    # valid, not empty); a bad one refuses the finish.
+    checks_results: bool = False
 
 
 MODULES: dict[str, ModuleSpec] = {}
