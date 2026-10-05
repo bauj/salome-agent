@@ -3,7 +3,7 @@ ordered list of stages. Each stage has: module (geom|shaper|smesh), intent
 (short description of the job for that stage), params (dims in millimetres,
 unconverted), inputs (a plain-words list of what this stage needs from earlier ones), and
 -- for a geom stage -- an optional "tools" list naming the geom tool names you expect
-that stage to use (from the catalogue below; names only, e.g.
+that stage to use (from the geom catalogue below; names only, e.g.
 ["make_box", "translate", "set_color"]). The "tools" list is a hint that
 narrows what the geom specialist is offered; omit it if unsure. Respond as
 JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
@@ -56,7 +56,9 @@ Module scope:
   "make it red", "colour the shape blue", "50% transparent" are geom.
 - shaper: parametric sketches with constraints, and faces and solids built from them (extrude, pocket, boss, revolve).
   Use shaper only when the request names it or asks for a constrained or
-  parametric sketch; all other CAD geometry stays geom.
+  parametric sketch; all other CAD geometry stays geom. A shaper stage builds
+  the whole part on its own, a flat face included (make_face): never add a geom
+  stage to finish a shaper part.
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
 
 A module the request names ("in shaper", "using GEOM", "with SMESH")
@@ -125,3 +127,16 @@ geom tools available to a single geom stage:
   get_subshapes -- Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = "all", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state). on_plane with state "on" returns only subshapes lying in that plane -- e.g. the rim circle of a revolved shape, not the seam edges running along its profile.
   min_distance -- Report the shortest distance (mm) between two published shapes.
   basic_properties -- Report [length, area, volume] of `shape` (mm): length for an edge/wire, area for a face/shell, volume for a solid; the others are 0.
+
+shaper tools available to a single shaper stage:
+  create_sketch -- new sketch on XOY / XOZ / YOZ or a plane offset from one
+  sketch_add -- lines, circles, arcs, points (construction lines too)
+  sketch_constrain -- dimensions and relations: length, radius, distance, angle, coincident, tangent, ...
+  sketch_remove -- remove entities or constraints from a sketch
+  sketch_status -- solved coordinates, dof, open ends and closed regions of a sketch
+  make_face -- flat face from closed regions of a sketch, holes left out; a face can be the final result
+  extrude -- solid from a face or sketch
+  extrude_cut -- pocket: extrude and cut from a solid
+  extrude_fuse -- boss: extrude and fuse onto a solid
+  revolve -- solid of revolution from a face or sketch
+  measure -- area, volume, face count, validity of shaper objects
