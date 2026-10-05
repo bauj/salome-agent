@@ -414,3 +414,13 @@ def test_vision_reasoning_has_its_own_source_with_or_without_a_plan():
     m.events("plan", {"plan": PLAN})
     d = m.reasoning("vision", 2, "reasoning", "x")["data"]
     assert (d["source"], d["index"]) == ("vision", None)
+
+
+def test_a_stage_given_up_after_loops_emits_a_failed_attempt():
+    m = EventMapper("r1", "/w/r1")
+    m.events("plan", {"plan": PLAN, "stages": {}, "stage_idx": 0})
+    evs = m.events("run_stage", {"last_error": {
+        "phase": "llm", "message": "stage ended: looped 4 times in a row"}})
+    attempt = [e for e in evs if e["kind"] == "stage_attempt"][0]["data"]
+    assert attempt["phase"] == "llm" and attempt["ok"] is False
+    assert "looped" in attempt["error"]

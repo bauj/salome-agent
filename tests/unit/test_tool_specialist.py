@@ -292,7 +292,7 @@ def test_second_overrun_in_a_row_ends_the_stage():
                             ReasoningBudgetExceeded(22000, 20000)]
     result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=5)
     assert result["exhausted"] is True
-    assert "reasoning budget" in result["last_error"]
+    assert "reasoning budget" in result["last_error"]["message"]
     assert llm.chat.call_count == 2
 
 
@@ -338,7 +338,8 @@ def test_loops_are_re_asked_up_to_loop_retries_then_the_stage_ends():
     llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2800, "x", "y y y.")] * 3
     result = ToolSpecialist(_spec()).run({"module": "toy"}, llm, MagicMock(), iteration_cap=9)
     assert result["exhausted"] is True
-    assert "looped" in result["last_error"]
+    assert result["last_error"]["phase"] == "llm"
+    assert "looped" in result["last_error"]["message"]
     assert llm.chat.call_count == 3
 
 
