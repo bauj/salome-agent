@@ -210,7 +210,27 @@ def test_named_module_is_told_to_the_planner():
     llm.chat.return_value = {"stages": []}
     plan("a gasket in shaper", llm)
     system = llm.chat.call_args.kwargs["messages"][0]["content"]
-    assert system.endswith('every CAD geometry stage uses module "shaper".')
+    assert 'every CAD geometry stage uses module "shaper".' in system
+
+
+def test_a_named_shaper_request_is_told_it_may_split_a_part():
+    from salome_agent.nodes.planner import _SHAPER_SPLIT
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("In shaper: a ring with four bars", llm)
+    system = llm.chat.call_args.kwargs["messages"][0]["content"]
+    assert system.endswith(_SHAPER_SPLIT)
+
+
+def test_only_a_named_shaper_request_is_told_it_may_split_a_part():
+    from salome_agent.nodes.planner import _SHAPER_SPLIT
+    for request in ("a box using geom", "a box"):
+        llm = MagicMock()
+        llm.chat.return_value = {"stages": []}
+        plan(request, llm)
+        system = llm.chat.call_args.kwargs["messages"][0]["content"]
+        assert _SHAPER_SPLIT not in system
+        assert "distinct pieces" not in system
 
 
 def test_named_module_moves_cad_stages_and_keeps_smesh():
