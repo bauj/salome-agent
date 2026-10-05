@@ -96,6 +96,11 @@ def test_normalize_plan_rejects_bad_shapes():
     assert normalize_plan(["geom"]) is None
 
 
+def test_normalize_plan_accepts_every_routable_module():
+    out = normalize_plan([{"module": "shaper"}, {"module": "smesh"}])
+    assert [s["module"] for s in out] == ["shaper", "smesh"]
+
+
 def test_terminal_gate_routes_plan_payload():
     d = terminal_gate({"plan": []}, read=_reader(["y"]), stream=io.StringIO())
     assert d == {"action": "approve"}
