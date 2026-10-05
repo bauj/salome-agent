@@ -936,11 +936,58 @@ def test_stream_error_frame_raises(monkeypatch):
         'data: {"error": {"message": "context length exceeded", "code": 400}}',
         "data: [DONE]",
     ]
-    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    posts = []
+
+    def post(*a, **k):
+        posts.append(1)
+        return _sse_post(lines)(*a, **k)
+
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
     with pytest.raises(RuntimeError, match="error frame"):
         LLMClient("http://x/v1", "", "auto").chat(
             messages=[{"role": "user", "content": "x"}],
             tools=[{"name": "mk", "parameters": {"type": "object"}}])
+    assert len(posts) == 1  # a 4xx error frame is not retried
+
+
+_DONE_OK = ['data: {"choices": [{"delta": {"content": "{}"}, "finish_reason": "stop"}]}',
+            "data: [DONE]"]
+
+
+@pytest.mark.parametrize("error", [
+    {"message": "Upstream provider stream ended before its completion event.",
+     "type": "server_error", "code": "incomplete_stream", "status": 503},
+    {"message": "Internal Server Error (ref: x)", "type": "api_error", "param": None, "code": None},
+    {"message": "rate limited", "code": 429},
+])
+def test_a_transient_error_frame_is_retried(monkeypatch, error):
+    broken = ['data: {"choices": [{"delta": {"reasoning_content": "thinking"}}]}',
+              "data: " + json.dumps({"error": error})]
+    replies = iter([broken, _DONE_OK])
+    monkeypatch.setattr("salome_agent.llm._backoff_seconds", lambda attempt: 0)
+    monkeypatch.setattr("salome_agent.llm.requests.post",
+                        lambda *a, **k: _FakeResp(None, lines=next(replies)))
+    out = LLMClient("http://x/v1", "", "auto").chat(messages=[{"role": "user", "content": "x"}])
+    assert out == {}
+
+
+def test_a_transient_error_frame_past_max_retries_is_a_clean_fatal(monkeypatch):
+    from salome_agent.graph import _llm_endpoint_fatal
+    broken = ["data: " + json.dumps({"error": {"message": "boom", "status": 503}})]
+    posts = []
+
+    def post(*a, **k):
+        posts.append(1)
+        return _FakeResp(None, lines=broken)
+
+    monkeypatch.setattr("salome_agent.llm._backoff_seconds", lambda attempt: 0)
+    monkeypatch.setattr("salome_agent.llm.requests.post", post)
+    with pytest.raises(Exception) as e:
+        LLMClient("http://x/v1", "", "auto", max_retries=2).chat(
+            messages=[{"role": "user", "content": "x"}])
+    assert len(posts) == 3
+    msg = _llm_endpoint_fatal(e.value)
+    assert "error frame" in msg and "boom" in msg
 
 
 def test_stream_empty_without_finish_reason_is_retried(monkeypatch):
