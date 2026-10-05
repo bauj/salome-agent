@@ -60,3 +60,9 @@ def test_finish_returns_result_names_and_call_log():
     log = [_rec("sketch_1")]
     out = spec_for("shaper").terminator.handle({"result_names": ["sketch_1"]}, log)
     assert out == {"result_names": ["sketch_1"], "call_log": log}
+
+
+def test_prompt_offers_both_routes_for_a_part_in_pieces():
+    from salome_agent.specialists.shaper import SHAPER_SYSTEM_PROMPT
+    assert "make_face on the regions" in SHAPER_SYSTEM_PROMPT
+    assert "fuse, cut and common" in SHAPER_SYSTEM_PROMPT

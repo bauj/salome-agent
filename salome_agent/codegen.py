@@ -115,8 +115,10 @@ def generate(call_log: list[dict], result_names: list[str],
                     lines.append(publish_line.format(var=var, name=name))
         elif emit == "stmt":
             lines.append(call["code"])
-            for var, name in zip(call["out_vars"], call.get("publish") or []):
-                lines.append(publish_line.format(var=var, name=name))
+            # `publish` names the vars to publish, under their own name, as
+            # the live side does — not a list paired with out_vars
+            for var in call.get("publish") or []:
+                lines.append(publish_line.format(var=var, name=var))
         elif emit == "method_call":
             recv = call.get("recv")
             lines.append(f"{recv}.{call['fn']}({args_src})")
