@@ -1,7 +1,7 @@
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
-    feature_shape, measure, new_name, publish_study, record, sketch_of, state, tool,
-    transaction,
+    PUBLISH_LINE, feature_shape, measure, new_name, publish_study, record, sketch_of, state,
+    tool, transaction,
 )
 
 _AXES = ("OX", "OY", "OZ")
@@ -44,12 +44,15 @@ def _direction(direction) -> str:
     return f'model.selection("EDGE", "PartSet/{direction}")'
 
 
-def _build(executor, name: str, fn: str, code: str, refs: list, kind: str) -> dict:
-    """Create one feature from `code`; on a SHAPER error remove it again and fail."""
+def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
+           helpers: tuple = ()) -> dict:
+    """Create one feature from `code`; on a SHAPER error remove it again and fail.
+    `helpers` are features `code` makes before `name`, named `<name>_...`."""
     st = state(executor)
     # Recompute first: a selection by name is resolved when the feature is
     # created, and result.py runs the whole history in one transaction.
-    rec = record(fn, "model.do()\n" + code, out=[name], refs=refs, publish=True)
+    rec = record(fn, "model.do()\n" + code, out=[*helpers, name], refs=refs, publish=True)
+    rec["publish"] = [name]
     try:
         exec_records(st, [rec])
         feat = st.ns[name].feature()
@@ -59,9 +62,10 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str) -> di
     except Exception as e:  # noqa: BLE001
         err = str(e) or type(e).__name__
     if err:
-        if name in st.ns:
-            with transaction():
-                st.ns["shaper_doc"].removeFeature(st.ns.pop(name).feature())
+        with transaction():
+            for var in (name, *reversed(helpers)):
+                if var in st.ns:
+                    st.ns["shaper_doc"].removeFeature(st.ns.pop(var).feature())
         return {"ok": False, "error": f"{fn}: {err}"}
     st.objects[name] = kind
     publish_study(executor)
@@ -87,7 +91,8 @@ def _size(args: dict) -> tuple:
       description=(
           "Make faces from closed regions of a sketch: `regions` is a list of region "
           "indices from the sketch's latest reply (indices change when the sketch is "
-          "edited), or \"all\". One face per region."),
+          "edited), or \"all\". Several regions are merged into one face where they "
+          "touch, so the regions of overlapping shapes give one outline."),
       schema={"type": "object", "properties": {
           "sketch": {"type": "string"},
           "regions": {"anyOf": [{"type": "array", "items": {"type": "integer"}},
@@ -99,11 +104,12 @@ def tool_make_face(executor, args: dict):
     sk = sketch_of(executor, args.get("sketch"))
     regions = args.get("regions")
     name = new_name(executor, "sh_face")
+    res = sk.api.feature().firstResult()
+    n = ModelAPI.modelAPI_ResultConstruction(res).facesNum() if res is not None else 0
     if regions == "all":
         sels = [f'model.selection("COMPOUND", "all-in-{sk.name}")']
+        count = n
     else:
-        res = sk.api.feature().firstResult()
-        n = ModelAPI.modelAPI_ResultConstruction(res).facesNum() if res is not None else 0
         if not isinstance(regions, list) or not regions:
             raise ValueError("regions must be a non-empty list of indices or \"all\"")
         bad = [i for i in regions if not isinstance(i, int) or not 0 <= i < n]
@@ -111,8 +117,19 @@ def tool_make_face(executor, args: dict):
             raise ValueError(f"no region {bad} in {sk.name} — it has regions "
                              f"0..{n - 1}" if n else f"{sk.name} has no closed region")
         sels = [f'model.selection("FACE", {nm!r})' for nm in _region_names(st, sk, regions)]
-    code = f"{name} = model.addFace(shaper_doc, [{', '.join(sels)}])"
-    return _build(executor, name, "addFace", code, [sk.name], "face")
+        count = len(regions)
+    if count < 2:
+        code = f"{name} = model.addFace(shaper_doc, [{', '.join(sels)}])"
+        return _build(executor, name, "addFace", code, [sk.name], "face")
+    # One face per region, then fused with the shared edges removed: one face
+    # per connected group of regions.
+    parts = f"{name}_regions"
+    names = [parts] + [f"{parts}_{i}" for i in range(2, count + 1)]
+    code = (f"{parts} = model.addFace(shaper_doc, [{', '.join(sels)}])\n"
+            + PUBLISH_LINE.format(var=parts, name=parts) + "\nmodel.do()\n"
+            + f"{name} = model.addFuse(shaper_doc, ["
+            + ", ".join(f'model.selection("FACE", {nm!r})' for nm in names) + "], True)")
+    return _build(executor, name, "addFace", code, [sk.name], "face", helpers=(parts,))
 
 
 def _region_names(st, sk, regions: list) -> list:
