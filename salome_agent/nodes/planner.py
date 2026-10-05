@@ -114,6 +114,24 @@ _DETAIL_HINT = {
 }
 
 
+# Told only when the request names SHAPER: GEOM keeps "never split one part".
+_SHAPER_SPLIT = """
+
+When the request describes one SHAPER part as several distinct pieces (a ring
+and bars, a plate and its ribs), build it in stages: one stage per piece or
+group of alike pieces, then a final stage that combines them (fuse, cut or
+common) into the one result. For SHAPER this replaces "never split one part's
+construction": a later SHAPER stage is given the earlier stages' results by
+name. Each piece stage leaves its piece as its own result, fused to nothing;
+only the final stage fuses, cuts or commons the pieces together. A piece stage
+may look at an earlier piece to find where it stops, but does not fuse onto it.
+Write each piece stage's intent as a complete brief: the piece's own
+measurements, where it may run into another piece (bar ends may overlap into
+the ring), where it must stop (never past the outer circle), and which pieces
+it does not build. A cut-out that belongs to one piece goes in that piece's
+stage. A part with one outline, such as a plate with holes, stays one stage."""
+
+
 def blank_stages(stage_plans: list[dict]) -> dict:
     return {
         i: {"module": p["module"], "status": "pending", "script": None,
@@ -129,6 +147,8 @@ def plan(request: str, llm, detail: str = "balanced",
     if pinned:
         system += (f"\n\nThe request names {pinned.upper()}: every CAD geometry stage "
                    f'uses module "{pinned}".')
+        if pinned == "shaper":
+            system += _SHAPER_SPLIT
     if image_spec:
         request = f"{request}\n\n{compact_spec(image_spec)}"
     messages = [{"role": "system", "content": system},

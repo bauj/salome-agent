@@ -87,6 +87,22 @@ def test_upstream_block_names_and_measures_earlier_results():
     assert lines[3] == "  box_1"
 
 
+def test_upstream_block_leaves_out_results_a_later_boolean_used_up():
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": True, "measurements": {
+        "face_1": {"area": 1.0, "faces": 1, "concealed": True},
+        "fuse_1": {"area": 2.0, "faces": 1}}}
+    lines = spec_for("shaper").render_upstream(client, ["face_1", "fuse_1"]).splitlines()
+    assert [l.split(" — ")[0] for l in lines[1:]] == ["  fuse_1"]
+
+
+def test_upstream_block_is_dropped_when_every_result_is_used_up():
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": True, "measurements": {
+        "face_1": {"area": 1.0, "faces": 1, "concealed": True}}}
+    assert spec_for("shaper").render_upstream(client, ["face_1"]) is None
+
+
 def test_upstream_block_names_alone_when_measure_fails():
     client = MagicMock()
     client.call_tool.side_effect = RuntimeError("down")
