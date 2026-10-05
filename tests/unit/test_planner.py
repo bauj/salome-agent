@@ -182,3 +182,53 @@ def test_a_planner_answering_within_loop_retries_is_kept():
     llm.chat.side_effect = [RepetitionLoopDetected("reasoning", 2400, "x", "y y y.")] * 2 + [
         {"stages": stages}]
     assert plan("a badge", llm) == stages
+
+
+def test_planner_prompt_lists_shaper_tool_catalogue():
+    assert "shaper tools available to a single shaper stage" in PLANNER_SYSTEM_PROMPT
+    assert "make_face -- flat face" in PLANNER_SYSTEM_PROMPT
+
+
+def test_shaper_planner_lines_cover_every_shaper_tool():
+    import executor.shaper
+    from salome_agent.specialists.shaper import PLANNER_TOOL_LINES
+    assert set(PLANNER_TOOL_LINES) == {t["name"] for t in executor.shaper.list_tools()}
+
+
+def test_named_cad_module():
+    from salome_agent.nodes.planner import named_cad_module
+    assert named_cad_module("draw the gasket in SHAPER") == "shaper"
+    assert named_cad_module("a plate using the shaper module") == "shaper"
+    assert named_cad_module("a box with GEOM") == "geom"
+    assert named_cad_module("a box with a hole") is None
+    assert named_cad_module("sketch in shaper, then fillet using geom") is None
+    assert named_cad_module("mesh it with smesh") is None
+
+
+def test_named_module_is_told_to_the_planner():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("a gasket in shaper", llm)
+    system = llm.chat.call_args.kwargs["messages"][0]["content"]
+    assert system.endswith("every CAD geometry stage uses module shaper.")
+
+
+def test_named_module_moves_cad_stages_and_keeps_smesh():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": [
+        {"module": "shaper", "intent": "sketch", "params": {}, "inputs": []},
+        {"module": "geom", "intent": "face", "params": {}, "inputs": [],
+         "tools": ["make_profile_face"]},
+        {"module": "smesh", "intent": "mesh", "params": {}, "inputs": []},
+    ]}
+    stages = plan("a gasket in shaper, then mesh it", llm)
+    assert [s["module"] for s in stages] == ["shaper", "shaper", "smesh"]
+    assert "tools" not in stages[1]
+
+
+def test_no_named_module_leaves_routing_alone():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": [
+        {"module": "geom", "intent": "box", "params": {}, "inputs": [], "tools": ["make_box"]}]}
+    stages = plan("a box", llm)
+    assert stages[0]["module"] == "geom" and stages[0]["tools"] == ["make_box"]

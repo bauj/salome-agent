@@ -1,4 +1,5 @@
 import json
+import re
 
 from salome_agent.llm import RepetitionLoopDetected
 from salome_agent.logs import log
@@ -12,7 +13,7 @@ ordered list of stages. Each stage has: module (geom|shaper|smesh), intent
 (short description of the job for that stage), params (dims in millimetres,
 unconverted), inputs (a plain-words list of what this stage needs from earlier ones), and
 -- for a geom stage -- an optional "tools" list naming the geom tool names you expect
-that stage to use (from the catalogue below; names only, e.g.
+that stage to use (from the geom catalogue below; names only, e.g.
 ["make_box", "translate", "set_color"]). The "tools" list is a hint that
 narrows what the geom specialist is offered; omit it if unsure. Respond as
 JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
@@ -65,7 +66,9 @@ Module scope:
   "make it red", "colour the shape blue", "50% transparent" are geom.
 - shaper: parametric sketches with constraints, and faces and solids built from them (extrude, pocket, boss, revolve).
   Use shaper only when the request names it or asks for a constrained or
-  parametric sketch; all other CAD geometry stays geom.
+  parametric sketch; all other CAD geometry stays geom. A shaper stage builds
+  the whole part on its own, a flat face included (make_face): never add a geom
+  stage to finish a shaper part.
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
 
 A module the request names ("in shaper", "using GEOM", "with SMESH")
@@ -84,7 +87,20 @@ params rather than inventing detail."""
 # The smesh one-liner stays in _PLANNER_BASE (not restructured); it also
 # appears in its spec.catalogue string so routable() includes it.
 # Do NOT move that line out — the prompt's byte-identity depends on it.
-PLANNER_SYSTEM_PROMPT = _PLANNER_BASE + "\n\n" + spec_for("geom").catalogue
+PLANNER_SYSTEM_PROMPT = (_PLANNER_BASE + "\n\n" + spec_for("geom").catalogue
+                         + "\n\n" + spec_for("shaper").catalogue)
+
+# A CAD module the request names is pinned: the planner is told, and any CAD
+# stage it still routes elsewhere is moved there.
+_CAD = ("geom", "shaper")
+_NAMED_MODULE = re.compile(
+    r"\b(?:in|using|with|via)\s+(?:the\s+)?(geom|shaper)\b|\b(geom|shaper)\s+module\b",
+    re.IGNORECASE)
+
+
+def named_cad_module(request: str) -> str | None:
+    named = {(a or b).lower() for a, b in _NAMED_MODULE.findall(request)}
+    return named.pop() if len(named) == 1 else None
 
 _DETAIL_HINT = {
     "coarse": "\n\nPrefer the fewest stages: keep an assembly's parts in one "
@@ -108,6 +124,10 @@ def blank_stages(stage_plans: list[dict]) -> dict:
 def plan(request: str, llm, detail: str = "balanced",
          image_spec: dict | None = None) -> list[dict]:
     system = PLANNER_SYSTEM_PROMPT + _DETAIL_HINT.get(detail, "")
+    pinned = named_cad_module(request)
+    if pinned:
+        system += (f"\n\nThe request names {pinned}: every CAD geometry stage uses "
+                   f"module {pinned}.")
     if image_spec:
         request = f"{request}\n\n{compact_spec(image_spec)}"
     messages = [{"role": "system", "content": system},
@@ -115,6 +135,18 @@ def plan(request: str, llm, detail: str = "balanced",
     stages = _ask(llm, messages)
     if image_spec:
         stages = _check_parts(stages, image_spec, llm, messages)
+    if pinned:
+        stages = _pin(stages, pinned)
+    return stages
+
+
+def _pin(stages: list[dict], module: str) -> list[dict]:
+    for i, s in enumerate(stages, 1):
+        if s.get("module") in _CAD and s["module"] != module:
+            log.warning("planner routed stage %d to %s; the request names %s",
+                        i, s["module"], module)
+            s["module"] = module
+            s.pop("tools", None)
     return stages
 
 
