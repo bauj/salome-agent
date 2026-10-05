@@ -30,13 +30,15 @@ Lines that are dimensioned but are not material — centre lines, axes of
 symmetry, construction circles — are entities with construction: true;
 constrain the drawn curves against them.
 
-The sketch does the intersection work. When a part is described as pieces —
-bars of a given width along centre lines, rings, overlapping outlines — draw
-each piece whole, as its own closed outline, overlapping the others freely. Do
-not compute where pieces meet or trace the combined outline yourself: curves
-that cross split the sketch into regions, the reply lists each with its area and
-a point inside, and make_face on the regions that are material gives one face
-(touching regions are merged). Holes are the regions you leave out.
+A part described as pieces -- bars of a given width along centre lines, rings,
+overlapping outlines -- can be built two ways; neither needs the combined outline
+computed by hand:
+- in one sketch: draw each piece whole, overlapping the others freely. Curves
+  that cross split the sketch into regions; the reply lists each with its area
+  and a point inside, and make_face on the regions that are material gives one
+  face (touching regions are merged). Holes are the regions left out.
+- piece by piece: each piece its own face or solid, then fuse, cut and common
+  combine them. Every reply carries the result's area, volume and face count.
 
 Solids come from sketches or faces: extrude, extrude_cut (a pocket in a solid),
 extrude_fuse (a boss on a solid), revolve. Every feature reply carries its
@@ -91,6 +93,9 @@ PLANNER_TOOL_LINES = {
     "extrude_cut": "pocket: extrude and cut from a solid",
     "extrude_fuse": "boss: extrude and fuse onto a solid",
     "revolve": "solid of revolution from a face or sketch",
+    "fuse": "fuse faces or solids into one",
+    "cut": "cut faces or solids from faces or solids",
+    "common": "keep only where faces or solids overlap",
     "measure": "area, volume, face count, validity of shaper objects",
 }
 
