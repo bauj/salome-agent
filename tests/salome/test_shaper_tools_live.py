@@ -412,3 +412,50 @@ def test_region_names_use_only_published_entity_names(agent_client):
     assert face["ok"] is True, face.get("error")
     code = "\n".join(rec["code"] for rec in face["records"])
     assert "SketchLine_" not in code and "SketchCircle_" not in code, code
+
+
+def test_result_py_selects_a_merged_face_by_its_name(agent_client, tmp_path):
+    # make_face on several regions publishes a fuse made after a helper face;
+    # result.py must give the name to the fuse, or a later selection by that
+    # name lands on the helper, which the fuse has consumed
+    import re
+    import subprocess
+
+    from salome_agent.nodes.assembler import assemble
+
+    from .conftest import _salome_subprocess_env
+
+    calls = []
+
+    def call(name, **args):
+        r = _call(agent_client, name, **args)
+        assert r["ok"] is True, r.get("error")
+        calls.append({"tool": name, "tool_args": args, "records": r["records"]})
+        return r
+
+    sk = call("create_sketch", plane="XOY")["sketch"]
+    r = call("sketch_add", sketch=sk,
+             entities=_rect("H", -20, -5, 20, 5) + _rect("V", -5, -20, 5, 20))
+    plus = call("make_face", sketch=sk, regions=[g["index"] for g in r["regions"]])["name"]
+    sk2 = call("create_sketch", plane="XOY")["sketch"]
+    call("sketch_add", sketch=sk2, entities=_rect("R", 15, -2, 30, 2))
+    bar = call("make_face", sketch=sk2, regions="all")["name"]
+    both = call("fuse", objects=[plus, bar])
+    assert both["measure"]["area"] == pytest.approx(700 + 40, abs=1e-6)
+
+    log = [rec for c in calls for rec in c["records"]]
+    script = assemble({"stages": {0: {"module": "shaper", "status": "ok", "script": None,
+                                      "result_names": [both["name"]], "call_log": log,
+                                      "calls": calls}},
+                       "run_id": "t", "user_request": "plus", "plan": []})
+    script += ("from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as _T\n"
+               f"_r = {both['name']}.feature().results()\n"
+               "print('AREA', _T.area(_r[0].shape()), 'RESULTS', len(_r))\n")
+    path = tmp_path / "result.py"
+    path.write_text(script)
+    out = subprocess.run([f"{SALOME_ROOT}/salome", "shell", "--", "python3", str(path)],
+                         env=_salome_subprocess_env(), capture_output=True, text=True,
+                         timeout=240)
+    m = re.search(r"AREA ([0-9.eE+-]+) RESULTS (\d+)", out.stdout)
+    assert m, out.stdout[-2000:] + out.stderr[-2000:]
+    assert float(m.group(1)) == pytest.approx(740, abs=1e-6)
