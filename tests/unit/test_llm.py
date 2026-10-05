@@ -1697,3 +1697,24 @@ def test_long_healthy_reasoning_is_not_cut(monkeypatch):
 def test_loop_retries_defaults_to_three():
     assert LLMClient("http://x/v1", "", "auto").loop_retries == 3
     assert LLMClient("http://x/v1", "", "auto", loop_retries=5).loop_retries == 5
+
+
+def test_carried_reasoning_goes_back_under_the_field_it_came_in(monkeypatch):
+    tc = {"tool_calls": [{"index": 0, "id": "c1", "type": "function",
+                          "function": {"name": "mk", "arguments": "{}"}}]}
+    for lines, field in ((_ollama_lines(["We need", " a box"], tc), "reasoning"),
+                         (_reasoning_lines(["We need", " a box"], then=tc), "reasoning_content")):
+        monkeypatch.setattr("salome_agent.llm.requests.post",
+                            lambda *a, _l=lines, **k: _FakeResp(None, lines=_l))
+        out = LLMClient("http://x/v1", "", "auto", carry_reasoning=True).chat(
+            messages=[{"role": "user", "content": "x"}], tools=_MK_TOOL)
+        turn = assistant_tool_turn(out["tool_calls"], out["raw_message"], out["reasoning"])
+        assert turn[field] == "We need a box"
+        other = {"reasoning", "reasoning_content"} - {field}
+        assert not other & set(turn)
+        assert not any(k.startswith("_") for k in turn)
+
+
+def test_assistant_tool_turn_defaults_to_reasoning_content():
+    turn = assistant_tool_turn([{"name": "mk", "args": {}, "id": "c1"}], None, "thought")
+    assert turn["reasoning_content"] == "thought"

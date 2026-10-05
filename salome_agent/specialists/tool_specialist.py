@@ -4,7 +4,7 @@ from salome_agent.calc import CALC_DEF, run_calc
 from salome_agent.codegen import _reachable, _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.llm import (LLMCancelled, ReasoningBudgetExceeded, RepetitionLoopDetected,
-                              assistant_tool_turn, continuity_fields)
+                              assistant_tool_turn, continuity_fields, reasoning_field)
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec
 from salome_agent.repetition import loop_at_end, loop_nudge
@@ -302,8 +302,8 @@ class ToolSpecialist:
                 # Keep its message, nudge it, and let the loop try again.
                 messages.append({"role": "assistant", "content": response["content"] or "(no reply)",
                                  **continuity_fields(response.get("raw_message")),
-                                 **({"reasoning_content": response["reasoning"]}
-                                    if response.get("reasoning") else {})})
+                                 **reasoning_field(response.get("reasoning"),
+                                                   response.get("raw_message"))})
                 messages.append({"role": "user", "content": spec.no_tool_nudge})
                 continue
             # The assistant's own tool-call turn must be echoed back before any
