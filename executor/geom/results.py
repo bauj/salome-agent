@@ -215,3 +215,31 @@ def _select_subshapes(geompy, shape, type_code: int, where) -> list:
             shape, type_code, nrm, pnt, st))
         return [p for p in pairs if p[0] in sel_ids]
     raise ValueError(f"unknown where {where!r}")
+
+
+def shape_status(geompy, shape) -> dict:
+    """Whether a finished result holds up: invalid, empty, or ok. A check that
+    cannot run says ok -- it must never block a stage on its own."""
+    from executor.geom.helpers import _check_shape
+    try:
+        valid, msg = _check_shape(geompy, shape)
+        if not valid:
+            first = (msg or "").strip().splitlines()
+            return {"status": "invalid", "detail": first[0] if first else "check_shape failed"}
+        vertices = geompy.NumberOfSubShapes(shape, geompy.ShapeType["VERTEX"])
+        if geompy.NumberOfEdges(shape) == 0 and vertices == 0:
+            return {"status": "empty", "detail": "it holds no geometry"}
+        if geompy.NumberOfFaces(shape) > 0 and geompy.BasicProperties(shape)[1] <= 1e-9:
+            return {"status": "empty", "detail": "its faces have zero area"}
+    except Exception:  # noqa: BLE001
+        pass
+    return {"status": "ok"}
+
+
+def check_results(executor, names: list) -> dict:
+    geompy = executor.namespace["geompy"]
+    out = {}
+    for name in names:
+        shape = executor.geom_bindings.get(name)
+        out[name] = {"status": "missing"} if shape is None else shape_status(geompy, shape)
+    return out

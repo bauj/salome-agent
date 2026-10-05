@@ -376,3 +376,25 @@ def measure(executor, name: str, shape=None) -> dict:
     if not valid:
         info["check"] = msg
     return info
+
+
+def check_results(executor, names: list) -> dict:
+    """finish_stage's re-check: a feature whose inputs changed after it was
+    made (a sketch edited under a face) no longer builds."""
+    from executor.geom.results import shape_status
+    st = state(executor)
+    out = {}
+    for name in names:
+        if name in st.sketches:
+            out[name] = {"status": "skip"}
+        elif name not in st.objects or name not in st.ns:
+            out[name] = {"status": "missing"}
+        else:
+            feat = st.ns[name].feature()
+            err = feat.error()
+            if err or not any(r.shape() is not None for r in feat.results()):
+                out[name] = {"status": "broken", "detail": err or "it has no result"}
+            else:
+                out[name] = shape_status(executor.namespace["geompy"],
+                                         feature_shape(executor, name))
+    return out

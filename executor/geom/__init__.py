@@ -6,7 +6,7 @@ from executor.geom.helpers import (  # noqa: F401
 )
 from executor.geom.hints import key_error_message, with_hint
 from executor.geom.results import (  # noqa: F401
-    _attach_shape_info, _delta_note, _select_subshapes,
+    _attach_shape_info, _delta_note, _select_subshapes, check_results,
 )
 from executor.geom.primitives import (  # noqa: F401
     tool_make_box, tool_make_box_two_pnt, tool_make_cylinder, tool_make_sphere,

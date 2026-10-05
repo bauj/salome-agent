@@ -104,6 +104,9 @@ class ExecutorClient:
     def forget(self, names):
         return self._call("forget", names=names)
 
+    def check_results(self, names, module="geom"):
+        return self._call("check_results", names=names, module=module)
+
     def clear_study(self):
         return self._call("clear_study")
 

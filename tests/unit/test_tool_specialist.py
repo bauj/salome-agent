@@ -473,3 +473,61 @@ def test_overrun_nudge_carries_the_cut_reasoning_tail_and_names_calc():
     assert "THE END" in nudge and "earlier part omitted" in nudge
     assert "calc" in nudge
     assert len(nudge) < 42_000
+
+
+def _finish_spec(**over):
+    return _spec(terminator=Terminator(
+        name="done", schema={"type": "object", "properties": {}}, description="finish",
+        handle=lambda args, call_log: {"out": args.get("result_names"), "call_log": call_log}),
+        **over)
+
+
+def _tool_contents(llm):
+    return [m["content"] for m in llm.chat.call_args.kwargs["messages"] if m["role"] == "tool"]
+
+
+def test_finish_is_refused_while_a_result_does_not_hold_up():
+    client = MagicMock()
+    client.check_results.side_effect = [
+        {"ok": True, "results": {"f1": {"status": "broken", "detail": "Objects are not selected."}}},
+        {"ok": True, "results": {"f2": {"status": "ok"}}}]
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {"result_names": ["f1"]})),
+                            _resp(("done", {"result_names": ["f2"]}))]
+    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
+        {"module": "toy"}, llm, client, iteration_cap=4)
+    assert result["out"] == ["f2"]
+    client.check_results.assert_any_call(["f1"], module="toy")
+    refusal = _tool_contents(llm)[0]
+    assert "f1 no longer builds: Objects are not selected." in refusal
+
+
+def test_each_failing_status_is_named():
+    from salome_agent.specialists.tool_specialist import _result_check_refusal
+    text = _result_check_refusal({
+        "a": {"status": "missing"}, "b": {"status": "invalid", "detail": "bad wire"},
+        "c": {"status": "empty", "detail": "zero area"}, "d": {"status": "ok"},
+        "e": {"status": "skip"}})
+    assert "a does not exist" in text
+    assert "b is not a valid shape: bad wire" in text
+    assert "c is empty: zero area" in text
+    assert " d " not in text and " e " not in text
+    assert _result_check_refusal({"d": {"status": "ok"}}) is None
+
+
+def test_no_result_check_unless_the_spec_asks():
+    client = MagicMock()
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {"result_names": ["f1"]}))]
+    ToolSpecialist(_finish_spec()).run({"module": "toy"}, llm, client, iteration_cap=2)
+    client.check_results.assert_not_called()
+
+
+def test_a_failing_result_check_lets_the_finish_through():
+    client = MagicMock()
+    client.check_results.side_effect = RuntimeError("server hiccup")
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {"result_names": "f1"}))]
+    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
+        {"module": "toy"}, llm, client, iteration_cap=2)
+    assert result["out"] == "f1"

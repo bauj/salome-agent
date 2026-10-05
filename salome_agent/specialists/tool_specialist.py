@@ -415,6 +415,14 @@ class ToolSpecialist:
 
             if finish_call is not None:
                 call_id, args, term = finish_call
+                if term is spec.terminator and spec.checks_results:
+                    refusal = _check_results(client, args, spec.name)
+                    if refusal:
+                        log.info("  %s: finish refused, a result does not hold up",
+                                 spec.terminator.name)
+                        messages.append({"role": "tool", "tool_call_id": call_id,
+                                         "content": refusal})
+                        continue
                 if term is spec.terminator and spec.gate is not None:
                     refusal = spec.gate(args, call_log, shape_infos)
                     if refusal:
@@ -460,6 +468,44 @@ class ToolSpecialist:
                     "their placement before continuing."})
                 risky_since_measure = 0
         return _with_calls(spec.on_exhausted(call_log, last_error), calls)
+
+
+def _check_results(client, args: dict, module: str) -> str | None:
+    names = args.get("result_names") or []
+    if isinstance(names, str):
+        names = [names]
+    if not names:
+        return None
+    try:
+        r = client.check_results(list(names), module=module)
+    except (SessionDied, SessionPoisoned):
+        raise
+    except Exception as e:  # noqa: BLE001 — a failed check never blocks a stage
+        log.warning("  result check failed, finish accepted: %s", e)
+        return None
+    if not r.get("ok"):
+        log.warning("  result check failed, finish accepted: %s", r.get("error"))
+        return None
+    return _result_check_refusal(r.get("results") or {})
+
+
+_CHECK_LINES = {
+    "missing": "{name} does not exist",
+    "broken": "{name} no longer builds: {detail} -- something it was built from "
+              "changed after it was made",
+    "invalid": "{name} is not a valid shape: {detail}",
+    "empty": "{name} is empty: {detail}",
+}
+
+
+def _result_check_refusal(results: dict) -> str | None:
+    lines = [f"- {_CHECK_LINES[r['status']].format(name=name, detail=r.get('detail', ''))}"
+             for name, r in results.items() if r.get("status") in _CHECK_LINES]
+    if not lines:
+        return None
+    return ("Not finished: a result does not hold up.\n" + "\n".join(lines)
+            + "\nRebuild or fix it, or leave it out of result_names, then call "
+            "finish_stage again.")
 
 
 def _sweep(client, call_log: list, calls: list, result_names: list) -> tuple[list, list]:

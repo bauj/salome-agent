@@ -52,3 +52,11 @@ def test_bad_param_returns_structured_error_not_crash(agent_client):
     assert "error" in result
     followup = agent_client.call_tool("list_study_objects", {})
     assert followup["ok"] is True
+
+
+def test_check_results_on_geom_names(agent_client):
+    box = agent_client.call_tool("make_box", {"dx": 10, "dy": 10, "dz": 10})["records"][0]["out_vars"][0]
+    r = agent_client.check_results([box, "nope"], module="geom")
+    assert r["ok"] is True, r
+    assert r["results"][box]["status"] == "ok"
+    assert r["results"]["nope"]["status"] == "missing"

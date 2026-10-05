@@ -376,6 +376,7 @@ GEOM_SPEC = register(ModuleSpec(
     render_retry=lambda retry: _retry_block(retry),
     audit=_audit_finish,
     forgets=True,
+    checks_results=True,
     calc=True,
     call_prefix="geompy.",
     preamble=_GEOM_PREAMBLE,
