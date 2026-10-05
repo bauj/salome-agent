@@ -79,8 +79,23 @@ sentences, then call one or more tools. Batch INDEPENDENT calls in one turn;
 a call that needs a name another call is about to create waits for the next
 turn."""
 
-_CATALOGUE = ("- shaper: parametric sketches with constraints, and faces and solids "
-              "built from them (extrude, pocket, boss, revolve).")
+# Planner-facing one-liners: what a shaper stage can do, not how to call it.
+PLANNER_TOOL_LINES = {
+    "create_sketch": "new sketch on XOY / XOZ / YOZ or a plane offset from one",
+    "sketch_add": "lines, circles, arcs, points (construction lines too)",
+    "sketch_constrain": "dimensions and relations: length, radius, distance, angle, coincident, tangent, ...",
+    "sketch_remove": "remove entities or constraints from a sketch",
+    "sketch_status": "solved coordinates, dof, open ends and closed regions of a sketch",
+    "make_face": "flat face from closed regions of a sketch, holes left out; a face can be the final result",
+    "extrude": "solid from a face or sketch",
+    "extrude_cut": "pocket: extrude and cut from a solid",
+    "extrude_fuse": "boss: extrude and fuse onto a solid",
+    "revolve": "solid of revolution from a face or sketch",
+    "measure": "area, volume, face count, validity of shaper objects",
+}
+
+_CATALOGUE = ("shaper tools available to a single shaper stage:\n"
+              + "\n".join(f"  {n} -- {d}" for n, d in PLANNER_TOOL_LINES.items()))
 
 
 def _finish(args: dict, call_log: list) -> dict:
