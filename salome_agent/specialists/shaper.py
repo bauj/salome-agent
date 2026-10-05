@@ -1,10 +1,11 @@
 from executor.shaper.state import POSTAMBLE, PREAMBLE, PUBLISH_LINE
+from salome_agent.calc import CALC_PROMPT
 from salome_agent.codegen import _reachable, roots_for
 from salome_agent.modules import ModuleSpec, Terminator, register
 from salome_agent.specialists.geom import FINISH_STAGE_DESCRIPTION, FINISH_STAGE_SCHEMA
 
 SHAPER_SYSTEM_PROMPT = """You build parametric geometry in SHAPER by calling
-tools, not by writing code. Lengths are millimetres, unconverted; angles are in
+tools. Lengths are millimetres, unconverted; angles are in
 degrees. Reference sketches and features by the name they were published under.
 
 A sketch is entities (lines, circles, arcs, points) tied together by
@@ -44,6 +45,34 @@ measure (volume, area, face count, valid).
 When done, call finish_stage(result_names) with the published names that
 matter (sketches, faces or solids). It is refused while a sketch it uses has
 loose ends. If you abandon an attempt, call discard on what you built for it.
+
+Tool calls are cheap: each one answers in a second or two, anything you build
+can be removed (sketch_remove, discard), and nothing is final until
+finish_stage. So do not work out the whole part before your first call: as soon
+as you have enough for one call, make it. When you are unsure how something
+will come out -- where curves cross, which regions form, whether one piece
+reaches another -- build it and read the reply instead of working it out in
+your reasoning.
+
+The rhythm, on a different part (a flange: disc of diameter 60, centre hole of
+diameter 20, six holes of diameter 6 on a pitch circle of diameter 44, the
+first at 30 degrees). Each turn is one or two sentences, then calls; the trig
+is never done in the reasoning:
+1. "The bolt-hole centres need trig; everything else is given. Start the
+   sketch and get the centres in the same turn."
+   create_sketch(plane="XOY") -> sketch_1, regions []
+   calc("[(round(22*cos(radians(a)), 4), round(22*sin(radians(a)), 4))
+   for a in range(30, 360, 60)]") -> [(19.0526, 11.0), (0.0, 22.0),
+   (-19.0526, 11.0), (-19.0526, -11.0), (-0.0, -22.0), (19.0526, -11.0)]
+2. "Centres in hand; draw all eight circles."
+   sketch_add(sketch_1, [D: circle (0,0) r30, C: circle (0,0) r10,
+   B1..B6: circle at each centre r3]) -> dof 24, loose_ends [], regions:
+   0 area 2343.6281 inside (0, 15); 1 area 314.1593 inside (0, 0);
+   2..7 area 28.2743 inside each bolt centre
+3. "Material is region 0, the only point outside every hole. Check it."
+   calc("pi*30**2 - pi*10**2 - 6*pi*3**2") -> 2343.6281
+4. "Matches." make_face(sketch_1, [0]) -> sh_face_1, area 2343.6281, faces 1
+5. finish_stage(["sh_face_1"])
 
 Do only what the request asks. Each turn: state your reasoning in at most 2-3
 sentences, then call one or more tools. Batch INDEPENDENT calls in one turn;
@@ -86,7 +115,7 @@ def _render(result: dict) -> str:
 
 SHAPER_SPEC = register(ModuleSpec(
     name="shaper",
-    prompt=lambda cadence: SHAPER_SYSTEM_PROMPT,
+    prompt=lambda cadence: SHAPER_SYSTEM_PROMPT + "\n\n" + CALC_PROMPT,
     terminator=Terminator(name="finish_stage", schema=FINISH_STAGE_SCHEMA,
                           description=FINISH_STAGE_DESCRIPTION, handle=_finish),
     execute=lambda client, name, args: client.call_tool(name, args, module="shaper"),
@@ -102,6 +131,7 @@ SHAPER_SPEC = register(ModuleSpec(
                                                "last_error": last_error},
     gate=_gate,
     forgets=True,
+    calc=True,
     call_prefix="model.",
     preamble=PREAMBLE,
     postamble=POSTAMBLE,

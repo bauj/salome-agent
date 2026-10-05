@@ -1,13 +1,14 @@
 import json
 
 from executor.geom import TOOL_DESCRIPTIONS, registry
+from salome_agent.calc import CALC_PROMPT
 from salome_agent.codegen import _refs_in
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec, Terminator, register
 from salome_agent.specialists.tool_selection import CORE_TOOLS
 from salome_agent.specialists.tool_specialist import ToolSpecialist
 
-_GEOM_BASE = """You build geometry by calling tools, not by writing
+_GEOM_BASE = """You build geometry by calling tools; you never write
 geompy source. Each tool carries its own description — read it, especially
 for the default placement and orientation of primitives. Reference any
 shape, point, vector or plane by the name it was published under. For an
@@ -123,7 +124,8 @@ geompy = geomBuilder.New()
 
 
 def _geom_prompt(verify_cadence: str = "final") -> str:
-    return _GEOM_BASE.format(verify=_VERIFY_HINT.get(verify_cadence, _VERIFY_HINT["final"]))
+    return (_GEOM_BASE.format(verify=_VERIFY_HINT.get(verify_cadence, _VERIFY_HINT["final"]))
+            + "\n\n" + CALC_PROMPT)
 
 
 GEOM_SYSTEM_PROMPT = _geom_prompt("final")
@@ -374,6 +376,7 @@ GEOM_SPEC = register(ModuleSpec(
     render_retry=lambda retry: _retry_block(retry),
     audit=_audit_finish,
     forgets=True,
+    calc=True,
     call_prefix="geompy.",
     preamble=_GEOM_PREAMBLE,
     catalogue=_geom_catalogue_str(),
