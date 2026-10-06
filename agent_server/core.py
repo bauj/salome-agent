@@ -87,7 +87,7 @@ class Core:
             r = b.forget(req["names"])
             gone = _forget_side_modules(b, req["names"])
             if gone:
-                r = {**r, "removed": list(r.get("removed") or []) + gone}
+                r = {**r, "removed": list(dict.fromkeys(list(r.get("removed") or []) + gone))}
             b.refresh("GEOM")
             return {"id": rid, **r}
         if cmd == "clear_study":
