@@ -3,8 +3,8 @@ import json
 from salome_agent.build_graph import GraphError
 from salome_agent.modules import ModuleSpec, Terminator
 from salome_agent.replay import ReplayFailed, apply_delete, apply_edit
-from salome_agent.specialists.geom import _compact_result, _geom_tools_for
-from salome_agent.specialists.tool_selection import CORE_TOOLS
+from salome_agent.modules import spec_for
+from salome_agent.specialists.geom import _compact_result
 from salome_agent.specialists.tool_specialist import ToolSpecialist
 
 AMEND_SYSTEM_PROMPT = """You amend a CAD model the user is building with you in
@@ -17,9 +17,9 @@ To change something that exists, call edit_arg on the node that made it —
 new shape. The node and everything built on it is rebuilt immediately with
 the same names, and you get the rebuilt shapes' measurements back. edit_arg
 only changes literal values. To change which shapes a node uses, delete_node
-it and build the replacement with the geom tools.
+it and build the replacement with the {module} tools.
 
-To add something, call the geom tools as usual; they are added to the graph.
+To add something, call the {module} tools as usual; they are added to the graph.
 Measure before you place anything relative to an existing shape. Lengths are
 millimetres; angles are degrees.
 
@@ -37,7 +37,7 @@ Each turn: state your reasoning in at most 2-3 sentences, then call one or
 more tools. When the change is done, call finish_turn(summary) with one
 sentence saying what changed.
 
-You are given only a subset of the geom tools. If you need one that is not in
+You are given only a subset of the {module} tools. If you need one that is not in
 your list, call load_tools with its name or category."""
 
 _LITERAL_HELP = ('the new value as a JSON literal, e.g. 120, 7.5, [0, 0, 1] or "OZ"')
@@ -89,27 +89,42 @@ def _literal(value):
     return value
 
 
+def _call(client, module: str, name: str, args: dict) -> dict:
+    if module == "geom":
+        return client.call_tool(name, args)
+    return client.call_tool(name, args, module=module)
+
+
 class AmendSession:
-    def __init__(self, graph, client, turn: int):
+    """`module` is the CAD module whose tools this turn adds shapes with."""
+
+    def __init__(self, graph, client, turn: int, module: str = "geom"):
         self.graph = graph
         self.client = client
         self.turn = turn
+        self.module = module
         self.events: list[dict] = []
         self._block = None
 
     def _amend_block(self) -> str:
         if self._block is None:
             self._block = self.graph.add_block(self.turn, f"turn {self.turn + 1}: amend",
-                                               "geom", [])
+                                               self.module, [])
         return self._block
 
     def _measure(self, ids) -> dict | None:
-        names = [p for nid in ids if nid in self.graph.nodes
-                 for p in self.graph.nodes[nid].published]
-        if not names:
-            return None
-        m = self.client.call_tool("measure", {"names": names})
-        return m.get("measurements") if m.get("ok") else None
+        by_module: dict[str, list] = {}
+        for nid in ids:
+            if nid in self.graph.nodes:
+                node = self.graph.nodes[nid]
+                by_module.setdefault(node.module, []).extend(node.published)
+        out = {}
+        for module, names in by_module.items():
+            if names:
+                m = _call(self.client, module, "measure", {"names": names})
+                if m.get("ok"):
+                    out.update(m.get("measurements") or {})
+        return out or None
 
     def execute(self, client, name: str, args: dict) -> dict:
         try:
@@ -132,20 +147,30 @@ class AmendSession:
             return {"ok": False, "error": str(e)}
         except ReplayFailed as e:
             return {"ok": False, "error": f"{e} — the model was restored to before this edit"}
-        r = self.client.call_tool(name, args)
+        r = _call(self.client, self.module, name, args)
         if r.get("ok") and r.get("records"):
-            nid = self.graph.append(self._amend_block(), name, args, r["records"], self.turn)
+            nid = self.graph.append(self._amend_block(), name, args, r["records"], self.turn,
+                                    module=self.module)
             self.events.append({"event": "graph_edit", "op": "append", "node": nid,
                                 "param": None, "old": None, "new": name})
             r = {**r, "node": nid}
         return r
 
 
+_AMEND_KEYS = ("node", "edited", "rebuilt", "deleted", "measurements")
+
+
 def _render(result: dict) -> str:
     out = _compact_result(result)
-    for k in ("node", "edited", "rebuilt", "deleted", "measurements"):
+    for k in _AMEND_KEYS:
         if result.get(k) is not None:
             out[k] = result[k]
+    return str(out)
+
+
+def _render_shaper(result: dict) -> str:
+    hidden = {"records", "result_shape", "shape_info"}
+    out = {k: v for k, v in result.items() if k not in hidden}
     return str(out)
 
 
@@ -156,39 +181,58 @@ def render_transcript(history) -> str:
 
 
 def _snapshot(client, graph) -> str | None:
-    names = graph.result_names()
-    if not names or client is None:
+    if client is None:
         return None
-    m = client.call_tool("measure", {"names": names})
-    if not m.get("ok"):
-        return None
-    lines = [f"  {n} — bbox {d['bbox']}, size {d['size']}, centre {d['centre']}"
-             for n, d in (m.get("measurements") or {}).items() if d]
+    from salome_agent.specialists.shaper import _upstream_line
+    lines = []
+    for b in graph.blocks:
+        names = b.result_names or [p for n in graph.block_nodes(b.id) for p in n.published]
+        if not names or b.module not in ("geom", "shaper"):
+            continue
+        m = _call(client, b.module, "measure", {"names": names})
+        if not m.get("ok"):
+            continue
+        for n, d in (m.get("measurements") or {}).items():
+            if not d or d.get("concealed"):
+                continue
+            if b.module == "geom":
+                lines.append(f"  {n} — bbox {d['bbox']}, size {d['size']}, centre {d['centre']}")
+            else:
+                lines.append(_upstream_line(n, d))
     return "Current study, measured now:\n" + "\n".join(lines) if lines else None
 
 
+def _prompt(module: str, cadence: str) -> str:
+    text = AMEND_SYSTEM_PROMPT.format(module=module)
+    if module == "shaper":
+        text += ("\n\nHow the SHAPER tools work (in this turn finish_turn ends it, "
+                 "not finish_stage):\n\n" + spec_for("shaper").prompt(cadence))
+    return text
+
+
 def _spec(session: AmendSession) -> ModuleSpec:
+    base = spec_for(session.module)
+
     def tools_for(client):
-        defs = _geom_tools_for(client)
+        defs = dict(base.tools_for(client))
         defs["edit_arg"] = EDIT_ARG_DEF
         defs["delete_node"] = DELETE_NODE_DEF
         return defs
 
     return ModuleSpec(
         name="amend",
-        prompt=lambda cadence: AMEND_SYSTEM_PROMPT,
+        prompt=lambda cadence: _prompt(session.module, cadence),
         terminator=FINISH_TURN,
         extra_terminators=(REPLAN,),
         execute=session.execute,
-        render_result=_render,
+        render_result=_render if session.module == "geom" else _render_shaper,
         tools_for=tools_for,
         no_tool_nudge="You did not call a tool. Call a tool now — finish_turn when done.",
         on_exhausted=lambda call_log, last_error: {"exhausted": True, "last_error": last_error},
-        core_tools=frozenset(CORE_TOOLS),
-        categories=("primitive", "sketch", "swept", "boolean",
-                    "transform", "feature", "display", "query"),
-        risky_categories=frozenset({"boolean", "transform"}),
-        measure_tools=frozenset({"measure", "check_shape"}),
+        core_tools=base.core_tools,
+        categories=base.categories,
+        risky_categories=base.risky_categories,
+        measure_tools=base.measure_tools,
     )
 
 
