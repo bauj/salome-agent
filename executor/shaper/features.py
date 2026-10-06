@@ -1,6 +1,6 @@
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
-    PUBLISH_LINE, feature_shape, measure, new_name, publish_study, record, sketch_of, state,
+    PUBLISH_LINE, measure, new_name, publish_study, record, sketch_of, state,
     tool, transaction,
 )
 
@@ -69,10 +69,7 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
         return {"ok": False, "error": f"{fn}: {err}"}
     st.objects[name] = kind
     publish_study(executor)
-    shape = feature_shape(executor, name)
-    info = measure(executor, name, shape)
-    # a later geom stage reaches the result by name (a one-way copy)
-    executor.geom_bindings[name] = shape
+    info = measure(executor, name)
     return {"ok": True, "records": [rec], "name": name, "measure": info,
             "result_shape": name, "shape_info": info}
 

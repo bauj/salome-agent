@@ -143,7 +143,6 @@ def forget(executor, names: list) -> list:
             for feat in feats:
                 st.ns["shaper_doc"].removeFeature(feat)
             st.ns.pop(name, None)
-            executor.geom_bindings.pop(name, None)
             gone.append(name)
     if gone:
         _remove_study_objects(executor, gone)
@@ -303,6 +302,38 @@ def loose_ends(sk: Sketch, geos: dict) -> list:
     return out
 
 
+def _point_inside(face) -> list | None:
+    """A point well inside a planar region: of a grid over its box (7 x 7, then
+    15 x 15 for a thin region), the inside point farthest from its edges."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_PointBuilder as PB, GeomAlgoAPI_ShapeTools as T
+    ok, *box = face.computeSize()
+    if not ok:
+        return None
+    lo, hi = box[:3], box[3:]
+    flat = [i for i in range(3) if hi[i] - lo[i] < 1e-5]
+    if len(flat) != 1:     # sketches lie on XOY / XOZ / YOZ or planes parallel to them
+        return None
+    u, v = [i for i in range(3) if i not in flat]
+    edges = face.subShapes(GeomAPI.GeomAPI_Shape.EDGE)
+    for n in (8, 16):
+        best, best_d = None, -1.0
+        for a in range(1, n):
+            for b in range(1, n):
+                p = [(lo[i] + hi[i]) / 2 for i in range(3)]
+                p[u] = lo[u] + (hi[u] - lo[u]) * a / n
+                p[v] = lo[v] + (hi[v] - lo[v]) * b / n
+                vert = PB.vertex(GeomAPI.GeomAPI_Pnt(*p))
+                if not T.isSubShapeInsideShape(vert, face):
+                    continue
+                d = min(T.minimalDistance(vert, e) for e in edges)
+                if d > best_d:
+                    best, best_d = p, d
+        if best is not None:
+            return [round(c, 4) + 0.0 for c in best]
+    return None
+
+
 def regions(executor, sk: Sketch) -> list:
     """Closed regions of the sketch: index, area, a point inside."""
     import ModelAPI
@@ -312,15 +343,15 @@ def regions(executor, sk: Sketch) -> list:
         return []
     rc = ModelAPI.modelAPI_ResultConstruction(res)
     out = []
-    geompy = executor.namespace["geompy"]
     for i in range(rc.facesNum()):
         face = rc.face(i)
         entry = {"index": i, "area": round(GeomAlgoAPI_ShapeTools.area(face), 4)}
         try:
-            v = geompy.MakeVertexInsideFace(to_geom(geompy, face))
-            entry["inside"] = [round(c, 4) for c in geompy.PointCoordinates(v)]
-        except Exception:
-            pass
+            inside = _point_inside(face)
+        except Exception:  # noqa: BLE001 — the area alone still identifies the region
+            inside = None
+        if inside is not None:
+            entry["inside"] = inside
         out.append(entry)
     return out
 
@@ -344,45 +375,86 @@ def sketch_of(executor, name) -> Sketch:
 
 
 # --- shapes -----------------------------------------------------------------
+# Measured in SHAPER itself: no GEOM copy (a GEOM copy per call was never
+# released, ~28 KB each).
 
-def to_geom(geompy, shape):
-    """A SHAPER shape as a GEOM copy (BREP stream). One-way: later sketch edits
-    do not reach it."""
-    return geompy.RestoreShape(shape.getShapeStream(False).encode())
-
-
-def feature_shape(executor, name: str):
-    """The GEOM copy of a published feature's results (one compound if several)."""
-    st = state(executor)
-    geompy = executor.namespace["geompy"]
-    feat = st.ns[name].feature()
-    shapes = [to_geom(geompy, r.shape()) for r in feat.results() if r.shape() is not None]
-    if not shapes:
-        raise ValueError(f"{name} has no result: {feat.error() or 'empty'}")
-    return shapes[0] if len(shapes) == 1 else geompy.MakeCompound(shapes)
+def results_of(executor, name: str) -> list:
+    """The published feature's result objects that hold a shape."""
+    feat = state(executor).ns[name].feature()
+    return [r for r in feat.results() if r.shape() is not None]
 
 
-def measure(executor, name: str, shape=None) -> dict:
-    from executor.geom.helpers import _check_shape
-    from executor.geom.results import _shape_info
-    geompy = executor.namespace["geompy"]
-    if shape is None:
-        shape = feature_shape(executor, name)
-    info = _shape_info(geompy, shape) or {}
-    length, area, volume = geompy.BasicProperties(shape)
-    valid, msg = _check_shape(geompy, shape)
-    info.update({"area": round(area, 4), "volume": round(volume, 4),
-                 "faces": geompy.NumberOfFaces(shape), "edges": geompy.NumberOfEdges(shape),
-                 "valid": bool(valid)})
-    if not valid:
-        info["check"] = msg
+def _unique(shape, kind) -> int:
+    """Sub-shapes of `kind`, each once: SHAPER lists a seam edge twice."""
+    seen = []
+    for s in shape.subShapes(kind):
+        if not any(s.isSame(t) for t in seen):
+            seen.append(s)
+    return len(seen)
+
+
+def _precise_box(executor, results) -> list | None:
+    """[xmin, ymin, zmin, xmax, ymax, zmax] of all results, exact on curved faces.
+    computeSize() encloses a curve's control points (a torus of outer radius 60
+    reads 64.94); SHAPER's bounding-box feature computes it exactly. It is made
+    in an operation that is then aborted, so it leaves no feature and no undo
+    entry."""
+    import ModelAPI
+    m = model()
+    session = ModelAPI.ModelAPI_Session.get()
+    if session.isOperation():
+        return None
+    doc = state(executor).ns["shaper_doc"]
+    box = None
+    session.startOperation("salome-agent measure")
+    try:
+        for r in results:
+            feat = m.getBoundingBox(doc, m.selection(r.shape().shapeTypeStr(), r.data().name()))
+            res = feat.feature().firstResult()
+            if res is None or res.shape() is None:
+                return None
+            ok, *b = res.shape().computeSize()
+            if not ok:
+                return None
+            box = b if box is None else [min(box[i], b[i]) for i in range(3)] + \
+                [max(box[i], b[i]) for i in range(3, 6)]
+    finally:
+        session.abortOperation()
+    return box
+
+
+def measure(executor, name: str) -> dict:
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    import GeomAPI
+    results = results_of(executor, name)
+    if not results:
+        raise ValueError(f"{name} has no result")
+    box = _precise_box(executor, results)
+    if box is None:     # fast box: only while another SHAPER operation is open
+        sizes = [r.shape().computeSize()[1:] for r in results]
+        box = [min(s[i] for s in sizes) for i in range(3)] + \
+            [max(s[i] for s in sizes) for i in range(3, 6)]
+    xmin, ymin, zmin, xmax, ymax, zmax = box
+    r4 = lambda v: round(v, 4) + 0.0
+    shapes = [r.shape() for r in results]
+    info = {
+        "bbox": [r4(xmin), r4(xmax), r4(ymin), r4(ymax), r4(zmin), r4(zmax)],
+        "size": [r4(xmax - xmin), r4(ymax - ymin), r4(zmax - zmin)],
+        "centre": [r4((xmin + xmax) / 2), r4((ymin + ymax) / 2), r4((zmin + zmax) / 2)],
+        "area": round(sum(T.area(s) for s in shapes), 4),
+        "volume": round(sum(T.volume(s) for s in shapes), 4),
+        "faces": sum(_unique(s, GeomAPI.GeomAPI_Shape.FACE) for s in shapes),
+        "edges": sum(_unique(s, GeomAPI.GeomAPI_Shape.EDGE) for s in shapes),
+        "valid": all(T.isShapeValid(s) for s in shapes),
+    }
+    if not info["valid"]:
+        info["check"] = "SHAPER's shape check fails on this result"
     return info
 
 
 def check_results(executor, names: list) -> dict:
     """finish_stage's re-check: a feature whose inputs changed after it was
     made (a sketch edited under a face) no longer builds."""
-    from executor.geom.results import shape_status
     st = state(executor)
     out = {}
     for name in names:
@@ -396,6 +468,16 @@ def check_results(executor, names: list) -> dict:
             if err or not any(r.shape() is not None for r in feat.results()):
                 out[name] = {"status": "broken", "detail": err or "it has no result"}
             else:
-                out[name] = shape_status(executor.namespace["geompy"],
-                                         feature_shape(executor, name))
+                out[name] = shape_status(measure(executor, name))
     return out
+
+
+def shape_status(info: dict) -> dict:
+    """As GEOM's results.shape_status, from a SHAPER measure."""
+    if not info["valid"]:
+        return {"status": "invalid", "detail": info.get("check") or "shape check failed"}
+    if info["faces"] == 0 and info["edges"] == 0:
+        return {"status": "empty", "detail": "it holds no geometry"}
+    if info["faces"] > 0 and info["area"] <= 1e-9:
+        return {"status": "empty", "detail": "its faces have zero area"}
+    return {"status": "ok"}
