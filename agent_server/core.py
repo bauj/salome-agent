@@ -5,6 +5,9 @@ from agent_server import handshake
 _TOOL_MODULES = {"geom": geom, "shaper": shaper}
 _REFRESH = {"geom": "GEOM", "shaper": "SHAPER"}
 _TOOL_TIMEOUT = 120
+# Top-level APIs a script may call that are not in the server namespace: imported
+# on demand (on the GUI thread) for introspect.
+_LAZY_APIS = {"model": "salome.shaper.model"}
 
 _FATAL = {"ok": False, "fatal": True,
           "error": "server poisoned by a prior timeout; restart the agent server"}
@@ -50,6 +53,9 @@ class Core:
             out = {}
             for name in req["names"]:
                 obj = b.namespace.get(name)
+                if obj is None and name in _LAZY_APIS:
+                    obj = b.run_tool(lambda: __import__(_LAZY_APIS[name], fromlist=["_"]),
+                                     _TOOL_TIMEOUT)
                 out[name] = {"members": dir(obj) if obj is not None else []}
             return {"id": rid, **out}
         if cmd == "list_study":
