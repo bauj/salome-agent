@@ -39,6 +39,16 @@ def test_retry_context_gathers_error_hint_and_built_shapes():
     client.call_tool.assert_called_once_with("measure", {"names": ["box_1"]})
 
 
+def test_retry_context_measures_a_shaper_stage_in_shaper():
+    state = {"stages": {0: {"status": "failed", "module": "shaper",
+                            "call_log": [{"out_vars": ["ext_1"], "publish": ["ext_1"]}]}},
+             "history": [], "last_error": {"message": "open sketch"}}
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": True, "measurements": {"ext_1": {"faces": 6}}}
+    assert retry_context(state, 0, client=client)["built_info"] == {"ext_1": {"faces": 6}}
+    client.call_tool.assert_called_once_with("measure", {"names": ["ext_1"]}, module="shaper")
+
+
 def test_retry_context_without_a_hint_leaves_hint_none():
     state = {
         "stages": {0: {"status": "failed", "call_log": []}},
