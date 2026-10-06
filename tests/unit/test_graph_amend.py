@@ -47,6 +47,8 @@ def test_a_follow_up_naming_shaper_is_planned_only_on_a_geom_study():
     assert route_start({"turn_idx": 1, "user_request": "add a rib in SHAPER"}) == "amend"
     assert route_start({"turn_idx": 1, "user_request": "add a rib in GEOM", **geom}) == "amend"
     assert route_start({"turn_idx": 1, "user_request": "add a rib", **geom}) == "amend"
+    shaper = {"build_graph": _shaper_graph().to_dict()}
+    assert route_start({"turn_idx": 1, "user_request": "add a box in GEOM", **shaper}) == "plan"
 
 
 def test_amend_turn_rewrites_result_and_graph_json(tmp_path, monkeypatch):
@@ -298,11 +300,15 @@ def test_a_follow_up_on_a_shaper_study_is_amended_with_shaper_tools(tmp_path, mo
         assert seen["amend_module"] == "shaper" and "request" not in seen
 
 
-def test_a_follow_up_naming_geom_on_a_shaper_study_is_amended_with_geom_tools(tmp_path,
-                                                                             monkeypatch):
+def test_a_follow_up_naming_geom_on_a_shaper_study_is_answered_without_amending(tmp_path,
+                                                                              monkeypatch):
     seen = _shaper_follow_up_seen(tmp_path, monkeypatch, graph=_shaper_graph(),
                                   text="add a box in GEOM")
-    assert seen["amend_module"] == "geom"
+    assert "amend_module" not in seen and "request" not in seen
+    assert seen["out"]["turn_outcome"]["question"] == (
+        "The objects in the study (extrusion_1) were built in SHAPER, and GEOM cannot "
+        "use SHAPER objects. Ask for this change in SHAPER, or start a new conversation "
+        "to build it in GEOM.")
 
 
 def test_a_shaper_follow_up_with_images_is_described_then_amended(tmp_path, monkeypatch):
@@ -319,9 +325,9 @@ def test_a_replanned_shaper_follow_up_is_pinned_from_the_users_text(tmp_path, mo
 
 
 def test_the_geom_refusal_names_objects_without_the_run_prefix():
-    from salome_agent.graph import _shaper_on_geom
+    from salome_agent.graph import _cross_module
     g = BuildGraph()
     g.add_block(0, "stage 1/1: geom", "geom", ["sa_r1_box_1"])
     state = {"turn_idx": 1, "user_request": "add a rib in SHAPER", "build_graph": g.to_dict(),
              "session": {"name_prefix": "sa_r1_"}}
-    assert "(box_1)" in _shaper_on_geom(state)
+    assert "(box_1)" in _cross_module(state)
