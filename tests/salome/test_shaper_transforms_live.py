@@ -148,3 +148,31 @@ def test_result_py_rebuilds_positioned_mirrored_and_patterned_parts(agent_client
     assert live["volume"] == pytest.approx(2 * 6000 + 4 * math.pi * 4 * 5, rel=1e-6)
     xs = [float(v) for v in m.group(2).split(",")]
     assert xs[0] == pytest.approx(-100, abs=1e-3) and xs[3] == pytest.approx(100, abs=1e-3)
+
+
+def test_review_fixes_refuse_bad_and_pointless_input(agent_client):
+    b = _box(agent_client)
+    r = _call(agent_client, "position", shape=b, x_dir=[1, 0])
+    assert r["ok"] is False and "[x, y, z]" in r["error"]
+    r = _call(agent_client, "align", shape=b, to=[b], match=[{"axis": "x", "my": "min",
+                                                             "target": "min"}])
+    assert r["ok"] is False
+    r = _call(agent_client, "align", shape=b, to=b, match=[{"axis": "x", "my": "min",
+                                                           "target": "max"}])
+    assert r["ok"] is False and "another shape" in r["error"]
+    r = _call(agent_client, "rotate", shape=b, axis=["OZ"], angle_deg=30)
+    assert r["ok"] is False and "OX, OY, OZ" in r["error"]
+    r = _call(agent_client, "mirror", shape=b, entity={"plane": "XOY"})
+    assert r["ok"] is False
+    r = _call(agent_client, "multi_translate", shape=b, vector="OX", step=0, count=3)
+    assert r["ok"] is False and "step" in r["error"]
+    r = _call(agent_client, "multi_translate", shape=b, vector="OX", step=20, count=2,
+              vector2="OX", step2=5, count2=2)
+    assert r["ok"] is False and "vector2" in r["error"]
+    r = _call(agent_client, "multi_rotate", shape=b, axis="OZ", count=5, angle_deg=90)
+    assert r["ok"] is False and "overlap" in r["error"]
+    same = _ok(agent_client, "translate", shape=b, dx=0, dy=0, dz=0)
+    assert same["name"] == b and same["records"] == []
+    same = _ok(agent_client, "rotate", shape=b, axis="OZ", angle_deg=360)
+    assert same["name"] == b
+

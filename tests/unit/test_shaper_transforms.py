@@ -62,3 +62,24 @@ def test_count_wants_a_whole_number_of_at_least_two():
     for bad in (1, 2.5, True, "3"):
         with pytest.raises(ValueError):
             _count(bad, "count")
+
+
+def test_frame_rotation_sees_a_frame_equal_to_the_world_up_to_rounding():
+    s = 1 / math.sqrt(3)
+    assert frame_rotation([s * math.sqrt(3), 1e-17, 0], [0, 1, 0])[1] == 0
+
+
+def test_frame_rotation_refuses_a_y_dir_parallel_up_to_noise():
+    with pytest.raises(ValueError, match="parallel"):
+        frame_rotation([1, 0, 0], [1e6, 1e-6, 0])
+
+
+def test_count_refuses_non_finite_and_huge_values():
+    for bad in (float("inf"), float("nan"), 10_000):
+        with pytest.raises(ValueError):
+            _count(bad, "count")
+
+
+def test_align_refuses_an_unhashable_axis():
+    with pytest.raises(ValueError, match="x, y or z"):
+        align_delta([0] * 6, [0] * 6, [{"axis": ["x"], "my": "min", "target": "max"}])
