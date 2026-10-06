@@ -82,6 +82,20 @@ sentences, then call one or more tools. Batch INDEPENDENT calls in one turn;
 a call that needs a name another call is about to create waits for the next
 turn.
 
+If your first message includes a "Reference image spec" block, an image-analysis
+agent read it from the user's reference image(s) (you do not see the images): the
+exact data of the part(s) this stage builds, as JSON. A "profile" base is an
+outline traced from `start` through `segments` (a line to `to`, or an arc with
+`center` or `through`; a `fillet` is a tangent arc of that radius at the
+segment's `to` corner) plus `holes`: draw it in one sketch as lines and arcs at
+those coordinates, join consecutive ends with coincident constraints, then
+make_face on the material region and extrude or revolve it as the base says.
+"placement" gives where the part sits and which way it faces. Values written
+"~N" are estimates; plain numbers were read from the image. "conflicts" name
+values that disagree: build anyway and let the tool replies tell you which value
+fits. If the spec's prose and its data disagree, the data wins. Explicit
+dimensions in the stage's params win over the spec.
+
 You may be given only a subset of the SHAPER tools. If you need one that is not
 in your list, call load_tools with its name or category."""
 

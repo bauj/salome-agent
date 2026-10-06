@@ -415,7 +415,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         block = spec.render_upstream(client, upstream)
         if block:
             blocks.append(block)
-    if module == "geom":
+    if module in ("geom", "shaper"):
         # smesh never sees the image spec: it only feeds CAD construction
         image_spec = state.get("image_spec")
         if image_spec:

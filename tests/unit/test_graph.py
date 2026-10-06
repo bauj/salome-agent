@@ -550,8 +550,9 @@ def _capture_stage_blocks(monkeypatch, plan, idx, image_spec):
 
     monkeypatch.setattr(tool_specialist.ToolSpecialist, "run", fake_run)
     monkeypatch.setattr(graph, "retry_context", lambda state, idx, client: None)
-    state = {"plan": plan, "stage_idx": idx, "stages": {i: {"module": "geom", "status": "pending"}
-                                                         for i in range(len(plan))},
+    state = {"plan": plan, "stage_idx": idx,
+             "stages": {i: {"module": p["module"], "status": "pending"}
+                        for i, p in enumerate(plan)},
              "config": {"policy": {"tool_iteration_cap": 5}}, "image_spec": image_spec,
              "build_graph": None}
     try:
@@ -568,6 +569,13 @@ def test_geom_stage_gets_only_its_parts(monkeypatch):
             {"module": "geom", "intent": "b", "params": {}, "inputs": [], "parts": ["P2"]}]
     text = _capture_stage_blocks(monkeypatch, plan, 1, box_spec())
     assert '"id": "P2"' in text and '"id": "P1"' not in text
+
+
+def test_shaper_stage_gets_its_parts_too(monkeypatch):
+    from tests.unit.test_vision_spec import box_spec
+    plan = [{"module": "shaper", "intent": "a", "params": {}, "inputs": [], "parts": ["P1"]}]
+    text = _capture_stage_blocks(monkeypatch, plan, 0, box_spec())
+    assert '"id": "P1"' in text and '"id": "P2"' not in text
 
 
 def test_geom_stage_gets_every_part_when_the_planner_listed_none(monkeypatch):
