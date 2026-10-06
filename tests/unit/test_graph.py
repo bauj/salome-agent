@@ -454,7 +454,7 @@ def test_plan_node_hands_the_spec_not_the_images_to_the_planner(monkeypatch):
 
     seen = {}
 
-    def fake_plan(request, llm, detail="balanced", image_spec=None):
+    def fake_plan(request, llm, detail="balanced", image_spec=None, **kw):
         seen.update(image_spec=image_spec)
         return [{"module": "geom", "intent": "box", "params": {}, "inputs": []}]
 

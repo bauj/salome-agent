@@ -141,9 +141,11 @@ def blank_stages(stage_plans: list[dict]) -> dict:
 
 
 def plan(request: str, llm, detail: str = "balanced",
-         image_spec: dict | None = None) -> list[dict]:
+         image_spec: dict | None = None, pin_from: str | None = None) -> list[dict]:
+    """`pin_from` is the user's own text when `request` also carries earlier
+    requests, which may name another module."""
     system = PLANNER_SYSTEM_PROMPT + _DETAIL_HINT.get(detail, "")
-    pinned = named_cad_module(request)
+    pinned = named_cad_module(request if pin_from is None else pin_from)
     if pinned:
         system += (f"\n\nThe request names {pinned.upper()}: every CAD geometry stage "
                    f'uses module "{pinned}".')
