@@ -176,3 +176,14 @@ def test_review_fixes_refuse_bad_and_pointless_input(agent_client):
     same = _ok(agent_client, "rotate", shape=b, axis="OZ", angle_deg=360)
     assert same["name"] == b
 
+
+
+def test_align_flush_on_odd_coordinates_fuses_into_one_box(agent_client):
+    # a rounded box would leave a 1e-4 sliver: two solids, not one
+    other = _ok(agent_client, "make_box_two_pnt", pnt1=[10.123456789, 0, 0],
+                pnt2=[20.987654321, 10, 10])["name"]
+    r = _ok(agent_client, "align", shape=_box(agent_client), to=other, match=[
+        {"axis": "x", "my": "max", "target": "min"}])
+    fused = _ok(agent_client, "fuse", objects=[r["name"], other])["measure"]
+    assert fused["faces"] == 6
+    assert fused["size"][0] == pytest.approx(20.987654321 - 0.123456789, abs=1e-4)
