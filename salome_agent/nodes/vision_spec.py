@@ -1,5 +1,5 @@
 """The vision agent's structured spec (task 286): mechanical validation, and the
-renderings the planner, geom stages, amend and the report get."""
+renderings the planner, CAD stages, amend and the report get."""
 import copy
 import json
 import math
@@ -721,7 +721,7 @@ def _context_lines(spec) -> list[str]:
 
 def compact_spec(spec: dict) -> str:
     """The planner's view: parts by id and kind, no numbers to restate."""
-    lines = ["Reference image spec (read from the user's image(s); each geom stage is "
+    lines = ["Reference image spec (read from the user's image(s); each CAD stage is "
              "handed the exact data of the parts it lists):"]
     lines += _context_lines(spec)
     parts = _parts(spec)
@@ -732,7 +732,7 @@ def compact_spec(spec: dict) -> str:
 
 
 def parts_block(spec: dict, ids: list[str]) -> str:
-    """A geom stage's view: its parts' exact JSON."""
+    """A CAD stage's view: its parts' exact JSON."""
     chosen = [p for p in _parts(spec) if p.get("id") in ids]
     lines = ["Reference image spec for this stage's part(s), read from the user's "
              "image(s) by an image-analysis agent (you do not see the images). "
@@ -757,7 +757,7 @@ def part_ids(stage: dict) -> list[str]:
 
 def stage_part_ids(plan: list[dict], idx: int, spec: dict) -> list[str]:
     """The parts stage idx builds; every part when no stage of the plan lists any
-    (a planner that ignored `parts` must not leave geom without the spec)."""
+    (a planner that ignored `parts` must not leave a CAD stage without the spec)."""
     if any(part_ids(s) for s in plan):
         return part_ids(plan[idx])
     return [p.get("id") for p in _parts(spec)]
