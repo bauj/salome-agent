@@ -579,7 +579,15 @@ def _naming_names(executor, result, shapes: list) -> list:
         probe = m.addGroup(doc, [m.selection(result, s) for s in shapes])
     try:
         lst = probe.feature().selectionList("group_list")
-        return [lst.value(k).namingName() for k in range(lst.size())]
+        if lst.size() != len(shapes):
+            raise RuntimeError(f"SHAPER named {lst.size()} of {len(shapes)} sub-shapes")
+        names = []
+        for k, s in enumerate(shapes):
+            got = lst.value(k)
+            if got.value() is None or not got.value().isSame(s):
+                raise RuntimeError("SHAPER named a different sub-shape than the one asked for")
+            names.append(got.namingName())
+        return names
     finally:
         with transaction():
             doc.removeFeature(probe.feature())
@@ -590,15 +598,16 @@ def subshapes(executor, name: str, sub_type: str) -> list:
     with their ids."""
     import GeomAPI
     from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
-    if sub_type not in SUB_TYPES:
+    if not isinstance(sub_type, str) or sub_type not in SUB_TYPES:
         raise ValueError(f"sub_type must be one of {', '.join(SUB_TYPES)}, got {sub_type!r}")
     kind = getattr(GeomAPI.GeomAPI_Shape, sub_type.upper())
-    names = []
+    names, seen = [], []
     for res in results_of(executor, name):
         uniq = []
         for s in res.shape().subShapes(kind):
-            if not any(s.isSame(t) for t in uniq):
+            if not any(s.isSame(t) for t in seen):   # shared between results too
                 uniq.append(s)
+                seen.append(s)
         if uniq:
             names += list(zip(uniq, _naming_names(executor, res, uniq)))
     out = []
@@ -608,7 +617,8 @@ def subshapes(executor, name: str, sub_type: str) -> list:
         size = {"vertex": 0.0, "edge": T.length(s), "face": T.area(s),
                 "solid": T.volume(s)}[sub_type]
         out.append(Sub(None, s, naming, centre, round(size, 4) + 0.0))
-    out.sort(key=lambda u: tuple(u.centre))
+    # ties (coaxial rims, faces with one box centre) by size, then by name
+    out.sort(key=lambda u: (tuple(u.centre), u.size, u.naming))
     for i, u in enumerate(out, start=1):
         u.id = f"{SUB_TYPES[sub_type]}{i}"
     return out

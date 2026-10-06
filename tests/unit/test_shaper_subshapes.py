@@ -48,3 +48,12 @@ def test_a_json_string_predicate_is_read():
 def test_bad_predicates_are_refused(where):
     with pytest.raises(ValueError):
         select(_subs(), where, _points)
+
+
+@pytest.mark.parametrize("where", [
+    {"sorted_by": "z", "count": float("inf")}, {"sorted_by": "z", "count": float("nan")},
+    {"on_plane": {"point": {"x": 0}, "normal": [0, 0, 1]}},
+    {"on_plane": {"point": [0, 0, 0], "normal": [0, 0, 1]}, "state": ["on"]}])
+def test_review_fixes_refuse_odd_predicate_values(where):
+    with pytest.raises(ValueError):
+        select(_subs(), where, _points)

@@ -2,7 +2,7 @@ import math
 
 from executor.shaper.state import (
     CONSTRUCTION, PUBLISH_LINE, Constraint, Entity, Sketch, check_id, construction_info,
-    geometry, new_name, offset_plane, record, subshapes,
+    forget, geometry, new_name, offset_plane, record, subshapes,
     restore, run, sketch_of, snapshot, solver_error, state, status, tool, transaction,
 )
 
@@ -95,6 +95,8 @@ def tool_create_sketch(executor, args: dict):
     normal = None
     if isinstance(plane, dict) and "face" in plane:
         face, of = plane.get("face"), plane.get("of")
+        if not isinstance(face, str):
+            raise ValueError(f"face must be an id like \"F2\", got {face!r}")
         if not isinstance(of, str) or (of not in st.objects):
             raise ValueError(f"of must name a built shape, got {of!r}")
         if st.objects[of] in CONSTRUCTION:
@@ -129,7 +131,9 @@ def tool_create_sketch(executor, args: dict):
     else:
         raise ValueError(f"plane must be one of {', '.join(_PLANES)}, {{base, offset}}, "
                          f"a make_plane name or {{face, of}}, got {plane!r}")
-    records.append(record("addSketch", f"{name} = model.addSketch(shaper_doc, {target})",
+    # a face or plane is selected by name: recompute first, as _build does
+    pre = "model.do()\n" if normal is not None else ""
+    records.append(record("addSketch", f"{pre}{name} = model.addSketch(shaper_doc, {target})",
                           out=[name], refs=refs, publish=True))
     if normal is None:
         axes = _PLANES[base]
@@ -145,11 +149,16 @@ def tool_create_sketch(executor, args: dict):
     exec_records(st, records)
     sk = Sketch(name, st.ns[name], axes)
     extra = {}
-    if normal is not None:
-        o, x, y, n = _frame(sk)
-        sk.frame = (o, x, y)
-        extra["frame"] = {"origin": o, "x_dir": x, "y_dir": y, "normal": n}
     st.sketches[name] = sk
+    if normal is not None:
+        try:
+            o, x, y, n = _frame(sk)
+        except Exception:
+            forget(executor, [name])
+            raise
+        sk.frame = (o, x, y)
+        r6 = lambda v: [round(c, 6) + 0.0 for c in v]
+        extra["frame"] = {"origin": r6(o), "x_dir": r6(x), "y_dir": r6(y), "normal": r6(n)}
     return _reply(executor, sk, records, None, **extra)
 
 
@@ -169,7 +178,7 @@ def _frame(sk: Sketch) -> tuple:
     o = GeomDataAPI.geomDataAPI_Point(f.attribute("Origin")).pnt()
     x = GeomDataAPI.geomDataAPI_Dir(f.attribute("DirX")).dir()
     n = GeomDataAPI.geomDataAPI_Dir(f.attribute("Norm")).dir()
-    xyz = lambda p: [round(p.x(), 6) + 0.0, round(p.y(), 6) + 0.0, round(p.z(), 6) + 0.0]
+    xyz = lambda p: [p.x(), p.y(), p.z()]
     y = n.cross(x)
     return xyz(o), xyz(x), xyz(y), xyz(n)
 

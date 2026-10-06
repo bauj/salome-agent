@@ -1,3 +1,5 @@
+import math
+
 from executor.shaper.features import _build, _operands
 from executor.shaper.primitives import _num
 from executor.shaper.state import SUB_TYPES, forget, new_name, state, subshapes, tool
@@ -27,9 +29,12 @@ def _plane_test(where: dict):
     op = where.get("on_plane")
     if not isinstance(op, dict):
         raise ValueError("on_plane must be {point: [x, y, z], normal: [x, y, z]}")
-    p0 = [_num(v, "on_plane point") for v in op.get("point") or []]
-    n = [_num(v, "on_plane normal") for v in op.get("normal") or []]
-    if len(p0) != 3 or len(n) != 3 or not any(n):
+    p0, n = op.get("point"), op.get("normal")
+    if not (isinstance(p0, list) and isinstance(n, list) and len(p0) == len(n) == 3):
+        raise ValueError("on_plane needs point [x, y, z] and normal [x, y, z]")
+    p0 = [_num(v, "on_plane point") for v in p0]
+    n = [_num(v, "on_plane normal") for v in n]
+    if not any(n):
         raise ValueError("on_plane needs point [x, y, z] and a non-zero normal [x, y, z]")
     norm = sum(c * c for c in n) ** 0.5
     side = lambda p: sum((p[i] - p0[i]) * n[i] for i in range(3)) / norm
@@ -37,7 +42,7 @@ def _plane_test(where: dict):
     tests = {"on": lambda d: abs(d) < 1e-6, "in": lambda d: d < -1e-6,
              "out": lambda d: d > 1e-6, "onin": lambda d: d < 1e-6,
              "onout": lambda d: d > -1e-6}
-    if state_ not in tests:
+    if not isinstance(state_, str) or state_ not in tests:
         raise ValueError(f"state must be one of {', '.join(tests)}, got {state_!r}")
     return lambda pts: all(tests[state_](side(p)) for p in pts)
 
@@ -73,8 +78,8 @@ def select(subs: list, where, points_of) -> list:
 
 
 def _count(value) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != int(value) \
-            or value < 1:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) or value != int(value) or value < 1:
         raise ValueError(f"count must be a whole number of at least 1, got {value!r}")
     return int(value)
 
@@ -177,12 +182,14 @@ def tool_explode(executor, args: dict):
     name = _shape_name(executor, args)
     sub_type = args.get("sub_type")
     subs = subshapes(executor, name, sub_type)
+    if not subs:
+        raise ValueError(f"{name} has no {sub_type}")
     if len(subs) > _MAX_EXPLODE:
         raise ValueError(f"{name} has {len(subs)} {sub_type}s, more than {_MAX_EXPLODE}: "
                          "pick some with get_subshapes and get_subshape")
     records, names = [], []
     for u in subs:
-        out = new_name(executor, f"{name}_{sub_type}")
+        out = new_name(executor, sub_type)
         code = f"{out} = model.addCopy(shaper_doc, [{_sels(sub_type, [u])}], 1)"
         r = _build(executor, out, "addCopy", code, [name], "copy")
         if not r["ok"]:
@@ -254,6 +261,13 @@ def tool_make_thick_solid(executor, args: dict):
     return _build(executor, out, "addHollowedSolid", code, [name], "solid")
 
 
+def _no_repeats(*groups) -> None:
+    names = [n for g in groups for n in (g if isinstance(g, list) else [g])]
+    twice = sorted({n for n in names if names.count(n) > 1 and isinstance(n, str)})
+    if twice:
+        raise ValueError(f"{', '.join(twice)} given more than once")
+
+
 def _tools_sels(executor, names, field: str) -> tuple[list, list]:
     """Cutting tools: shapes, or construction planes."""
     st = state(executor)
@@ -282,8 +296,12 @@ def _tools_sels(executor, names, field: str) -> tuple[list, list]:
           "tools": {"type": "array", "items": {"type": "string"}}},
           "required": ["shapes"]})
 def tool_partition(executor, args: dict):
+    tools = args.get("tools")
+    if tools is not None and not isinstance(tools, list):
+        raise ValueError(f"tools must be a list of names, got {tools!r}")
+    _no_repeats(args.get("shapes"), tools or [])
     sels, refs = _operands(executor, args.get("shapes"), "shapes")
-    if args.get("tools"):
+    if tools:
         t_sels, t_refs = _tools_sels(executor, args["tools"], "tools")
         sels, refs = sels + t_sels, refs + t_refs
     if len(sels) < 2:
@@ -302,6 +320,7 @@ def tool_partition(executor, args: dict):
           "tools": {"type": "array", "items": {"type": "string"}}},
           "required": ["objects", "tools"]})
 def tool_split(executor, args: dict):
+    _no_repeats(args.get("objects"), args.get("tools"))
     sels, refs = _operands(executor, args.get("objects"), "objects")
     t_sels, t_refs = _tools_sels(executor, args.get("tools"), "tools")
     out = new_name(executor, "split")
