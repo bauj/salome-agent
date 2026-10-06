@@ -256,22 +256,22 @@ Run the result on its own, with no agent involved:
 
 ### GUI plugin setup
 
-One-time: `scripts/install-plugin.sh` — appends a self-bootstrapping block to
-`~/.config/salome/Plugins/salome_plugins.py` that puts the repo on `sys.path` and
-registers the menu entry with a direct `AddFunction` call (an `import`-only
-indirection does not reach the plugin manager). No env vars needed.
-
-Each session: launch `"$SALOME_ROOT"/salome` (single-process is fine), then
-**Tools ▸ Plugins ▸ Launch SALOME agent server**. A status message shows
-`127.0.0.1:<port>`. Run the agent normally — it finds the server via
+The menu entry comes with the salome-agent-gui SAT product: launch
+`"$SALOME_ROOT"/salome`, then **Tools ▸ Plugins ▸ SALOME Agent** starts the server
+inside the GUI and opens the chat window. CLI runs find the same server via
 `~/.salome_agent/server.json`.
+
+If an older setup ran `scripts/install-plugin.sh` (removed), delete its
+`# --- salome-agent server launcher ---` block from
+`~/.config/salome/Plugins/salome_plugins.py`: it puts a git checkout first on
+`sys.path`, so SALOME runs that checkout's server instead of the installed one.
 
 Objects a run publishes appear in the Object Browser and 3D viewer, prefixed
 `sa_<run_id>_`. A failed stage attempt can leave debris under that prefix —
 `report.md` names it; bulk-delete by prefix.
 
-A second menu click **restarts** the server (new token, new port). A stage timeout
-**poisons** the server: the run aborts (exit 1) and you restart it from the same menu
+A stage timeout **poisons** the server: the run aborts (exit 1) and the next menu
+click restarts it
 — or, if the GUI is frozen by a runaway stage, kill it. The headless server (which
 otherwise stays up across runs) **exits** on a poisoning timeout — restart it.
 
@@ -401,9 +401,7 @@ agent_server/       the server that runs inside SALOME
 executor/
   registry.py       ToolRegistry — tool decorator, schemas, arg-type coercion
   geom/             geom tool implementations + per-tool JSON schemas
-plugin/             salome_agent_plugin.py — standalone manual-registration variant
-                    (install-plugin.sh inlines the same call; not imported by it)
-scripts/            install-plugin.sh, start-headless-server.sh, regen-toplevel-api.py
+scripts/            start-headless-server.sh, regen-toplevel-api.py, dump-view.sh
 docs/superpowers/   design specs + implementation plans
 ```
 

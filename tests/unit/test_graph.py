@@ -203,6 +203,14 @@ def test_endpoint_fatal_message_distinguishes_429_and_4xx():
     assert "backend is" in _llm_endpoint_fatal(_http_error(502))
 
 
+def test_outdated_server_ends_the_run_with_its_own_message():
+    from salome_agent.executor_client import ServerOutdated
+    from salome_agent.graph import _llm_endpoint_fatal
+
+    msg = _llm_endpoint_fatal(ServerOutdated("the agent server has no shaper tools"))
+    assert msg == "the agent server has no shaper tools"
+
+
 def test_endpoint_fatal_4xx_names_base_url_and_quotes_the_body():
     from salome_agent.graph import _llm_endpoint_fatal
 

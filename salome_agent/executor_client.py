@@ -14,6 +14,10 @@ class ServerBusy(Exception):
     pass
 
 
+class ServerOutdated(Exception):
+    pass
+
+
 class ExecutorClient:
     def __init__(self, host: str, port: int, token: str, run_id: str,
                  record_path: str | None = None, hold: bool = False):
@@ -91,7 +95,15 @@ class ExecutorClient:
     def list_tools(self, module=None):
         if module is None:
             return self._call("list_tools")
-        return self._call("list_tools", module=module)
+        resp = self._call("list_tools", module=module)
+        # A server older than the module routing ignores `module` and answers
+        # with the geom tools.
+        if resp.get("module") != module:
+            raise ServerOutdated(
+                f"the agent server has no {module} tools: it runs older code than "
+                f"this engine. Restart SALOME; if that does not help, an older "
+                f"salome-agent is first on SALOME's sys.path (see README, GUI plugin setup)")
+        return resp
 
     def call_tool(self, name, args, pin=None, module=None):
         extra = {}

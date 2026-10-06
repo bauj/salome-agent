@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from salome_agent.executor_client import (ExecutorClient, SessionDied,
+from salome_agent.executor_client import (ExecutorClient, ServerOutdated, SessionDied,
                                           SessionPoisoned)
 
 
@@ -147,7 +147,7 @@ def test_module_goes_on_the_wire_only_when_given(tmp_path):
     path = tmp_path / "exec_trace.jsonl"
     box = []
     t = threading.Thread(target=_fake_server,
-                         args=(box, [{"id": 1, "tools": []},
+                         args=(box, [{"id": 1, "tools": [], "module": "shaper"},
                                      {"id": 2, "ok": True, "records": []}]),
                          daemon=True)
     t.start()
@@ -160,3 +160,28 @@ def test_module_goes_on_the_wire_only_when_given(tmp_path):
     assert lines[-2]["payload"] == {"module": "shaper"}
     assert lines[-1]["payload"] == {"name": "create_sketch", "args": {"plane": "XOY"},
                                     "module": "shaper"}
+
+
+def test_list_tools_refuses_a_server_that_ignored_the_module():
+    # A server older than SHAPER routing answers every list_tools with the geom
+    # tools and no "module" key; a SHAPER stage must not be handed those.
+    box = []
+    t = threading.Thread(target=_fake_server,
+                         args=(box, [{"id": 1, "tools": [{"name": "make_box"}]}]),
+                         daemon=True)
+    t.start()
+    client = _connect(box)
+    with pytest.raises(ServerOutdated, match="shaper"):
+        client.list_tools(module="shaper")
+    t.join()
+
+
+def test_list_tools_without_module_accepts_any_server():
+    box = []
+    t = threading.Thread(target=_fake_server,
+                         args=(box, [{"id": 1, "tools": [{"name": "make_box"}]}]),
+                         daemon=True)
+    t.start()
+    client = _connect(box)
+    assert client.list_tools()["tools"] == [{"name": "make_box"}]
+    t.join()
