@@ -76,14 +76,43 @@ def _is_tool_module(module: str) -> bool:
     return bool(spec_for(module).call_prefix)
 
 
+# A SHAPER result used by a GEOM call is a one-way BREP copy, as on the live
+# server (executor.shaper.state.to_geom): geompy rejects SHAPERSTUDY objects.
+_TO_GEOM = """def _to_geom(obj):
+    model.do()
+    shapes = [geompy.RestoreShape(r.shape().getShapeStream(False).encode())
+              for r in obj.feature().results() if r.shape() is not None]
+    return shapes[0] if len(shapes) == 1 else geompy.MakeCompound(shapes)
+"""
+# Before a script stage that follows SHAPER work: its results must be in the study.
+_SHAPER_PUBLISH = "model.end()\nmodel.publishToShaperStudy()\nmodel.begin()\n"
+
+
+def _bridge_arg(arg: dict, shaper_vars: set) -> dict:
+    if arg["kind"] == "ref" and arg["value"] in shaper_vars:
+        return {"kind": "expr", "value": f"_to_geom({arg['value']})", "refs": [arg["value"]]}
+    if arg["kind"] == "list":
+        return {**arg, "value": [_bridge_arg(a, shaper_vars) for a in arg["value"]]}
+    return arg
+
+
+def _bridged(records: list, shaper_vars: set) -> list:
+    return [{**r, "args": [_bridge_arg(a, shaper_vars) for a in r.get("args") or []]}
+            for r in records]
+
+
 def _geom_bodies(graph) -> dict:
     from salome_agent.codegen import _reachable, generate, roots_for
     from salome_agent.modules import spec_for
 
+    shaper_vars = {v for n in graph.nodes.values() if n.module == "shaper"
+                   for r in n.records for v in r.get("out_vars") or []}
     per_block, roots = {}, []
     for b in graph.blocks:
         if b.script is None:
             records = [r for n in graph.block_nodes(b.id) for r in n.records]
+            if b.module != "shaper" and shaper_vars:
+                records = _bridged(records, shaper_vars)
             names = b.result_names or [p for n in graph.block_nodes(b.id) for p in n.published]
             per_block[b.id] = (records, names)
             roots += roots_for(records, names)
@@ -112,11 +141,17 @@ def render_script(graph, run_id: str) -> str:
     geom_bodies = _geom_bodies(graph)
     bodies = []
     modules = set()
+    unpublished = False
     for b in graph.blocks:
         text = b.script if b.script is not None else geom_bodies.get(b.id)
         if text:
+            if b.script is not None and unpublished:
+                text = _SHAPER_PUBLISH + text
+                unpublished = False
             bodies.append(f"# {b.label}\n{text}")
             modules.add(b.module)
+            if b.module == "shaper":
+                unpublished = True
     body = "\n\n".join(bodies)
 
     preamble = _KERNEL_INIT
@@ -137,6 +172,8 @@ def render_script(graph, run_id: str) -> str:
         preamble += _GUI_INIT
     if "find_object(" in body:
         preamble += _FIND_OBJECT
+    if "_to_geom(" in body:
+        preamble += _TO_GEOM
     if "study_ns" in body:
         preamble += 'study_ns = "salome_agent_run"\n'
 
