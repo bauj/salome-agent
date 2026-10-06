@@ -2,7 +2,9 @@ import math
 
 from executor.shaper.features import _build, _operands
 from executor.shaper.primitives import _AXIS, _XYZ, _axis, _num, _point
-from executor.shaper.state import measure, new_name, state, tool
+from executor.shaper.state import new_name, raw_box, state, tool
+
+_MAX_COPIES = 500
 
 _MOVED = (" `shape` is used up: refer to the result by its new name.")
 _SHAPE = {"type": "string"}
@@ -16,18 +18,24 @@ def _source(executor, args: dict) -> tuple[list, list]:
 
 
 def _count(value, what: str, least: int = 2) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != int(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) or value != int(value):
         raise ValueError(f"{what} must be a whole number, got {value!r}")
-    if value < least:
-        raise ValueError(f"{what} must be at least {least}, got {value!r}")
+    if not least <= value <= _MAX_COPIES:
+        raise ValueError(f"{what} must be from {least} to {_MAX_COPIES}, got {value!r}")
     return int(value)
 
 
-def _translation(executor, name: str, sels: list, refs: list, d: list, fn="addTranslation",
+def _unchanged(name: str, why: str) -> dict:
+    return {"ok": True, "records": [], "name": name,
+            "note": f"{why}: nothing was done, {name} keeps its name"}
+
+
+def _translation(executor, name: str, sels: list, refs: list, d: list,
                  code: str = "", helpers: tuple = ()) -> dict:
     code += (f"{name} = model.addTranslation(shaper_doc, [{', '.join(sels)}], "
              f"{', '.join(repr(v) for v in d)})")
-    return _build(executor, name, fn, code, refs, "transform", helpers=helpers)
+    return _build(executor, name, "addTranslation", code, refs, "transform", helpers=helpers)
 
 
 @tool("translate", category="transform",
@@ -38,6 +46,8 @@ def _translation(executor, name: str, sels: list, refs: list, d: list, fn="addTr
 def tool_translate(executor, args: dict):
     d = [_num(args.get(k), k) for k in ("dx", "dy", "dz")]
     sels, refs = _source(executor, args)
+    if not any(d):
+        return _unchanged(refs[0], "a move by (0, 0, 0)")
     return _translation(executor, new_name(executor, "translation"), sels, refs, d)
 
 
@@ -50,6 +60,8 @@ def tool_rotate(executor, args: dict):
     angle = _num(args.get("angle_deg"), "angle_deg")
     sels, refs = _source(executor, args)
     axis, arefs = _axis(executor, args.get("axis"))
+    if angle % 360 == 0:
+        return _unchanged(refs[0], f"a rotation by {angle:g} degrees")
     name = new_name(executor, "rotation")
     code = f"{name} = model.addRotation(shaper_doc, [{', '.join(sels)}], {axis}, {angle!r})"
     return _build(executor, name, "addRotation", code, refs + arefs, "transform")
@@ -63,6 +75,8 @@ _BASIS_KIND = {"plane": "FACE", "axis": "EDGE", "point": "VERTEX"}
 
 
 def _basis(executor, entity) -> tuple[str, list]:
+    if not isinstance(entity, str):
+        raise ValueError(f"entity must be a name, got {entity!r}")
     if entity in _BASIS:
         kind, path = _BASIS[entity]
         return f'model.selection("{kind}", "{path}")', []
@@ -134,12 +148,20 @@ def tool_scale(executor, args: dict):
           "required": ["shape", "vector", "step", "count"]})
 def tool_multi_translate(executor, args: dict):
     step, count = _num(args.get("step"), "step"), _count(args.get("count"), "count")
+    if step == 0:
+        raise ValueError("step must not be 0: every copy would sit on the first")
     sels, refs = _source(executor, args)
     axis, arefs = _axis(executor, args.get("vector"), "vector")
     rest = f"{axis}, {step!r}, {count}"
     if any(args.get(k) is not None for k in ("vector2", "step2", "count2")):
         step2 = _num(args.get("step2"), "step2")
         count2 = _count(args.get("count2"), "count2")
+        if step2 == 0:
+            raise ValueError("step2 must not be 0: every copy would sit on the first")
+        if count * count2 > _MAX_COPIES:
+            raise ValueError(f"count x count2 must be at most {_MAX_COPIES}")
+        if args.get("vector2") == args.get("vector"):
+            raise ValueError("vector2 must differ from vector to make a grid")
         axis2, arefs2 = _axis(executor, args.get("vector2"), "vector2")
         rest += f", {axis2}, {step2!r}, {count2}"
         arefs += arefs2
@@ -161,7 +183,12 @@ def tool_multi_rotate(executor, args: dict):
     axis, arefs = _axis(executor, args.get("axis"))
     rest = f"{axis}, {count}"
     if args.get("angle_deg") is not None:
-        rest = f"{axis}, {_num(args['angle_deg'], 'angle_deg')!r}, {count}"
+        step = _num(args["angle_deg"], "angle_deg")
+        if step % 360 == 0 or abs(step) * (count - 1) >= 360 - 1e-9:
+            raise ValueError(f"{count} copies every {step:g} degrees overlap: keep "
+                             "angle_deg x (count - 1) under 360, or leave angle_deg out "
+                             "to spread them round the full circle")
+        rest = f"{axis}, {step!r}, {count}"
     name = new_name(executor, "multi_rotation")
     code = f"{name} = model.addMultiRotation(shaper_doc, [{', '.join(sels)}], {rest})"
     return _build(executor, name, "addMultiRotation", code, refs + arefs, "transform")
@@ -186,9 +213,9 @@ def tool_offset_shape(executor, args: dict):
 
 # --- position ---------------------------------------------------------------
 
-def _unit(v: list, what: str) -> list:
+def _unit(v: list, what: str, tol: float = 1e-12) -> list:
     n = math.sqrt(sum(c * c for c in v))
-    if n < 1e-12:
+    if n < tol:
         raise ValueError(f"{what} must not be [0, 0, 0]")
     return [c / n for c in v]
 
@@ -197,16 +224,19 @@ def frame_rotation(x_dir: list, y_dir: list) -> tuple[list, float]:
     """Axis (through the origin) and angle in degrees of the rotation taking the
     world X and Y axes to x_dir and y_dir. y_dir is made perpendicular to x_dir."""
     x = _unit(x_dir, "x_dir")
-    dot = sum(a * b for a, b in zip(x, y_dir))
-    y = _unit([b - dot * a for a, b in zip(x, y_dir)], "y_dir (it is parallel to x_dir)")
+    y0 = _unit(y_dir, "y_dir")
+    dot = sum(a * b for a, b in zip(x, y0))
+    y = _unit([b - dot * a for a, b in zip(x, y0)], "y_dir (it is parallel to x_dir)",
+              tol=1e-9)
     z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]]
     R = [[x[i], y[i], z[i]] for i in range(3)]       # columns are the new axes
-    cos = max(-1.0, min(1.0, (R[0][0] + R[1][1] + R[2][2] - 1) / 2))
-    angle = math.acos(cos)
+    anti = [R[2][1] - R[1][2], R[0][2] - R[2][0], R[1][0] - R[0][1]]
+    sin2 = math.sqrt(sum(a * a for a in anti))        # 2 sin(angle)
+    angle = math.atan2(sin2, R[0][0] + R[1][1] + R[2][2] - 1)
     if angle < 1e-9:
         return [0.0, 0.0, 1.0], 0.0
     if math.pi - angle > 1e-6:
-        axis = [R[2][1] - R[1][2], R[0][2] - R[2][0], R[1][0] - R[0][1]]
+        axis = anti
     else:   # a half turn: the axis is the column of R + I with the largest norm
         cols = [[R[r][c] + (r == c) for r in range(3)] for c in range(3)]
         axis = max(cols, key=lambda c: sum(v * v for v in c))
@@ -225,15 +255,15 @@ def frame_rotation(x_dir: list, y_dir: list) -> tuple[list, float]:
           "y_dir": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}},
           "required": ["shape"]})
 def tool_position(executor, args: dict):
-    vec = lambda k, d: [_num(v, k) for v in (args.get(k) or d)]
-    origin = vec("origin", [0, 0, 0])
-    axis, angle = frame_rotation(vec("x_dir", [1, 0, 0]), vec("y_dir", [0, 1, 0]))
-    if len(origin) != 3:
-        raise ValueError(f"origin must be [x, y, z], got {origin}")
+    origin = _vec3(args, "origin", [0, 0, 0])
+    axis, angle = frame_rotation(_vec3(args, "x_dir", [1, 0, 0]),
+                                 _vec3(args, "y_dir", [0, 1, 0]))
     sels, refs = _source(executor, args)
+    if angle == 0 and not any(origin):
+        return _unchanged(refs[0], "the target frame is the world frame")
     name = new_name(executor, "position")
     if angle == 0:
-        return _translation(executor, name, sels, refs, origin, fn="addPlacement")
+        return _translation(executor, name, sels, refs, origin)
     ax, rot = f"{name}_axis", f"{name}_rot"
     code = (f"{ax} = model.addAxis(shaper_doc, {', '.join(repr(a) for a in axis)})\n"
             f"_name({ax}, {ax!r})\n"
@@ -241,12 +271,28 @@ def tool_position(executor, args: dict):
             f"model.selection(\"EDGE\", {ax!r}), {angle!r})\n"
             f"_name({rot}, {rot!r})\n")
     return _translation(executor, name, [f"*{rot}.results()"], refs, origin,
-                        fn="addPlacement", code=code, helpers=(ax, rot))
+                        code=code, helpers=(ax, rot))
+
+
+def _vec3(args: dict, key: str, default: list) -> list:
+    v = args.get(key)
+    if v is None:
+        return default
+    if not isinstance(v, (list, tuple)) or len(v) != 3:
+        raise ValueError(f"{key} must be [x, y, z], got {v!r}")
+    return [_num(c, key) for c in v]
 
 
 # --- align ------------------------------------------------------------------
 
 _AXIS_IDX = {"x": 0, "y": 1, "z": 2}
+
+
+def _bbox(executor, name: str) -> list:
+    """Unrounded [xmin, xmax, ymin, ymax, zmin, zmax]: a rounded box leaves a
+    sliver gap or overlap where a flush placement is asked for."""
+    b = raw_box(executor, name)
+    return [b[0], b[3], b[1], b[4], b[2], b[5]]
 
 
 def align_delta(shape_bbox: list, to_bbox: list, match: list) -> list:
@@ -259,17 +305,19 @@ def align_delta(shape_bbox: list, to_bbox: list, match: list) -> list:
     delta, seen = [0.0, 0.0, 0.0], set()
     for c in match:
         axis = c.get("axis") if isinstance(c, dict) else None
-        if axis not in _AXIS_IDX:
+        if not isinstance(axis, str) or axis not in _AXIS_IDX:
             raise ValueError(f"match axis must be x, y or z, got {axis!r}")
         if axis in seen:
             raise ValueError(f"two match entries for axis {axis}")
         seen.add(axis)
-        if c.get("my") not in ("min", "max", "center") or \
-                c.get("target") not in ("min", "max", "center"):
+        if not all(isinstance(c.get(k), str) and c[k] in ("min", "max", "center")
+                   for k in ("my", "target")):
             raise ValueError("my and target must be min, max or center")
         i = _AXIS_IDX[axis]
-        gap = _num(c.get("gap", 0) or 0, "gap")
-        delta[i] = round(ext(to_bbox, i, c["target"]) + gap - ext(shape_bbox, i, c["my"]), 6)
+        gap = 0 if c.get("gap") is None else _num(c["gap"], "gap")
+        delta[i] = ext(to_bbox, i, c["target"]) + gap - ext(shape_bbox, i, c["my"])
+        if abs(delta[i]) < 1e-9:
+            delta[i] = 0.0
     return delta
 
 
@@ -290,12 +338,14 @@ def align_delta(shape_bbox: list, to_bbox: list, match: list) -> list:
 def tool_align(executor, args: dict):
     sels, refs = _source(executor, args)
     to = args.get("to")
+    if not isinstance(to, str):
+        raise ValueError(f"to must be one published name, got {to!r}")
+    if to == refs[0]:
+        raise ValueError("to must be another shape than shape")
     _operands(executor, [to], "to")
-    delta = align_delta(measure(executor, refs[0])["bbox"], measure(executor, to)["bbox"],
-                        args.get("match"))
+    delta = align_delta(_bbox(executor, refs[0]), _bbox(executor, to), args.get("match"))
     if not any(delta):
-        return {"ok": True, "records": [], "name": refs[0],
-                "note": f"{refs[0]} is already in place; nothing was moved"}
+        return _unchanged(refs[0], f"{refs[0]} is already in place")
     out = _translation(executor, new_name(executor, "translation"), sels, refs, delta)
     if out["ok"]:
         out["moved_by"] = delta

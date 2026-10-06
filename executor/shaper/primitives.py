@@ -41,6 +41,8 @@ def _point(executor, value, var: str, what: str) -> tuple[str, str, list, tuple]
     make_point name, or coordinates turned into a helper point `var`."""
     st = state(executor)
     xyz = _coords(value, what)
+    if xyz is None and not isinstance(value, str):
+        raise ValueError(f"{what} must be [x, y, z] or a make_point name, got {value!r}")
     if xyz is not None:
         code = (f"{var} = model.addPoint(shaper_doc, {', '.join(repr(v) for v in xyz)})\n"
                 + PUBLISH_LINE.format(var=var, name=var) + "\n")
@@ -56,7 +58,7 @@ def _point(executor, value, var: str, what: str) -> tuple[str, str, list, tuple]
 def _xyz_of(executor, value) -> list | None:
     """Coordinates of a point argument, given or of a make_point result."""
     xyz = _coords(value, "point")
-    if xyz is None and state(executor).objects.get(value) == "point":
+    if xyz is None and isinstance(value, str) and state(executor).objects.get(value) == "point":
         xyz = construction_info(executor, value)["at"]
     return xyz
 
@@ -79,6 +81,8 @@ def _one_form(args: dict, *forms: tuple) -> None:
 
 
 def _axis(executor, value, what: str = "axis") -> tuple[str, list]:
+    if not isinstance(value, str):
+        raise ValueError(f"{what} must be OX, OY, OZ or a make_axis name, got {value!r}")
     if value in _AXES:
         return f'model.selection("EDGE", "PartSet/{value}")', []
     st = state(executor)

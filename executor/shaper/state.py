@@ -423,9 +423,8 @@ def _precise_box(executor, results) -> list | None:
     return box
 
 
-def measure(executor, name: str) -> dict:
-    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
-    import GeomAPI
+def raw_box(executor, name: str) -> list:
+    """[xmin, ymin, zmin, xmax, ymax, zmax], unrounded."""
     results = results_of(executor, name)
     if not results:
         raise ValueError(f"{name} has no result")
@@ -434,7 +433,14 @@ def measure(executor, name: str) -> dict:
         sizes = [r.shape().computeSize()[1:] for r in results]
         box = [min(s[i] for s in sizes) for i in range(3)] + \
             [max(s[i] for s in sizes) for i in range(3, 6)]
-    xmin, ymin, zmin, xmax, ymax, zmax = box
+    return box
+
+
+def measure(executor, name: str) -> dict:
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    import GeomAPI
+    results = results_of(executor, name)
+    xmin, ymin, zmin, xmax, ymax, zmax = raw_box(executor, name)
     r4 = lambda v: round(v, 4) + 0.0
     shapes = [r.shape() for r in results]
     info = {
