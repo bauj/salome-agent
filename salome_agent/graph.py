@@ -275,7 +275,7 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
 
     images = state.get("reference_images")
     after = _follow_up(state)
-    if not images:
+    if not images or _shaper_on_geom(state):
         return Command(goto=after)
     llm = config["configurable"]["llm_client"]
     retries = ((state.get("config") or {}).get("llm") or {}).get("vision_fix_retries", 2)
