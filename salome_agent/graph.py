@@ -220,7 +220,7 @@ def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
 
 
 def retry_context(state: dict, idx: int, client) -> dict | None:
-    """What a geom stage's PREVIOUS attempt left behind, for the retry prompt
+    """What a tool stage's PREVIOUS attempt left behind, for the retry prompt
     (GH #38). None on a first attempt. The failed attempt's call_log is
     reused as-is (both here, for the built-shapes list, and by the caller as
     the new attempt's seed_call_log) — retry_gate only ever re-enters
@@ -239,8 +239,10 @@ def retry_context(state: dict, idx: int, client) -> dict | None:
     built = [n for call in call_log for n in (call.get("publish") or [])]
     built_info = None
     if built and client is not None:
+        module = stage.get("module") or "geom"
+        extra = {} if module == "geom" else {"module": module}
         try:
-            m = client.call_tool("measure", {"names": built})
+            m = client.call_tool("measure", {"names": built}, **extra)
             if m.get("ok"):
                 built_info = m.get("measurements")
             else:

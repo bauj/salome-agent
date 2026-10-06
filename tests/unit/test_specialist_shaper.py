@@ -138,3 +138,16 @@ def test_initial_offer_uses_the_modules_core_set():
     got = initial_offered({"tools": ["revolve"]}, {"sketch_add", "revolve", "loft"},
                           frozenset({"sketch_add"}))
     assert got == {"sketch_add", "revolve"}
+
+
+def test_retry_block_names_the_error_hint_and_built_objects():
+    text = spec_for("shaper").render_retry({
+        "last_error": {"message": "sketch_1 has open ends"}, "hint": "close it",
+        "built": ["sketch_1", "ext_1"],
+        "built_info": {"sketch_1": {"regions": [{}]},
+                       "ext_1": {"bbox": [0, 1, 0, 1, 0, 1], "area": 6, "faces": 6,
+                                 "volume": 1}}})
+    assert "failed: sketch_1 has open ends" in text
+    assert "User hint for this retry: close it" in text
+    assert "sketch_1 — a sketch, 1 regions" in text
+    assert "ext_1 — bbox [0, 1, 0, 1, 0, 1], area 6, 6 faces, volume 1" in text

@@ -191,6 +191,23 @@ def _upstream(client, names: list[str]) -> str | None:
             + "\n".join(_upstream_line(n, info.get(n)) for n in names))
 
 
+def _retry_block(retry: dict) -> str:
+    lines = []
+    err = retry.get("last_error")
+    if err:
+        lines.append(f"Your previous attempt at this stage failed: {err.get('message')}")
+    if retry.get("hint"):
+        lines.append(f"User hint for this retry: {retry['hint']}")
+    built = retry.get("built") or []
+    if built:
+        info = retry.get("built_info") or {}
+        lines.append("Objects your previous attempt already built and published — reuse "
+                     "them if they are still correct, or rebuild only the ones the error "
+                     "was actually in:")
+        lines += [_upstream_line(n, info.get(n)) for n in built]
+    return "\n".join(lines)
+
+
 def _render(result: dict) -> str:
     hidden = {"records", "result_shape", "shape_info"}
     return str({k: v for k, v in result.items() if k not in hidden})
@@ -204,6 +221,7 @@ SHAPER_SPEC = register(ModuleSpec(
     execute=lambda client, name, args: client.call_tool(name, args, module="shaper"),
     render_result=_render,
     render_upstream=_upstream,
+    render_retry=_retry_block,
     tools_for=lambda client: {t["name"]: t
                               for t in client.list_tools(module="shaper")["tools"]},
     needs_session=True,
