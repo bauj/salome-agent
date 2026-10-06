@@ -133,6 +133,7 @@ def test_list_tools_for_shaper(monkeypatch):
     _with_shaper(monkeypatch)
     resp = Core(FakeBackend()).handle({"id": 1, "cmd": "list_tools", "module": "shaper"})
     assert resp["tools"] == [{"name": "shaper_tool"}]
+    assert resp["module"] == "shaper"
 
 
 def test_call_tool_routes_to_shaper_and_refreshes_shaper(monkeypatch):
