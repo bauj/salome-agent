@@ -272,3 +272,41 @@ def test_shaper_calls_are_kept_as_shaper_nodes():
     nodes = list(graph.nodes.values())
     assert [n.module for n in nodes] == ["shaper", "shaper"]
     assert nodes[1].deps == [nodes[0].id]
+
+
+def _ext_stage():
+    ext = {"fn": "addExtrusion", "emit": "stmt",
+           "code": "ext_1 = model.addExtrusion(shaper_doc, [], model.selection(), 5, 0)",
+           "args": [], "out_vars": ["ext_1"], "publish": ["ext_1"]}
+    return {"module": "shaper", "status": "ok", "script": None, "result_names": ["ext_1"],
+            "calls": [{"tool": "extrude", "tool_args": {}, "records": [ext]}]}
+
+
+def test_a_geom_call_on_a_shaper_result_gets_a_brep_copy():
+    geom = {"module": "geom", "status": "ok", "script": None, "result_names": ["fuse_1"],
+            "calls": [{"tool": "make_box", "tool_args": {}, "records": [_box("box_1")]},
+                      {"tool": "fuse", "tool_args": {},
+                       "records": [_fuse("fuse_1", "ext_1", "box_1")]}]}
+    out = assemble({"stages": {0: _ext_stage(), 1: geom}, "run_id": "x",
+                    "user_request": "r", "plan": []})
+    ast.parse(out)
+    assert "fuse_1 = geompy.MakeFuse(_to_geom(ext_1), box_1)" in out
+    assert "def _to_geom(obj):" in out and "geomBuilder.New()" in out
+    assert "ext_1 = model.addExtrusion" in out      # still built: the copy needs it
+
+
+def test_a_script_stage_after_shaper_work_sees_it_published():
+    mesh = {"module": "smesh", "status": "ok", "script": 'm = smesh.Mesh(find_object("ext_1"))'}
+    out = assemble({"stages": {0: _ext_stage(), 1: mesh}, "run_id": "x",
+                    "user_request": "r", "plan": []})
+    ast.parse(out)
+    bridge = out.index("model.end()\nmodel.publishToShaperStudy()\nmodel.begin()\n")
+    assert out.index("ext_1 = model.addExtrusion") < bridge < out.index("smesh.Mesh(")
+    assert out.rstrip().endswith("model.publishToShaperStudy()")
+    assert "_to_geom" not in out
+
+
+def test_a_shaper_only_result_has_no_bridge():
+    out = assemble({"stages": {0: _ext_stage()}, "run_id": "x", "user_request": "r",
+                    "plan": []})
+    assert "_to_geom" not in out and out.count("publishToShaperStudy") == 1
