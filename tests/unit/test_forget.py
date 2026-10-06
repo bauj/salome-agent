@@ -150,3 +150,17 @@ def test_shaper_results_are_found_too():
     r = forget_names(_ns(study), {}, ["extrusion_1", "box_1"], erase=erased.append)
     assert r == {"ok": True, "removed": ["extrusion_1", "box_1"]}
     assert shown == ["0:2:extrusion_1"] and erased[0] == "0:2:extrusion_1"
+
+
+def test_introspect_imports_shaper_model_on_the_gui_thread():
+    calls = []
+    backend = SimpleNamespace(poisoned=lambda: False, namespace={"geompy": object()},
+                              run_tool=lambda fn, timeout: calls.append(1) or fn())
+    import agent_server.core as core
+    core._LAZY_APIS["model"] = "json"   # any importable module stands in for SHAPER's
+    try:
+        r = Core(backend).handle({"id": 1, "cmd": "introspect", "names": ["model", "nope"]})
+    finally:
+        core._LAZY_APIS["model"] = "salome.shaper.model"
+    assert "dumps" in r["model"]["members"] and r["nope"]["members"] == []
+    assert calls == [1]

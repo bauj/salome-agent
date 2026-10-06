@@ -27,10 +27,10 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from salome_agent.executor_client import ExecutorClient  # noqa: E402
+from salome_agent.verify.introspect import MODULES  # noqa: E402
 
 HS = Path(os.path.expanduser("~/.salome_agent/server.json"))
 FIXTURE = REPO / "salome_agent" / "verify" / "toplevel_api.json"
-MODULES = ["geompy", "smesh"]
 
 
 def _salome_root() -> str:
