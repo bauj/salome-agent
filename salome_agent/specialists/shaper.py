@@ -44,7 +44,7 @@ computed by hand:
 Solids come from sketches or faces: extrude, extrude_cut (a pocket in a solid),
 extrude_fuse (a boss on a solid), revolve. Every feature reply carries its
 measure (volume, area, face count, valid).
-
+{verify}
 When done, call finish_stage(result_names) with the published names that
 matter (sketches, faces or solids). It is refused while a sketch it uses has
 loose ends. If you abandon an attempt, call discard on what you built for it.
@@ -80,7 +80,31 @@ is never done in the reasoning:
 Do only what the request asks. Each turn: state your reasoning in at most 2-3
 sentences, then call one or more tools. Batch INDEPENDENT calls in one turn;
 a call that needs a name another call is about to create waits for the next
-turn."""
+turn.
+
+You may be given only a subset of the SHAPER tools. If you need one that is not
+in your list, call load_tools with its name or category."""
+
+# policy.verify_cadence: how hard the specialist is pushed to check placement.
+_VERIFY_HINT = {
+    "none": "",
+    "final": (
+        "\nEvery feature reply reports the result's bbox. Glance at it each time; "
+        "call measure on your result(s) once before finish_stage, and on any "
+        "earlier object whose position you need but did not build yourself.\n"),
+    "strict": (
+        "\nEvery feature reply reports the result's bbox. After each fuse, cut, "
+        "common, extrude_cut or extrude_fuse, read it (or call measure) and confirm "
+        "the result sits and extends where you intended before continuing; fix a "
+        "misplaced piece now, not at the end. Call measure on any earlier object "
+        "whose position you need but did not build yourself.\n"),
+}
+
+
+def _shaper_prompt(verify_cadence: str = "final") -> str:
+    return (SHAPER_SYSTEM_PROMPT.format(
+        verify=_VERIFY_HINT.get(verify_cadence, _VERIFY_HINT["final"]))
+            + "\n\n" + CALC_PROMPT)
 
 # Planner-facing one-liners: what a shaper stage can do, not how to call it.
 PLANNER_TOOL_LINES = {
@@ -174,7 +198,7 @@ def _render(result: dict) -> str:
 
 SHAPER_SPEC = register(ModuleSpec(
     name="shaper",
-    prompt=lambda cadence: SHAPER_SYSTEM_PROMPT + "\n\n" + CALC_PROMPT,
+    prompt=_shaper_prompt,
     terminator=Terminator(name="finish_stage", schema=FINISH_STAGE_SCHEMA,
                           description=FINISH_STAGE_DESCRIPTION, handle=_finish),
     execute=lambda client, name, args: client.call_tool(name, args, module="shaper"),
@@ -190,6 +214,11 @@ SHAPER_SPEC = register(ModuleSpec(
     on_exhausted=lambda call_log, last_error: {"call_log": call_log,
                                                "last_error": last_error},
     gate=_gate,
+    core_tools=frozenset(PLANNER_TOOL_LINES),
+    categories=("primitive", "sketch", "swept", "boolean",
+                "transform", "feature", "display", "query"),
+    risky_categories=frozenset({"boolean", "transform"}),
+    measure_tools=frozenset({"measure"}),
     forgets=True,
     checks_results=True,
     calc=True,

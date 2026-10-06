@@ -108,3 +108,33 @@ def test_upstream_block_names_alone_when_measure_fails():
     client.call_tool.side_effect = RuntimeError("down")
     assert spec_for("shaper").render_upstream(client, ["face_1"]).splitlines()[1:] == ["  face_1"]
     assert spec_for("shaper").render_upstream(client, []) is None
+
+
+def test_prompt_follows_the_verify_cadence():
+    prompt = spec_for("shaper").prompt
+    assert "{verify}" not in prompt("final")
+    assert "measure on your result(s) once before finish_stage" in prompt("final")
+    assert "After each fuse, cut" in prompt("strict")
+    assert "bbox" not in prompt("none").split("Every feature reply carries")[1].split("\n\n")[0]
+
+
+def test_tool_categories_are_the_geom_ones():
+    from executor.shaper import list_tools
+    spec = spec_for("shaper")
+    assert spec.categories == spec_for("geom").categories
+    assert {t["category"] for t in list_tools()} <= set(spec.categories)
+    assert spec.core_tools == {t["name"] for t in list_tools()}
+
+
+def test_load_tools_is_offered_with_the_shaper_categories():
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+    load = ToolSpecialist(spec_for("shaper"))._load_tools_def()
+    assert load["parameters"]["properties"]["categories"]["items"]["enum"] == \
+        list(spec_for("shaper").categories)
+
+
+def test_initial_offer_uses_the_modules_core_set():
+    from salome_agent.specialists.tool_selection import initial_offered
+    got = initial_offered({"tools": ["revolve"]}, {"sketch_add", "revolve", "loft"},
+                          frozenset({"sketch_add"}))
+    assert got == {"sketch_add", "revolve"}
