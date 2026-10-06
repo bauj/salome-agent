@@ -62,15 +62,22 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
             err = "the operation produced nothing"
     except Exception as e:  # noqa: BLE001
         err = str(e) or type(e).__name__
+    info = None
+    if not err:
+        st.objects[name] = kind
+        try:
+            publish_study(executor)
+            info = (construction_info(executor, name) if kind in CONSTRUCTION
+                    else measure(executor, name))
+        except Exception as e:  # noqa: BLE001
+            st.objects.pop(name)
+            err = str(e) or type(e).__name__
     if err:
         with transaction():
             for var in (name, *reversed(helpers)):
                 if var in st.ns:
                     st.ns["shaper_doc"].removeFeature(st.ns.pop(var).feature())
         return {"ok": False, "error": f"{fn}: {err}"}
-    st.objects[name] = kind
-    publish_study(executor)
-    info = construction_info(executor, name) if kind in CONSTRUCTION else measure(executor, name)
     return {"ok": True, "records": [rec], "name": name, "measure": info,
             "result_shape": name, "shape_info": info}
 
@@ -172,6 +179,7 @@ def _boolean_extrusion(executor, args: dict, op: str) -> dict:
     target = args.get("target")
     if target not in st.objects:
         raise ValueError(_unknown(st, target))
+    _not_construction(st, target)
     targets = _result_selections(st, target)
     before = measure(executor, target)["volume"]
     direction = _direction(args.get("direction"))
@@ -240,8 +248,8 @@ def _operands(executor, names, field: str) -> tuple[list, list]:
 def _not_construction(st, name: str) -> None:
     kind = st.objects.get(name)
     if kind in CONSTRUCTION:
-        raise ValueError(f"{name!r} is a construction {kind}, not a shape — use it to "
-                         "place a primitive or a sketch")
+        raise ValueError(f"{name!r} is a construction {kind}, not a shape — use it as the origin, "
+                         "corner or axis of a primitive")
 
 
 def _boolean(executor, args: dict, op: str) -> dict:
