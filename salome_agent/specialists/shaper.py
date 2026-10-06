@@ -208,6 +208,13 @@ def _retry_block(retry: dict) -> str:
     return "\n".join(lines)
 
 
+def _audit(args, calls, call_log, upstream, infos):
+    from executor.shaper import registry
+    from salome_agent.specialists.geom import _audit_finish
+    return _audit_finish(args, calls, call_log, upstream, infos,
+                         categories=registry.categories(), info_line=_upstream_line)
+
+
 def _render(result: dict) -> str:
     hidden = {"records", "result_shape", "shape_info"}
     return str({k: v for k, v in result.items() if k not in hidden})
@@ -222,6 +229,7 @@ SHAPER_SPEC = register(ModuleSpec(
     render_result=_render,
     render_upstream=_upstream,
     render_retry=_retry_block,
+    audit=_audit,
     tools_for=lambda client: {t["name"]: t
                               for t in client.list_tools(module="shaper")["tools"]},
     needs_session=True,
