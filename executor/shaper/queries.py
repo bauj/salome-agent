@@ -1,7 +1,7 @@
 from executor.shaper.features import _unknown
 from executor.shaper.state import (
-    CONSTRUCTION, construction_info, measure, publish_study, record, results_of,
-    shape_status, state, tool,
+    CONSTRUCTION, measure, publish_study, record, results_of, shape_status, state, tool,
+    transaction,
 )
 
 
@@ -14,8 +14,15 @@ def _feature(executor, name) -> str:
     return name
 
 
-def _shapes(executor, name) -> list:
-    return [r.shape() for r in results_of(executor, _feature(executor, name))]
+def _shapes(executor, name, allow=()) -> list:
+    """Result shapes of a feature; a construction axis or plane is drawn as a
+    finite stand-in, so its length, area or distance would mean nothing."""
+    name = _feature(executor, name)
+    kind = state(executor).objects[name]
+    if kind in CONSTRUCTION and kind not in allow:
+        raise ValueError(f"{name!r} is a construction {kind} — it has no size; "
+                         "measure gives where it is")
+    return [r.shape() for r in results_of(executor, name)]
 
 
 @tool("check_shape", category="query",
@@ -87,7 +94,8 @@ def min_distance(shapes1: list, shapes2: list) -> float:
           "shape1": {"type": "string"}, "shape2": {"type": "string"}},
           "required": ["shape1", "shape2"]})
 def tool_min_distance(executor, args: dict):
-    d = min_distance(_shapes(executor, args.get("shape1")), _shapes(executor, args.get("shape2")))
+    d = min_distance(_shapes(executor, args.get("shape1"), allow=("point",)),
+                     _shapes(executor, args.get("shape2"), allow=("point",)))
     return {"ok": True, "records": [], "distance": round(d, 6) + 0.0}
 
 
@@ -122,7 +130,8 @@ def _display(executor, name, fn: str, call: str) -> dict:
         raise ValueError(f"{name!r} is a construction {st.objects[name]}; colour a shape")
     code = f"for _r in {name}.results():\n    _r.{call}"
     rec = record(fn, code, refs=[name], recv=name)
-    exec(code, st.ns)
+    with transaction():
+        exec(code, st.ns)
     publish_study(executor)
     return {"ok": True, "records": [rec], "result_shape": name}
 
@@ -135,8 +144,7 @@ def _display(executor, name, fn: str, call: str) -> dict:
           "red": {"type": "integer", "minimum": 0, "maximum": 255},
           "green": {"type": "integer", "minimum": 0, "maximum": 255},
           "blue": {"type": "integer", "minimum": 0, "maximum": 255}},
-          "required": ["shape", "red", "green", "blue"]},
-      arg_types={"red": int, "green": int, "blue": int})
+          "required": ["shape", "red", "green", "blue"]})
 def tool_set_color(executor, args: dict):
     rgb = [args.get(k) for k in ("red", "green", "blue")]
     if any(isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 255 for v in rgb):
@@ -150,8 +158,7 @@ def tool_set_color(executor, args: dict):
       schema={"type": "object", "properties": {
           "shape": {"type": "string"},
           "transparency": {"type": "number", "minimum": 0.0, "maximum": 1.0}},
-          "required": ["shape", "transparency"]},
-      arg_types={"transparency": float})
+          "required": ["shape", "transparency"]})
 def tool_set_transparency(executor, args: dict):
     t = args.get("transparency")
     if isinstance(t, bool) or not isinstance(t, (int, float)) or not 0 <= t <= 1:

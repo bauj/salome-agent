@@ -1,5 +1,9 @@
+import math
+
 from executor.shaper.features import _build
-from executor.shaper.state import PUBLISH_LINE, new_name, offset_plane, state, tool
+from executor.shaper.state import (
+    PUBLISH_LINE, construction_info, new_name, offset_plane, state, tool,
+)
 
 _AXES = ("OX", "OY", "OZ")
 _PLANES = ("XOY", "XOZ", "YOZ")
@@ -11,7 +15,7 @@ _AXIS = {"type": "string", "description": "OX, OY, OZ or the name of a make_axis
 
 
 def _num(value, what: str, positive: bool = False) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"{what} must be a number, got {value!r}")
     if positive and value <= 0:
         raise ValueError(f"{what} must be greater than 0, got {value!r}")
@@ -47,6 +51,31 @@ def _point(executor, value, var: str, what: str) -> tuple[str, str, list, tuple]
         raise ValueError(f"{what}: {value!r} is not a point — give [x, y, z] or a "
                          "make_point name")
     raise ValueError(f"{what} must be [x, y, z] or a make_point name, got {value!r}")
+
+
+def _xyz_of(executor, value) -> list | None:
+    """Coordinates of a point argument, given or of a make_point result."""
+    xyz = _coords(value, "point")
+    if xyz is None and state(executor).objects.get(value) == "point":
+        xyz = construction_info(executor, value)["at"]
+    return xyz
+
+
+def _distinct(executor, a, b, need_all_axes: bool) -> None:
+    pa, pb = _xyz_of(executor, a), _xyz_of(executor, b)
+    if pa is None or pb is None:
+        return
+    if need_all_axes and any(abs(p - q) < 1e-7 for p, q in zip(pa, pb)):
+        raise ValueError(f"the corners {pa} and {pb} must differ in x, y and z")
+    if math.dist(pa, pb) < 1e-7:
+        raise ValueError(f"the two points are the same: {pa}")
+
+
+def _one_form(args: dict, *forms: tuple) -> None:
+    given = [f for f in forms if any(args.get(k) is not None for k in f)]
+    if len(given) > 1:
+        raise ValueError("give either " + " or ".join(", ".join(f) for f in forms)
+                         + ", not both")
 
 
 def _axis(executor, value, what: str = "axis") -> tuple[str, list]:
@@ -102,6 +131,7 @@ def tool_make_box(executor, args: dict):
       schema={"type": "object", "properties": {"pnt1": _XYZ, "pnt2": _XYZ},
               "required": ["pnt1", "pnt2"]})
 def tool_make_box_two_pnt(executor, args: dict):
+    _distinct(executor, args.get("pnt1"), args.get("pnt2"), need_all_axes=True)
     name = new_name(executor, "box")
     s1, c1, r1, h1 = _point(executor, args.get("pnt1"), f"{name}_p1", "pnt1")
     s2, c2, r2, h2 = _point(executor, args.get("pnt2"), f"{name}_p2", "pnt2")
@@ -187,8 +217,10 @@ def tool_make_point(executor, args: dict):
           "direction": {"type": "array", "items": {"type": "number"},
                         "minItems": 3, "maxItems": 3}}})
 def tool_make_axis(executor, args: dict):
+    _one_form(args, ("pnt1", "pnt2"), ("point", "direction"))
     name = new_name(executor, "axis")
     if args.get("pnt1") is not None or args.get("pnt2") is not None:
+        _distinct(executor, args.get("pnt1"), args.get("pnt2"), need_all_axes=False)
         s1, c1, r1, h1 = _point(executor, args.get("pnt1"), f"{name}_p1", "pnt1")
         s2, c2, r2, h2 = _point(executor, args.get("pnt2"), f"{name}_p2", "pnt2")
         code = c1 + c2 + f"{name} = model.addAxis(shaper_doc, {s1}, {s2})"
@@ -223,6 +255,7 @@ def plane_coefficients(point: list, normal: list) -> list:
           "base": {"type": "string", "enum": list(_PLANES)},
           "offset": {"type": "number"}}})
 def tool_make_plane(executor, args: dict):
+    _one_form(args, ("point", "normal"), ("base", "offset"))
     name = new_name(executor, "plane")
     if args.get("base") is not None:
         base = args["base"]

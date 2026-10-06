@@ -22,6 +22,10 @@ def test_num_refuses_bools_and_non_positive_sizes():
     with pytest.raises(ValueError, match="greater than 0"):
         _num(0, "radius", positive=True)
     assert _num(-2, "x") == -2
+    with pytest.raises(ValueError):
+        _num(float("nan"), "x", positive=True)
+    with pytest.raises(ValueError):
+        _num(float("inf"), "x")
 
 
 def test_plane_through_a_point_with_a_normal():

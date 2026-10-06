@@ -161,3 +161,27 @@ def test_an_offset_plane_and_sketch_on_xoz_go_to_plus_y(agent_client):
         {"id": "C", "type": "circle", "center": [0, 0], "radius": 2}])
     ext = _ok(agent_client, "extrude", base=sk, size=3)["measure"]
     assert sorted(ext["bbox"][2:4]) in (pytest.approx([4, 7]), pytest.approx([7, 10]))
+
+
+def test_review_fixes_refuse_bad_input(agent_client):
+    box = _ok(agent_client, "make_box", dx=5, dy=5, dz=5)["name"]
+    pt = _ok(agent_client, "make_point", x=1, y=1, z=1)["name"]
+    pl = _ok(agent_client, "make_plane", base="XOY", offset=1)["name"]
+    sk = _ok(agent_client, "create_sketch", plane="XOY")["sketch"]
+    _ok(agent_client, "sketch_add", sketch=sk, entities=[
+        {"id": "C", "type": "circle", "center": [0, 0], "radius": 1}])
+    r = _call(agent_client, "extrude_cut", base=sk, target=pl, size=1)
+    assert r["ok"] is False and "construction plane" in r["error"]
+    r = _call(agent_client, "set_color", shape=box, red=True, green=0, blue=0)
+    assert r["ok"] is False
+    r = _call(agent_client, "set_transparency", shape=box, transparency=True)
+    assert r["ok"] is False
+    r = _call(agent_client, "make_box_two_pnt", pnt1=[0, 0, 0], pnt2=[5, 0, 5])
+    assert r["ok"] is False and "differ" in r["error"]
+    r = _call(agent_client, "make_axis", pnt1=pt, pnt2=[1, 1, 1])
+    assert r["ok"] is False and "same" in r["error"]
+    r = _call(agent_client, "make_plane", base="XOY", offset=1, point=[0, 0, 0], normal=[0, 0, 1])
+    assert r["ok"] is False and "not both" in r["error"]
+    r = _call(agent_client, "basic_properties", shape=pl)
+    assert r["ok"] is False and "no size" in r["error"]
+    assert _ok(agent_client, "min_distance", shape1=pt, shape2=box)["distance"] == 0
