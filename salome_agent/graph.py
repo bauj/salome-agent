@@ -91,7 +91,16 @@ def route_start(state: dict) -> str:
     amend."""
     if state.get("reference_images"):
         return "plan"
-    return "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
+    return _follow_up(state)
+
+
+def _follow_up(state: dict) -> str:
+    """Amend has only GEOM tools, so a later turn that names SHAPER is planned."""
+    from salome_agent.nodes.planner import named_cad_module
+
+    if (state.get("turn_idx") or 0) == 0:
+        return "plan"
+    return "plan" if named_cad_module(state.get("user_request") or "") == "shaper" else "amend"
 
 
 def _graph_upstream(state: dict) -> list[str]:
@@ -122,6 +131,13 @@ def _earlier_requests(state: dict, last: int = 5) -> str:
     lines = [f"- {t.get('text', '')}" + ("" if t.get("status") == "ok" else " (did not finish)")
              for t in turns]
     return "\n\nEarlier requests in this conversation, oldest first:\n" + "\n".join(lines)
+
+
+def _replan_context(state: dict, graph, reason: str = "") -> str:
+    names = ", ".join(graph.result_names()) or "(nothing yet)"
+    return (f"The study already contains: {names}. Build on those objects by name; "
+            f"do not rebuild them." + (f" ({reason})" if reason else "")
+            + _earlier_requests(state))
 
 
 def _amend_node(state: dict, config: "RunnableConfig"):
@@ -165,10 +181,7 @@ def _amend_node(state: dict, config: "RunnableConfig"):
         update["fatal"] = outcome["fatal"]
         return Command(update=update, goto="assemble")
     if "replan" in outcome:
-        names = ", ".join(session.graph.result_names()) or "(nothing yet)"
-        update["replan_context"] = (
-            f"The study already contains: {names}. Build on those objects by name; "
-            f"do not rebuild them. ({outcome['replan']})" + _earlier_requests(state))
+        update["replan_context"] = _replan_context(state, session.graph, outcome["replan"])
         log.info("  amend -> replan: %s", outcome["replan"])
         return Command(update=update, goto="plan")
     return Command(update=update, goto="assemble")
@@ -261,7 +274,7 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
     from salome_agent.nodes.vision import describe_images
 
     images = state.get("reference_images")
-    after = "amend" if (state.get("turn_idx") or 0) > 0 else "plan"
+    after = _follow_up(state)
     if not images:
         return Command(goto=after)
     llm = config["configurable"]["llm_client"]
@@ -290,6 +303,7 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
 
 def _plan_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
+    from salome_agent.build_graph import BuildGraph
     from salome_agent.nodes.planner import blank_stages, plan
 
     llm = config["configurable"]["llm_client"]
@@ -300,6 +314,9 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     request = state["user_request"]
     if state.get("replan_context"):
         request = f"{request}\n\n{state['replan_context']}"
+    elif (state.get("turn_idx") or 0) > 0:
+        graph = BuildGraph.from_dict(state.get("build_graph"))
+        request = f"{request}\n\n{_replan_context(state, graph)}"
     else:
         # a first turn that was cancelled or failed rolls back, so a follow-up
         # "retry" is planned from scratch and must still see what was asked
@@ -307,7 +324,7 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     try:
         image_spec = state.get("image_spec")
         extra = {"image_spec": image_spec} if image_spec else {}
-        stage_plans = plan(request, llm, detail, **extra)
+        stage_plans = plan(request, llm, detail, pin_from=state["user_request"], **extra)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:

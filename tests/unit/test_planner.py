@@ -252,3 +252,12 @@ def test_no_named_module_leaves_routing_alone():
         {"module": "geom", "intent": "box", "params": {}, "inputs": [], "tools": ["make_box"]}]}
     stages = plan("a box", llm)
     assert stages[0]["module"] == "geom" and stages[0]["tools"] == ["make_box"]
+
+
+def test_the_pin_comes_from_the_users_own_text_not_the_earlier_requests():
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    request = "add a rib in SHAPER\n\nEarlier requests in this conversation:\n- a plate in GEOM"
+    plan(request, llm, pin_from="add a rib in SHAPER")
+    system = llm.chat.call_args.kwargs["messages"][0]["content"]
+    assert 'every CAD geometry stage uses module "shaper".' in system
