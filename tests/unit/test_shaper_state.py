@@ -98,3 +98,11 @@ def test_a_failed_batch_removes_what_it_already_created(fake_model):
         exec_records(ex.shaper_state, records)
     assert [f.name() for f in doc.features] == ["old"]
     assert fake_model.begins == fake_model.ends
+
+
+def test_shape_status_reads_a_shaper_measure():
+    ok = {"valid": True, "faces": 3, "edges": 3, "area": 10.0}
+    assert state_mod.shape_status(ok) == {"status": "ok"}
+    assert state_mod.shape_status({**ok, "valid": False, "check": "bad"})["status"] == "invalid"
+    assert state_mod.shape_status({**ok, "faces": 0, "edges": 0})["status"] == "empty"
+    assert state_mod.shape_status({**ok, "area": 0.0})["detail"] == "its faces have zero area"
