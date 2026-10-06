@@ -40,6 +40,13 @@ def test_route_start():
     assert route_start({"turn_idx": 2, "reference_images": ["data:image/png;base64,AA"]}) == "plan"
 
 
+def test_a_follow_up_naming_shaper_is_planned_not_amended():
+    # amend has only GEOM tools
+    assert route_start({"turn_idx": 1, "user_request": "add a rib in SHAPER"}) == "plan"
+    assert route_start({"turn_idx": 1, "user_request": "add a rib in GEOM"}) == "amend"
+    assert route_start({"turn_idx": 1, "user_request": "add a rib"}) == "amend"
+
+
 def test_amend_turn_rewrites_result_and_graph_json(tmp_path, monkeypatch):
     from salome_agent.specialists import amend as amend_mod
 
@@ -74,7 +81,7 @@ def test_replan_goes_to_the_planner_with_context(tmp_path, monkeypatch):
                                          {"replan": "new wing"}))
     seen = {}
 
-    def fake_plan(request, llm, detail="balanced"):
+    def fake_plan(request, llm, detail="balanced", **kw):
         seen["request"] = request
         raise RuntimeError("stop after planning")   # _plan_node turns this into a clean fatal
 
@@ -139,7 +146,7 @@ def _replan_seen(tmp_path, monkeypatch, history):
                                          {"replan": "start over"}))
     seen = {}
 
-    def fake_plan(request, llm, detail="balanced"):
+    def fake_plan(request, llm, detail="balanced", **kw):
         seen["request"] = request
         raise RuntimeError("stop after planning")
 
@@ -169,7 +176,7 @@ def _first_plan_seen(tmp_path, monkeypatch, history):
     from salome_agent.nodes import planner as planner_mod
     seen = {}
 
-    def fake_plan(request, llm, detail="balanced"):
+    def fake_plan(request, llm, detail="balanced", **kw):
         seen["request"] = request
         raise RuntimeError("stop after planning")
 
@@ -209,7 +216,7 @@ def test_replan_without_earlier_turns_adds_no_request_list(tmp_path, monkeypatch
 def test_an_empty_plan_becomes_a_question_not_a_gate(tmp_path, monkeypatch):
     from salome_agent.nodes import planner as planner_mod
 
-    monkeypatch.setattr(planner_mod, "plan", lambda request, llm, detail="balanced": [])
+    monkeypatch.setattr(planner_mod, "plan", lambda request, llm, detail="balanced", **kw: [])
     state = _state(tmp_path, BuildGraph(), "retry", turn=0)
     app = build_graph(batch=False)
     cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
@@ -218,3 +225,48 @@ def test_an_empty_plan_becomes_a_question_not_a_gate(tmp_path, monkeypatch):
     assert "__interrupt__" not in out
     assert out["turn_outcome"]["question"]
     assert out["plan"] == []
+
+
+def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False):
+    from salome_agent.nodes import planner as planner_mod
+    from salome_agent.nodes import vision as vision_mod
+    from salome_agent.specialists import amend as amend_mod
+
+    def no_amend(*a, **k):
+        raise AssertionError("a SHAPER follow-up must not reach amend")
+
+    monkeypatch.setattr(amend_mod, "run_amend", no_amend)
+    monkeypatch.setattr(vision_mod, "describe_images",
+                        lambda request, images, llm, **kw: {"summary": "a rib", "parts": []})
+    seen = {}
+
+    def fake_plan(request, llm, detail="balanced", **kw):
+        seen["request"] = request
+        seen.update(kw)
+        raise RuntimeError("stop after planning")
+
+    monkeypatch.setattr(planner_mod, "plan", fake_plan)
+    state = _state(tmp_path, _graph(), "add a rib in SHAPER")
+    state["history"] = [{"event": "turn", "turn": 0, "text": "a box in GEOM",
+                         "status": "ok", "summary": "box"}]
+    if images:
+        state["reference_images"] = ["data:image/png;base64,AAAA"]
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    build_graph(batch=True).invoke(state, config=cfg)
+    return seen
+
+
+def test_a_shaper_follow_up_is_planned_with_the_study_and_earlier_requests(tmp_path,
+                                                                          monkeypatch):
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch)
+    assert seen["request"].startswith("add a rib in SHAPER")
+    assert "The study already contains: box_1." in seen["request"]
+    assert "a box in GEOM" in seen["request"]
+    assert seen["pin_from"] == "add a rib in SHAPER"
+
+
+def test_a_shaper_follow_up_with_images_is_described_then_planned(tmp_path, monkeypatch):
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, images=True)
+    assert "box_1" in seen["request"]
+    assert seen["image_spec"]["summary"] == "a rib"
