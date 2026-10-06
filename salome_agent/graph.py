@@ -4,6 +4,7 @@ import time
 import requests
 from langchain_core.runnables import RunnableConfig
 
+from salome_agent.executor_client import ServerOutdated
 from salome_agent.llm import (ReasoningTimeExceeded, RepetitionLoopDetected, StreamBudgetExceeded,
                               StreamErrorFrame)
 from salome_agent.logs import log
@@ -77,6 +78,8 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
         return f"LLM endpoint error, still failing after retries — {e}"
     if isinstance(e, (requests.ConnectionError, requests.Timeout)):
         return f"LLM endpoint unreachable ({type(e).__name__}) — retry later"
+    if isinstance(e, ServerOutdated):
+        return str(e)
     if isinstance(e, RuntimeError):
         return f"LLM endpoint error — {e}"
     return None
