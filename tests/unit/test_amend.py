@@ -139,3 +139,59 @@ def test_amend_prompt_only_deletes_on_request_and_adds_new_objects_alongside():
     assert "Never call delete_node unless the user asked to remove or replace" in p
     assert "added alongside" in p
     assert "add or replace" in p
+
+
+class ShaperClient(FakeClient):
+    def list_tools(self, module=None):
+        assert module == "shaper"
+        return {"tools": [{"name": "extrude", "parameters": {}, "description": "e",
+                           "category": "swept"}], "module": "shaper"}
+
+    def call_tool(self, name, args, pin=None, module=None):
+        self.calls.append((name, args, pin, module))
+        if name == "measure":
+            return {"ok": True, "measurements": {n: {"bbox": [0] * 6, "area": 1, "faces": 1}
+                                                 for n in args["names"]}}
+        out = (pin or [f"{name}_new"])[0]
+        return {"ok": True, "records": [{"fn": "F", "args": [], "out_vars": [out],
+                                         "publish": [out]}]}
+
+
+def _shaper_graph():
+    g = BuildGraph()
+    b = g.add_block(0, "stage 1/1: shaper", "shaper", ["extrusion_1"])
+    g.append(b, "extrude", {"base": "face_1", "size": 5},
+             [{"fn": "F", "args": [], "out_vars": ["extrusion_1"],
+               "publish": ["extrusion_1"]}], 0, module="shaper")
+    return g
+
+
+def test_a_shaper_amend_builds_measures_and_replays_in_shaper():
+    client = ShaperClient()
+    session = AmendSession(_shaper_graph(), client, 1, "shaper")
+    r = session.execute(client, "extrude", {"base": "face_2", "size": 3})
+    node = session.graph.nodes[r["node"]]
+    assert node.module == "shaper" and client.calls[-1][3] == "shaper"
+    assert session.graph.blocks[-1].module == "shaper"
+    r = session.execute(client, "edit_arg", {"node": "n1", "param": "size", "value": "8"})
+    assert r["ok"] and r["measurements"]["extrusion_1"]["faces"] == 1
+    replayed = [c for c in client.calls if c[0] == "extrude" and c[2] == ["extrusion_1"]]
+    assert replayed and replayed[0][3] == "shaper"
+
+
+def test_amend_prompt_names_the_modules_tools():
+    from salome_agent.specialists.amend import _prompt
+    geom = _prompt("geom", "final")
+    assert "call the geom tools as usual" in geom and "SHAPER" not in geom
+    shaper = _prompt("shaper", "final")
+    assert "call the shaper tools as usual" in shaper
+    assert "finish_turn ends it" in shaper and "create_sketch" in shaper
+
+
+def test_a_shaper_amend_offers_shaper_tools_and_the_snapshot_reads_shaper():
+    from salome_agent.specialists.amend import _snapshot, _spec
+    client = ShaperClient()
+    spec = _spec(AmendSession(_shaper_graph(), client, 1, "shaper"))
+    assert set(spec.tools_for(client)) == {"extrude", "edit_arg", "delete_node"}
+    assert "extrusion_1 — bbox [0, 0, 0, 0, 0, 0], area 1, 1 face" in _snapshot(
+        client, _shaper_graph())

@@ -11,7 +11,7 @@ from salome_agent.nodes.vision_spec import attach_conflicts, format_errors, vali
 VISION_SYSTEM_PROMPT = """You are the image-analysis agent of a CAD assistant. You
 receive one or more reference images (photos, sketches, technical drawings, plans,
 renders) plus the user's text request. Your job is to turn what is visible into a
-structured spec that a planner and the SALOME GEOM tools rebuild. You do NOT plan
+structured spec that a planner and SALOME's CAD tools (GEOM or SHAPER) rebuild. You do NOT plan
 or write CAD code.
 
 First decide whether the TARGET is 2D or 3D -- every image is flat, so this is

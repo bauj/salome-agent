@@ -256,9 +256,11 @@ _SOLID_TOOLS = {"fillet_edges", "chamfer_edges"}
 
 
 def _audit_finish(args: dict, calls: list, call_log: list, upstream: frozenset,
-                  infos: dict) -> str | None:
+                  infos: dict, categories: dict | None = None,
+                  info_line=None) -> str | None:
     """Anomalies only — None on a clean stage, so finish_stage closes at no
-    extra cost. Built on what the loop already has: no server round-trip."""
+    extra cost. Built on what the loop already has: no server round-trip.
+    `categories` and `info_line` default to GEOM's; SHAPER passes its own."""
     try:
         names = list(dict.fromkeys(_result_names(args)))
     except (KeyError, ValueError, TypeError):
@@ -269,7 +271,8 @@ def _audit_finish(args: dict, calls: list, call_log: list, upstream: frozenset,
         for a in r.get("args") or []:
             refs |= _refs_in(a)
     unknown = [n for n in names if n not in built and n not in upstream]
-    categories = registry.categories()
+    categories = registry.categories() if categories is None else categories
+    info_line = info_line or _info_line
     orphans = []
     for i, c in enumerate(calls):
         if not (categories.get(c["tool"]) in _SOLID_CATEGORIES or c["tool"] in _SOLID_TOOLS):
@@ -283,7 +286,8 @@ def _audit_finish(args: dict, calls: list, call_log: list, upstream: frozenset,
         orphans += [v for r in c["records"] for v in r.get("out_vars") or []
                     if v not in refs and v not in names and v not in orphans]
     empty = [n for n in names
-             if infos.get(n) and all(abs(d) < 1e-6 for d in infos[n]["size"])]
+             if (infos.get(n) or {}).get("size")
+             and all(abs(d) < 1e-6 for d in infos[n]["size"])]
     if not (unknown or orphans or empty):
         return None
     lines = ["Before this stage closes, check:"]
@@ -299,7 +303,7 @@ def _audit_finish(args: dict, calls: list, call_log: list, upstream: frozenset,
     known = [n for n in names if infos.get(n)]
     if known:
         lines.append("Your result shapes:")
-        lines += [_info_line(n, infos[n]) for n in known]
+        lines += [info_line(n, infos[n]) for n in known]
     lines.append("Fix what needs fixing, then call finish_stage again — unchanged if "
                  "it is already right.")
     return "\n".join(lines)

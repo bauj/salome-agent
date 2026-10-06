@@ -11,7 +11,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "the generated CAD should match -- e.g. several views/plans "
                              "of the same part; a vision agent describes them, the "
                              "description (not the images) goes to the planner and "
-                             "the geom specialist")
+                             "the CAD stages (GEOM or SHAPER)")
     parser.add_argument("--batch", action="store_true")
     parser.add_argument("--no-session", action="store_true",
                         help="planner + specialists + static checks only; "
@@ -20,9 +20,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--config", default=None)
     parser.add_argument("--on-failure", choices=["abort", "continue"], default=None)
     parser.add_argument("--tools", choices=["hints", "all"], default=None,
-                        help="geom tool retrieval: 'hints' (default) offers the "
-                             "specialist a per-stage subset it widens on demand; "
-                             "'all' offers the full geom registry every call")
+                        help="tool retrieval for GEOM and SHAPER stages: 'hints' (default) "
+                             "offers the specialist a per-stage subset it widens on demand; "
+                             "'all' offers the module's full tool set every call")
     parser.add_argument("--timeout", type=float, default=None,
                         help="total wall-clock budget per LLM round-trip in seconds; a "
                              "generation still running at the limit is cut, not retried "
@@ -141,7 +141,7 @@ def build_llm(config: dict, request_timeout: float | None = None,
     # provider's reasoning_effort knob) — unlike extra_headers, these land in
     # the JSON payload, not the HTTP headers (GH #28).
     extra_body = llm_config.get("extra_body") or {}
-    # module_extra_body: {"vision"|"planner"|"geom"|"smesh": {...}} — a body
+    # module_extra_body: {"vision"|"planner"|"geom"|"shaper"|"smesh"|"amend": {...}} — a body
     # that replaces extra_body for that module's calls, so an expensive knob
     # (reasoning_effort) can sit on the planner alone.
     module_extra_body = llm_config.get("module_extra_body") or {}

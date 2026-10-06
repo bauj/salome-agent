@@ -230,7 +230,7 @@ class ToolSpecialist:
         if tool_selection == "all" or not spec.core_tools:
             offered = set(all_defs)
         else:
-            offered = initial_offered(stage_plan, set(all_defs))
+            offered = initial_offered(stage_plan, set(all_defs), spec.core_tools)
         log.info("  %s stage: offered %d/%d tools (%s)", spec.name,
                  len(offered), len(all_defs), ", ".join(sorted(offered)))
         # Cancel is checked here, not only between graph nodes (task 256): the

@@ -116,7 +116,7 @@ def test_construction_lines_form_no_region_and_no_loose_end(agent_client):
     assert r["loose_ends"] == [] and r["regions"] == []
 
 
-def test_face_extrude_cut_and_geom_handoff(agent_client):
+def test_face_extrude_and_cut(agent_client):
     name, r = _plate(agent_client)
     outer = next(g["index"] for g in r["regions"] if round(g["area"], 2) == 721.46)
     face = _call(agent_client, "make_face", sketch=name, regions=[outer])
@@ -135,9 +135,23 @@ def test_face_extrude_cut_and_geom_handoff(agent_client):
     assert cut["ok"] is True, cut.get("error")
     assert cut["measure"]["volume"] == pytest.approx(7214.602 - 3.14159265 * 4 * 10,
                                                      abs=0.05)
-    # a later geom stage sees the shaper result by name
+    assert cut["measure"]["size"] == pytest.approx([40, 20, 10])
+    # GEOM does not see SHAPER results: no GEOM copy is made of them
     m = agent_client.call_tool("measure", {"names": [cut["name"]]})
-    assert m["measurements"][cut["name"]]["size"] == pytest.approx([40, 20, 10])
+    assert not m.get("ok") or m["measurements"].get(cut["name"]) is None
+
+
+def test_measure_gives_the_exact_box_of_a_curved_solid(agent_client):
+    sk = _call(agent_client, "create_sketch", plane="XOY")
+    _call(agent_client, "sketch_add", sketch=sk["sketch"], entities=[
+        {"id": "C", "type": "circle", "center": [50, 0], "radius": 10}])
+    face = _call(agent_client, "make_face", sketch=sk["sketch"], regions=[0])
+    torus = _call(agent_client, "revolve", base=face["name"], axis="OY", angle=360)
+    assert torus["ok"] is True, torus.get("error")
+    # the fast box encloses control points (+-64.94); the exact one is +-60
+    assert torus["measure"]["bbox"] == pytest.approx([-60, 60, -10, 10, -60, 60], abs=1e-3)
+    assert torus["measure"]["volume"] == pytest.approx(2 * 3.14159265 ** 2 * 50 * 100, rel=1e-6)
+    assert (torus["measure"]["faces"], torus["measure"]["edges"]) == (1, 2)
 
 
 def test_cut_that_misses_carries_a_delta_note(agent_client):

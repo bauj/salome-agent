@@ -31,3 +31,28 @@ def test_salome_init_call_is_banned():
     err = check_static("salome.salome_init()", API_MAP)
     assert err is not None
     assert "salome_init" in err["message"]
+
+
+def _fixture():
+    from salome_agent.verify.introspect import build_api_map
+    return build_api_map()
+
+
+def test_every_model_call_the_shaper_tools_emit_is_in_the_api_map():
+    import re
+    from pathlib import Path
+    import executor.shaper as shaper_pkg
+    members = set(_fixture()["model"]["members"])
+    src = "".join(p.read_text() for p in Path(shaper_pkg.__file__).parent.glob("*.py"))
+    called = set(re.findall(r"model\.([A-Za-z_]+)\(", src)) - {"add"}
+    called |= {f"add{op}" for op in ("Fuse", "Cut", "Common")}   # model.add{op}
+    assert called and called <= members, sorted(called - members)
+
+
+def test_shaper_result_script_frame_passes_and_a_bad_model_call_fails():
+    from executor.shaper.state import POSTAMBLE, PREAMBLE
+    api = _fixture()
+    body = 'ext_1 = model.addExtrusion(shaper_doc, [model.selection("FACE", "f")], 5)\n'
+    assert check_static(PREAMBLE + body + POSTAMBLE, api) is None
+    err = check_static(PREAMBLE + "x = model.addNope(shaper_doc)\n" + POSTAMBLE, api)
+    assert err["message"] == "model.addNope does not exist"

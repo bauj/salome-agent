@@ -39,6 +39,16 @@ def test_retry_context_gathers_error_hint_and_built_shapes():
     client.call_tool.assert_called_once_with("measure", {"names": ["box_1"]})
 
 
+def test_retry_context_measures_a_shaper_stage_in_shaper():
+    state = {"stages": {0: {"status": "failed", "module": "shaper",
+                            "call_log": [{"out_vars": ["ext_1"], "publish": ["ext_1"]}]}},
+             "history": [], "last_error": {"message": "open sketch"}}
+    client = MagicMock()
+    client.call_tool.return_value = {"ok": True, "measurements": {"ext_1": {"faces": 6}}}
+    assert retry_context(state, 0, client=client)["built_info"] == {"ext_1": {"faces": 6}}
+    client.call_tool.assert_called_once_with("measure", {"names": ["ext_1"]}, module="shaper")
+
+
 def test_retry_context_without_a_hint_leaves_hint_none():
     state = {
         "stages": {0: {"status": "failed", "call_log": []}},
@@ -540,8 +550,9 @@ def _capture_stage_blocks(monkeypatch, plan, idx, image_spec):
 
     monkeypatch.setattr(tool_specialist.ToolSpecialist, "run", fake_run)
     monkeypatch.setattr(graph, "retry_context", lambda state, idx, client: None)
-    state = {"plan": plan, "stage_idx": idx, "stages": {i: {"module": "geom", "status": "pending"}
-                                                         for i in range(len(plan))},
+    state = {"plan": plan, "stage_idx": idx,
+             "stages": {i: {"module": p["module"], "status": "pending"}
+                        for i, p in enumerate(plan)},
              "config": {"policy": {"tool_iteration_cap": 5}}, "image_spec": image_spec,
              "build_graph": None}
     try:
@@ -558,6 +569,13 @@ def test_geom_stage_gets_only_its_parts(monkeypatch):
             {"module": "geom", "intent": "b", "params": {}, "inputs": [], "parts": ["P2"]}]
     text = _capture_stage_blocks(monkeypatch, plan, 1, box_spec())
     assert '"id": "P2"' in text and '"id": "P1"' not in text
+
+
+def test_shaper_stage_gets_its_parts_too(monkeypatch):
+    from tests.unit.test_vision_spec import box_spec
+    plan = [{"module": "shaper", "intent": "a", "params": {}, "inputs": [], "parts": ["P1"]}]
+    text = _capture_stage_blocks(monkeypatch, plan, 0, box_spec())
+    assert '"id": "P1"' in text and '"id": "P2"' not in text
 
 
 def test_geom_stage_gets_every_part_when_the_planner_listed_none(monkeypatch):

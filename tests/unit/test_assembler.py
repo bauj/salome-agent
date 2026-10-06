@@ -272,3 +272,27 @@ def test_shaper_calls_are_kept_as_shaper_nodes():
     nodes = list(graph.nodes.values())
     assert [n.module for n in nodes] == ["shaper", "shaper"]
     assert nodes[1].deps == [nodes[0].id]
+
+
+def _ext_stage():
+    ext = {"fn": "addExtrusion", "emit": "stmt",
+           "code": "ext_1 = model.addExtrusion(shaper_doc, [], model.selection(), 5, 0)",
+           "args": [], "out_vars": ["ext_1"], "publish": ["ext_1"]}
+    return {"module": "shaper", "status": "ok", "script": None, "result_names": ["ext_1"],
+            "calls": [{"tool": "extrude", "tool_args": {}, "records": [ext]}]}
+
+
+def test_a_script_stage_after_shaper_work_sees_it_published():
+    mesh = {"module": "smesh", "status": "ok", "script": 'm = smesh.Mesh(find_object("ext_1"))'}
+    out = assemble({"stages": {0: _ext_stage(), 1: mesh}, "run_id": "x",
+                    "user_request": "r", "plan": []})
+    ast.parse(out)
+    bridge = out.index("model.end()\nmodel.publishToShaperStudy()\nmodel.begin()\n")
+    assert out.index("ext_1 = model.addExtrusion") < bridge < out.index("smesh.Mesh(")
+    assert out.rstrip().endswith("model.publishToShaperStudy()")
+
+
+def test_a_shaper_only_result_has_no_bridge():
+    out = assemble({"stages": {0: _ext_stage()}, "run_id": "x", "user_request": "r",
+                    "plan": []})
+    assert out.count("publishToShaperStudy") == 1
