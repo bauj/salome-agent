@@ -1,7 +1,7 @@
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
-    PUBLISH_LINE, measure, new_name, publish_study, record, sketch_of, state,
-    tool, transaction,
+    CONSTRUCTION, PUBLISH_LINE, construction_info, measure, new_name, publish_study,
+    record, sketch_of, state, tool, transaction,
 )
 
 _AXES = ("OX", "OY", "OZ")
@@ -17,6 +17,7 @@ def _base_selections(executor, base) -> tuple[list, list]:
         if name in st.sketches:
             sels.append(f'model.selection("COMPOUND", "all-in-{name}")')
         elif name in st.objects:
+            _not_construction(st, name)
             sels += _result_selections(st, name)
         else:
             raise ValueError(_unknown(st, name))
@@ -69,7 +70,7 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
         return {"ok": False, "error": f"{fn}: {err}"}
     st.objects[name] = kind
     publish_study(executor)
-    info = measure(executor, name)
+    info = construction_info(executor, name) if kind in CONSTRUCTION else measure(executor, name)
     return {"ok": True, "records": [rec], "name": name, "measure": info,
             "result_shape": name, "shape_info": info}
 
@@ -231,8 +232,16 @@ def _operands(executor, names, field: str) -> tuple[list, list]:
                              "(make_face) or a solid (extrude)")
         if name not in st.objects:
             raise ValueError(_unknown(st, name))
+        _not_construction(st, name)
         sels += _result_selections(st, name)
     return sels, list(names)
+
+
+def _not_construction(st, name: str) -> None:
+    kind = st.objects.get(name)
+    if kind in CONSTRUCTION:
+        raise ValueError(f"{name!r} is a construction {kind}, not a shape — use it to "
+                         "place a primitive or a sketch")
 
 
 def _boolean(executor, args: dict, op: str) -> dict:
@@ -337,6 +346,8 @@ def tool_measure(executor, args: dict):
     for name in args.get("names") or []:
         if name in st.sketches:
             out[name] = status(executor, st.sketches[name])
+        elif st.objects.get(name) in CONSTRUCTION:
+            out[name] = construction_info(executor, name)
         elif name in st.objects:
             out[name] = measure(executor, name)
             results = st.ns[name].feature().results()

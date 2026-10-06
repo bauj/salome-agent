@@ -123,7 +123,14 @@ def test_tool_categories_are_the_geom_ones():
     spec = spec_for("shaper")
     assert spec.categories == spec_for("geom").categories
     assert {t["category"] for t in list_tools()} <= set(spec.categories)
-    assert spec.core_tools == {t["name"] for t in list_tools()}
+    names = {t["name"] for t in list_tools()}
+    assert spec.core_tools < names
+
+
+def test_planner_catalogue_names_every_shaper_tool():
+    from executor.shaper import list_tools
+    from salome_agent.specialists.shaper import PLANNER_TOOL_LINES
+    assert set(PLANNER_TOOL_LINES) == {t["name"] for t in list_tools()}
 
 
 def test_load_tools_is_offered_with_the_shaper_categories():

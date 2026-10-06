@@ -42,8 +42,9 @@ computed by hand:
   combine them. Every reply carries the result's area, volume and face count.
 
 Solids come from sketches or faces: extrude, extrude_cut (a pocket in a solid),
-extrude_fuse (a boss on a solid), revolve. Every feature reply carries its
-measure (volume, area, face count, valid).
+extrude_fuse (a boss on a solid), revolve; or from primitives (box, cylinder,
+sphere, cone, torus). Every feature reply carries its measure (volume, area,
+face count, valid).
 {verify}
 When done, call finish_stage(result_names) with the published names that
 matter (sketches, faces or solids). It is refused while a sketch it uses has
@@ -137,6 +138,24 @@ PLANNER_TOOL_LINES = {
     "common": "keep only where faces or solids overlap",
     "measure": "area, volume, face count, validity of shaper objects",
 }
+CORE_TOOLS = frozenset(PLANNER_TOOL_LINES)
+PLANNER_TOOL_LINES.update({
+    "make_box": "box with a corner at the origin, from dx, dy, dz",
+    "make_box_two_pnt": "box between two opposite corners",
+    "make_cylinder": "cylinder from radius and height, placed at an origin along an axis",
+    "make_sphere": "sphere from radius and centre",
+    "make_cone": "cone or truncated cone from two radii and a height",
+    "make_torus": "torus from ring and tube radii",
+    "make_point": "construction point at x, y, z",
+    "make_axis": "construction axis through two points or a point and a direction",
+    "make_plane": "construction plane from a point and a normal, or offset from a base plane",
+    "check_shape": "is a shape valid geometry",
+    "list_study_objects": "every sketch and feature built so far, used-up ones marked",
+    "min_distance": "shortest distance between two shapes",
+    "basic_properties": "length, area, volume of a shape",
+    "set_color": "colour of a shape",
+    "set_transparency": "transparency of a shape",
+})
 
 _CATALOGUE = ("SHAPER tools available to a single SHAPER stage:\n"
               + "\n".join(f"  {n} -- {d}" for n, d in PLANNER_TOOL_LINES.items()))
@@ -254,7 +273,7 @@ SHAPER_SPEC = register(ModuleSpec(
     on_exhausted=lambda call_log, last_error: {"call_log": call_log,
                                                "last_error": last_error},
     gate=_gate,
-    core_tools=frozenset(PLANNER_TOOL_LINES),
+    core_tools=CORE_TOOLS,
     categories=("primitive", "sketch", "swept", "boolean",
                 "transform", "feature", "display", "query"),
     risky_categories=frozenset({"boolean", "transform"}),
