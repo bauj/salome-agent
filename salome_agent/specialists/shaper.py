@@ -44,7 +44,7 @@ computed by hand:
 Solids come from sketches or faces: extrude, extrude_cut (a pocket in a solid),
 extrude_fuse (a boss on a solid), revolve. Every feature reply carries its
 measure (volume, area, face count, valid).
-
+{verify}
 When done, call finish_stage(result_names) with the published names that
 matter (sketches, faces or solids). It is refused while a sketch it uses has
 loose ends. If you abandon an attempt, call discard on what you built for it.
@@ -80,7 +80,45 @@ is never done in the reasoning:
 Do only what the request asks. Each turn: state your reasoning in at most 2-3
 sentences, then call one or more tools. Batch INDEPENDENT calls in one turn;
 a call that needs a name another call is about to create waits for the next
-turn."""
+turn.
+
+If your first message includes a "Reference image spec" block, an image-analysis
+agent read it from the user's reference image(s) (you do not see the images): the
+exact data of the part(s) this stage builds, as JSON. A "profile" base is an
+outline traced from `start` through `segments` (a line to `to`, or an arc with
+`center` or `through`; a `fillet` is a tangent arc of that radius at the
+segment's `to` corner) plus `holes`: draw it in one sketch as lines and arcs at
+those coordinates, join consecutive ends with coincident constraints, then
+make_face on the material region and extrude or revolve it as the base says.
+"placement" gives where the part sits and which way it faces. Values written
+"~N" are estimates; plain numbers were read from the image. "conflicts" name
+values that disagree: build anyway and let the tool replies tell you which value
+fits. If the spec's prose and its data disagree, the data wins. Explicit
+dimensions in the stage's params win over the spec.
+
+You may be given only a subset of the SHAPER tools. If you need one that is not
+in your list, call load_tools with its name or category."""
+
+# policy.verify_cadence: how hard the specialist is pushed to check placement.
+_VERIFY_HINT = {
+    "none": "",
+    "final": (
+        "\nEvery feature reply reports the result's bbox. Glance at it each time; "
+        "call measure on your result(s) once before finish_stage, and on any "
+        "earlier object whose position you need but did not build yourself.\n"),
+    "strict": (
+        "\nEvery feature reply reports the result's bbox. After each fuse, cut, "
+        "common, extrude_cut or extrude_fuse, read it (or call measure) and confirm "
+        "the result sits and extends where you intended before continuing; fix a "
+        "misplaced piece now, not at the end. Call measure on any earlier object "
+        "whose position you need but did not build yourself.\n"),
+}
+
+
+def _shaper_prompt(verify_cadence: str = "final") -> str:
+    return (SHAPER_SYSTEM_PROMPT.format(
+        verify=_VERIFY_HINT.get(verify_cadence, _VERIFY_HINT["final"]))
+            + "\n\n" + CALC_PROMPT)
 
 # Planner-facing one-liners: what a shaper stage can do, not how to call it.
 PLANNER_TOOL_LINES = {
@@ -167,6 +205,30 @@ def _upstream(client, names: list[str]) -> str | None:
             + "\n".join(_upstream_line(n, info.get(n)) for n in names))
 
 
+def _retry_block(retry: dict) -> str:
+    lines = []
+    err = retry.get("last_error")
+    if err:
+        lines.append(f"Your previous attempt at this stage failed: {err.get('message')}")
+    if retry.get("hint"):
+        lines.append(f"User hint for this retry: {retry['hint']}")
+    built = retry.get("built") or []
+    if built:
+        info = retry.get("built_info") or {}
+        lines.append("Objects your previous attempt already built and published — reuse "
+                     "them if they are still correct, or rebuild only the ones the error "
+                     "was actually in:")
+        lines += [_upstream_line(n, info.get(n)) for n in built]
+    return "\n".join(lines)
+
+
+def _audit(args, calls, call_log, upstream, infos):
+    from executor.shaper import registry
+    from salome_agent.specialists.geom import _audit_finish
+    return _audit_finish(args, calls, call_log, upstream, infos,
+                         categories=registry.categories(), info_line=_upstream_line)
+
+
 def _render(result: dict) -> str:
     hidden = {"records", "result_shape", "shape_info"}
     return str({k: v for k, v in result.items() if k not in hidden})
@@ -174,12 +236,14 @@ def _render(result: dict) -> str:
 
 SHAPER_SPEC = register(ModuleSpec(
     name="shaper",
-    prompt=lambda cadence: SHAPER_SYSTEM_PROMPT + "\n\n" + CALC_PROMPT,
+    prompt=_shaper_prompt,
     terminator=Terminator(name="finish_stage", schema=FINISH_STAGE_SCHEMA,
                           description=FINISH_STAGE_DESCRIPTION, handle=_finish),
     execute=lambda client, name, args: client.call_tool(name, args, module="shaper"),
     render_result=_render,
     render_upstream=_upstream,
+    render_retry=_retry_block,
+    audit=_audit,
     tools_for=lambda client: {t["name"]: t
                               for t in client.list_tools(module="shaper")["tools"]},
     needs_session=True,
@@ -190,6 +254,11 @@ SHAPER_SPEC = register(ModuleSpec(
     on_exhausted=lambda call_log, last_error: {"call_log": call_log,
                                                "last_error": last_error},
     gate=_gate,
+    core_tools=frozenset(PLANNER_TOOL_LINES),
+    categories=("primitive", "sketch", "swept", "boolean",
+                "transform", "feature", "display", "query"),
+    risky_categories=frozenset({"boolean", "transform"}),
+    measure_tools=frozenset({"measure"}),
     forgets=True,
     checks_results=True,
     calc=True,

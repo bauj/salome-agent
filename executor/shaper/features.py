@@ -1,6 +1,6 @@
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
-    PUBLISH_LINE, feature_shape, measure, new_name, publish_study, record, sketch_of, state,
+    PUBLISH_LINE, measure, new_name, publish_study, record, sketch_of, state,
     tool, transaction,
 )
 
@@ -69,10 +69,7 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
         return {"ok": False, "error": f"{fn}: {err}"}
     st.objects[name] = kind
     publish_study(executor)
-    shape = feature_shape(executor, name)
-    info = measure(executor, name, shape)
-    # a later geom stage reaches the result by name (a one-way copy)
-    executor.geom_bindings[name] = shape
+    info = measure(executor, name)
     return {"ok": True, "records": [rec], "name": name, "measure": info,
             "result_shape": name, "shape_info": info}
 
@@ -87,7 +84,7 @@ def _size(args: dict) -> tuple:
     return size, back
 
 
-@tool("make_face", category="feature",
+@tool("make_face", category="sketch",
       description=(
           "Make faces from closed regions of a sketch: `regions` is a list of region "
           "indices from the sketch's latest reply (indices change when the sketch is "
@@ -148,7 +145,7 @@ def _region_names(st, sk, regions: list) -> list:
             st.ns["shaper_doc"].removeFeature(probe.feature())
 
 
-@tool("extrude", category="feature",
+@tool("extrude", category="swept",
       description=(
           "Extrude a face or a whole sketch (all its closed regions) by `size` along "
           "`direction` (OX, OY, OZ; default the sketch normal). from_size extends it the "
@@ -195,7 +192,7 @@ def _boolean_extrusion(executor, args: dict, op: str) -> dict:
     return out
 
 
-@tool("extrude_cut", category="feature",
+@tool("extrude_cut", category="swept",
       description=(
           "Pocket: extrude a face or sketch and remove it from the solid `target`. Give "
           "`size` (and optionally from_size), or through_all: true to cut through the "
@@ -210,7 +207,7 @@ def tool_extrude_cut(executor, args: dict):
     return _boolean_extrusion(executor, args, "Cut")
 
 
-@tool("extrude_fuse", category="feature",
+@tool("extrude_fuse", category="swept",
       description="Boss: extrude a face or sketch by `size` and fuse it to the solid `target`.",
       schema={"type": "object", "properties": {
           "base": {"type": "string"}, "target": {"type": "string"},
@@ -268,7 +265,7 @@ _BOOL_SCHEMA = {"type": "object", "properties": {
     "required": ["objects", "tools"]}
 
 
-@tool("fuse", category="feature",
+@tool("fuse", category="boolean",
       description=(
           "Fuse faces or solids into one: `objects` is two or more published names. "
           "Shared edges between coplanar faces are removed."),
@@ -279,21 +276,21 @@ def tool_fuse(executor, args: dict):
     return _boolean(executor, args, "Fuse")
 
 
-@tool("cut", category="feature",
+@tool("cut", category="boolean",
       description="Remove the faces or solids `tools` from the faces or solids `objects`.",
       schema=_BOOL_SCHEMA)
 def tool_cut(executor, args: dict):
     return _boolean(executor, args, "Cut")
 
 
-@tool("common", category="feature",
+@tool("common", category="boolean",
       description="Keep only where `objects` and `tools` overlap (faces or solids).",
       schema=_BOOL_SCHEMA)
 def tool_common(executor, args: dict):
     return _boolean(executor, args, "Common")
 
 
-@tool("revolve", category="feature",
+@tool("revolve", category="swept",
       description=(
           "Revolve a face or sketch by `angle` degrees about `axis`: OX, OY, OZ, or a "
           "line of a sketch as \"<sketch>:<line id>\"."),

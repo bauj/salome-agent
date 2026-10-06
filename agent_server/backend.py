@@ -42,6 +42,14 @@ def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
     return result
 
 
+# Where an agent-built object shows in the study tree and the viewer.
+_SHAPE_COMPONENTS = ("GEOM", "SHAPERSTUDY")
+
+
+def _find(study, name):
+    return [sobj for comp in _SHAPE_COMPONENTS for sobj in study.FindObjectByName(name, comp)]
+
+
 def forget_names(namespace: dict, geom_bindings: dict, names: list, erase=None) -> dict:
     """erase(entry), when given, takes the object out of the viewer first —
     removing the study object alone leaves its presentation on screen."""
@@ -50,14 +58,15 @@ def forget_names(namespace: dict, geom_bindings: dict, names: list, erase=None) 
     removed = []
     for name in names:
         geom_bindings.pop(name, None)
-        for sobj in study.FindObjectByName(name, "GEOM"):
+        for sobj in _find(study, name):
             if erase is not None:
                 try:
                     erase(sobj.GetID())
                 except Exception:
                     pass
             builder.RemoveObjectWithChildren(sobj)
-            removed.append(name)
+            if name not in removed:
+                removed.append(name)
     return {"ok": True, "removed": removed}
 
 
@@ -65,7 +74,7 @@ def display_names(namespace: dict, names: list, show) -> dict:
     study = namespace["salome"].myStudy
     shown = []
     for name in names:
-        for sobj in study.FindObjectByName(name, "GEOM"):
+        for sobj in _find(study, name):
             show(sobj.GetID())
             shown.append(name)
     return {"ok": True, "shown": shown}
@@ -76,7 +85,7 @@ def hide_names(namespace: dict, names: list, erase) -> dict:
     study = namespace["salome"].myStudy
     hidden = []
     for name in names:
-        for sobj in study.FindObjectByName(name, "GEOM"):
+        for sobj in _find(study, name):
             erase(sobj.GetID())
             hidden.append(name)
     return {"ok": True, "hidden": hidden}

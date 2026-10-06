@@ -40,11 +40,15 @@ def test_route_start():
     assert route_start({"turn_idx": 2, "reference_images": ["data:image/png;base64,AA"]}) == "plan"
 
 
-def test_a_follow_up_naming_shaper_is_planned_not_amended():
-    # amend has only GEOM tools
-    assert route_start({"turn_idx": 1, "user_request": "add a rib in SHAPER"}) == "plan"
-    assert route_start({"turn_idx": 1, "user_request": "add a rib in GEOM"}) == "amend"
-    assert route_start({"turn_idx": 1, "user_request": "add a rib"}) == "amend"
+def test_a_follow_up_naming_shaper_is_planned_only_on_a_geom_study():
+    geom = {"build_graph": _graph().to_dict()}
+    # the plan node answers it with why SHAPER cannot use GEOM objects
+    assert route_start({"turn_idx": 1, "user_request": "add a rib in SHAPER", **geom}) == "plan"
+    assert route_start({"turn_idx": 1, "user_request": "add a rib in SHAPER"}) == "amend"
+    assert route_start({"turn_idx": 1, "user_request": "add a rib in GEOM", **geom}) == "amend"
+    assert route_start({"turn_idx": 1, "user_request": "add a rib", **geom}) == "amend"
+    shaper = {"build_graph": _shaper_graph().to_dict()}
+    assert route_start({"turn_idx": 1, "user_request": "add a box in GEOM", **shaper}) == "plan"
 
 
 def test_amend_turn_rewrites_result_and_graph_json(tmp_path, monkeypatch):
@@ -227,18 +231,22 @@ def test_an_empty_plan_becomes_a_question_not_a_gate(tmp_path, monkeypatch):
     assert out["plan"] == []
 
 
-def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False, graph=None, vision=None):
+def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False, graph=None, vision=None,
+                           text="add a rib in SHAPER", replan=False):
     from salome_agent.nodes import planner as planner_mod
     from salome_agent.nodes import vision as vision_mod
     from salome_agent.specialists import amend as amend_mod
 
-    def no_amend(*a, **k):
-        raise AssertionError("a SHAPER follow-up must not reach amend")
+    seen = {}
 
-    monkeypatch.setattr(amend_mod, "run_amend", no_amend)
+    def fake_run_amend(text, graph, llm, client, turn, policy, *, session=None, **kw):
+        seen["amend_module"] = session.module
+        seen.update(kw)
+        return session, ({"replan": "bigger"} if replan else {"summary": "ok", "question": None})
+
+    monkeypatch.setattr(amend_mod, "run_amend", fake_run_amend)
     monkeypatch.setattr(vision_mod, "describe_images", vision or (
         lambda request, images, llm, **kw: {"summary": "a rib", "parts": []}))
-    seen = {}
 
     def fake_plan(request, llm, detail="balanced", **kw):
         seen["request"] = request
@@ -246,7 +254,7 @@ def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False, graph=None, visi
         raise RuntimeError("stop after planning")
 
     monkeypatch.setattr(planner_mod, "plan", fake_plan)
-    state = _state(tmp_path, graph or _graph(), "add a rib in SHAPER")
+    state = _state(tmp_path, graph or _graph(), text)
     state["history"] = [{"event": "turn", "turn": 0, "text": "a box in GEOM",
                          "status": "ok", "summary": "box"}]
     if images:
@@ -286,30 +294,40 @@ def test_a_shaper_follow_up_on_a_geom_study_skips_the_image_description(tmp_path
     assert "built in GEOM" in seen["out"]["turn_outcome"]["question"]
 
 
-def test_a_shaper_follow_up_on_a_shaper_study_is_planned(tmp_path, monkeypatch):
-    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, graph=_shaper_graph())
-    assert "extrusion_1" in seen["request"]
+def test_a_follow_up_on_a_shaper_study_is_amended_with_shaper_tools(tmp_path, monkeypatch):
+    for text in ("add a rib in SHAPER", "add a rib"):
+        seen = _shaper_follow_up_seen(tmp_path, monkeypatch, graph=_shaper_graph(), text=text)
+        assert seen["amend_module"] == "shaper" and "request" not in seen
 
 
-def test_a_shaper_follow_up_is_planned_with_the_study_and_earlier_requests(tmp_path,
-                                                                          monkeypatch):
-    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, graph=_shaper_graph())
-    assert seen["request"].startswith("add a rib in SHAPER")
+def test_a_follow_up_naming_geom_on_a_shaper_study_is_answered_without_amending(tmp_path,
+                                                                              monkeypatch):
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, graph=_shaper_graph(),
+                                  text="add a box in GEOM")
+    assert "amend_module" not in seen and "request" not in seen
+    assert seen["out"]["turn_outcome"]["question"] == (
+        "The objects in the study (extrusion_1) were built in SHAPER, and GEOM cannot "
+        "use SHAPER objects. Ask for this change in SHAPER, or start a new conversation "
+        "to build it in GEOM.")
+
+
+def test_a_shaper_follow_up_with_images_is_described_then_amended(tmp_path, monkeypatch):
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, images=True, graph=_shaper_graph())
+    assert seen["amend_module"] == "shaper"
+    assert "a rib" in seen["image_description"]
+
+
+def test_a_replanned_shaper_follow_up_is_pinned_from_the_users_text(tmp_path, monkeypatch):
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, graph=_shaper_graph(), replan=True)
+    assert seen["pin_from"] == "add a rib in SHAPER"
     assert "The study already contains: extrusion_1." in seen["request"]
     assert "a box in GEOM" in seen["request"]
-    assert seen["pin_from"] == "add a rib in SHAPER"
-
-
-def test_a_shaper_follow_up_with_images_is_described_then_planned(tmp_path, monkeypatch):
-    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, images=True, graph=_shaper_graph())
-    assert "extrusion_1" in seen["request"]
-    assert seen["image_spec"]["summary"] == "a rib"
 
 
 def test_the_geom_refusal_names_objects_without_the_run_prefix():
-    from salome_agent.graph import _shaper_on_geom
+    from salome_agent.graph import _cross_module
     g = BuildGraph()
     g.add_block(0, "stage 1/1: geom", "geom", ["sa_r1_box_1"])
     state = {"turn_idx": 1, "user_request": "add a rib in SHAPER", "build_graph": g.to_dict(),
              "session": {"name_prefix": "sa_r1_"}}
-    assert "(box_1)" in _shaper_on_geom(state)
+    assert "(box_1)" in _cross_module(state)

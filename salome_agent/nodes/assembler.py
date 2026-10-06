@@ -76,6 +76,10 @@ def _is_tool_module(module: str) -> bool:
     return bool(spec_for(module).call_prefix)
 
 
+# Before a script stage that follows SHAPER work: its results must be in the study.
+_SHAPER_PUBLISH = "model.end()\nmodel.publishToShaperStudy()\nmodel.begin()\n"
+
+
 def _geom_bodies(graph) -> dict:
     from salome_agent.codegen import _reachable, generate, roots_for
     from salome_agent.modules import spec_for
@@ -112,11 +116,17 @@ def render_script(graph, run_id: str) -> str:
     geom_bodies = _geom_bodies(graph)
     bodies = []
     modules = set()
+    unpublished = False
     for b in graph.blocks:
         text = b.script if b.script is not None else geom_bodies.get(b.id)
         if text:
+            if b.script is not None and unpublished:
+                text = _SHAPER_PUBLISH + text
+                unpublished = False
             bodies.append(f"# {b.label}\n{text}")
             modules.add(b.module)
+            if b.module == "shaper":
+                unpublished = True
     body = "\n\n".join(bodies)
 
     preamble = _KERNEL_INIT

@@ -108,3 +108,76 @@ def test_upstream_block_names_alone_when_measure_fails():
     client.call_tool.side_effect = RuntimeError("down")
     assert spec_for("shaper").render_upstream(client, ["face_1"]).splitlines()[1:] == ["  face_1"]
     assert spec_for("shaper").render_upstream(client, []) is None
+
+
+def test_prompt_follows_the_verify_cadence():
+    prompt = spec_for("shaper").prompt
+    assert "{verify}" not in prompt("final")
+    assert "measure on your result(s) once before finish_stage" in prompt("final")
+    assert "After each fuse, cut" in prompt("strict")
+    assert "bbox" not in prompt("none").split("Every feature reply carries")[1].split("\n\n")[0]
+
+
+def test_tool_categories_are_the_geom_ones():
+    from executor.shaper import list_tools
+    spec = spec_for("shaper")
+    assert spec.categories == spec_for("geom").categories
+    assert {t["category"] for t in list_tools()} <= set(spec.categories)
+    assert spec.core_tools == {t["name"] for t in list_tools()}
+
+
+def test_load_tools_is_offered_with_the_shaper_categories():
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+    load = ToolSpecialist(spec_for("shaper"))._load_tools_def()
+    assert load["parameters"]["properties"]["categories"]["items"]["enum"] == \
+        list(spec_for("shaper").categories)
+
+
+def test_initial_offer_uses_the_modules_core_set():
+    from salome_agent.specialists.tool_selection import initial_offered
+    got = initial_offered({"tools": ["revolve"]}, {"sketch_add", "revolve", "loft"},
+                          frozenset({"sketch_add"}))
+    assert got == {"sketch_add", "revolve"}
+
+
+def test_retry_block_names_the_error_hint_and_built_objects():
+    text = spec_for("shaper").render_retry({
+        "last_error": {"message": "sketch_1 has open ends"}, "hint": "close it",
+        "built": ["sketch_1", "ext_1"],
+        "built_info": {"sketch_1": {"regions": [{}]},
+                       "ext_1": {"bbox": [0, 1, 0, 1, 0, 1], "area": 6, "faces": 6,
+                                 "volume": 1}}})
+    assert "failed: sketch_1 has open ends" in text
+    assert "User hint for this retry: close it" in text
+    assert "sketch_1 — a sketch, 1 regions" in text
+    assert "ext_1 — bbox [0, 1, 0, 1, 0, 1], area 6, 6 faces, volume 1" in text
+
+
+def _call(tool, rec):
+    return {"tool": tool, "tool_args": {}, "records": [rec]}
+
+
+def test_audit_flags_an_unused_solid_and_an_unknown_name():
+    sk, ext1, ext2 = _rec("sketch_1"), _rec("ext_1", refs=["sketch_1"]), _rec("ext_2")
+    calls = [_call("create_sketch", sk), _call("extrude", ext1), _call("revolve", ext2)]
+    report = spec_for("shaper").audit({"result_names": ["ext_1", "typo_1"]}, calls,
+                                      [sk, ext1, ext2], frozenset(), {})
+    assert "typo_1" in report.split("not a shape built in this run: ")[1].splitlines()[0]
+    assert "ext_2" in report.split("used by another shape: ")[1].splitlines()[0]
+
+
+def test_audit_passes_a_clean_stage_and_ignores_sketches_without_size():
+    sk, ext1 = _rec("sketch_1"), _rec("ext_1", refs=["sketch_1"])
+    calls = [_call("create_sketch", sk), _call("extrude", ext1)]
+    infos = {"sketch_1": {"regions": []}, "ext_1": {"size": [1, 1, 1]}}
+    assert spec_for("shaper").audit({"result_names": ["ext_1"]}, calls, [sk, ext1],
+                                    frozenset(), infos) is None
+
+
+def test_audit_flags_an_empty_result():
+    ext1 = _rec("ext_1")
+    report = spec_for("shaper").audit({"result_names": ["ext_1"]}, [_call("extrude", ext1)],
+                                      [ext1], frozenset(),
+                                      {"ext_1": {"size": [0, 0, 0], "bbox": [0] * 6,
+                                                 "area": 0, "faces": 0}})
+    assert "empty or a single point" in report and "ext_1 — bbox" in report

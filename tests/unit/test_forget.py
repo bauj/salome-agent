@@ -6,13 +6,17 @@ from agent_server.core import Core
 
 
 class FakeStudy:
-    def __init__(self, names):
+    def __init__(self, names, shaper=()):
         self.objs = {n: SimpleNamespace(name=n, GetID=lambda n=n: f"0:1:{n}") for n in names}
+        self.objs.update({n: SimpleNamespace(name=n, GetID=lambda n=n: f"0:2:{n}")
+                          for n in shaper})
+        self.comp = {**{n: "GEOM" for n in names}, **{n: "SHAPERSTUDY" for n in shaper}}
         self.removed = []
 
     def FindObjectByName(self, name, component):
-        assert component == "GEOM"
-        return [self.objs[name]] if name in self.objs else []
+        if name in self.objs and self.comp[name] == component:
+            return [self.objs[name]]
+        return []
 
     def NewBuilder(self):
         study = self
@@ -136,3 +140,27 @@ def test_client_hide_sends_the_hide_command():
     client._call = lambda cmd, **kw: sent.append((cmd, kw)) or {"ok": True}
     client.hide(["a"])
     assert sent == [("hide", {"names": ["a"]})]
+
+
+def test_shaper_results_are_found_too():
+    study = FakeStudy(["box_1"], shaper=["extrusion_1"])
+    shown, erased = [], []
+    assert display_names(_ns(study), ["extrusion_1"], shown.append)["shown"] == ["extrusion_1"]
+    assert hide_names(_ns(study), ["extrusion_1"], erased.append)["hidden"] == ["extrusion_1"]
+    r = forget_names(_ns(study), {}, ["extrusion_1", "box_1"], erase=erased.append)
+    assert r == {"ok": True, "removed": ["extrusion_1", "box_1"]}
+    assert shown == ["0:2:extrusion_1"] and erased[0] == "0:2:extrusion_1"
+
+
+def test_introspect_imports_shaper_model_on_the_gui_thread():
+    calls = []
+    backend = SimpleNamespace(poisoned=lambda: False, namespace={"geompy": object()},
+                              run_tool=lambda fn, timeout: calls.append(1) or fn())
+    import agent_server.core as core
+    core._LAZY_APIS["model"] = "json"   # any importable module stands in for SHAPER's
+    try:
+        r = Core(backend).handle({"id": 1, "cmd": "introspect", "names": ["model", "nope"]})
+    finally:
+        core._LAZY_APIS["model"] = "salome.shaper.model"
+    assert "dumps" in r["model"]["members"] and r["nope"]["members"] == []
+    assert calls == [1]

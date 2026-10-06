@@ -44,6 +44,9 @@ def key_error_message(executor, tool: str, args: dict, key) -> str:
     if not isinstance(key, str):
         return f"{tool}: KeyError {key!r}"
     msg = f"{tool}: no object named {key!r}"
+    shaper = executor.__dict__.get("shaper_state")
+    if shaper is not None and (key in shaper.objects or key in shaper.sketches):
+        return f"{msg} — {key} was built in SHAPER, and GEOM tools cannot use SHAPER objects."
     close = difflib.get_close_matches(key, list(executor.geom_bindings), n=3, cutoff=0.6)
     if close:
         msg += f" — did you mean {', '.join(close)}?"
