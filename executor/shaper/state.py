@@ -10,7 +10,8 @@ from contextlib import contextmanager
 from executor.registry import ToolRegistry
 from executor.geom.helpers import _next_name
 
-registry = ToolRegistry(valid_categories={"sketch", "feature", "query"})
+registry = ToolRegistry(valid_categories={
+    "primitive", "sketch", "swept", "boolean", "transform", "feature", "display", "query"})
 tool = registry.tool
 
 # Renames a feature and its results to the published name, so selections by

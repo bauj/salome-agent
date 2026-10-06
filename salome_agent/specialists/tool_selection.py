@@ -43,10 +43,11 @@ def hint_tool_names(stage_plan: dict) -> list[str]:
     return out
 
 
-def initial_offered(stage_plan: dict, all_tool_names: set[str]) -> set[str]:
-    """CORE_TOOLS plus any planner-hinted names that are real geom tools."""
+def initial_offered(stage_plan: dict, all_tool_names: set[str],
+                    core=CORE_TOOLS) -> set[str]:
+    """The module's core tools plus any planner-hinted names that are real tools."""
     hinted = {n for n in hint_tool_names(stage_plan) if n in all_tool_names}
-    return set(CORE_TOOLS) | _with_companions(hinted, all_tool_names)
+    return set(core) | _with_companions(hinted, all_tool_names)
 
 
 def resolve_load(names, categories, all_defs: dict[str, dict]) -> set[str]:
