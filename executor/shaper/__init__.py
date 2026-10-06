@@ -2,7 +2,7 @@
 is imported on the first call, so geom-only runs never load it."""
 from executor.geom.helpers import _pinned
 from executor.shaper.state import registry, reset, clear, forget, check_results  # noqa: F401
-from executor.shaper import sketch, features  # noqa: F401 — registers the tools
+from executor.shaper import sketch, features, primitives, queries  # noqa: F401 — registers the tools
 
 TOOLS = registry.handlers()
 

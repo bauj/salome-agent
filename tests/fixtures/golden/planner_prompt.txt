@@ -144,3 +144,18 @@ SHAPER tools available to a single SHAPER stage:
   cut -- cut faces or solids from faces or solids
   common -- keep only where faces or solids overlap
   measure -- area, volume, face count, validity of shaper objects
+  make_box -- box with a corner at the origin, from dx, dy, dz
+  make_box_two_pnt -- box between two opposite corners
+  make_cylinder -- cylinder from radius and height, placed at an origin along an axis
+  make_sphere -- sphere from radius and centre
+  make_cone -- cone or truncated cone from two radii and a height
+  make_torus -- torus from ring and tube radii
+  make_point -- construction point at x, y, z
+  make_axis -- construction axis through two points or a point and a direction
+  make_plane -- construction plane from a point and a normal, or offset from a base plane
+  check_shape -- is a shape valid geometry
+  list_study_objects -- every sketch and feature built so far, used-up ones marked
+  min_distance -- shortest distance between two shapes
+  basic_properties -- length, area, volume of a shape
+  set_color -- colour of a shape
+  set_transparency -- transparency of a shape

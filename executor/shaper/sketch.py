@@ -1,7 +1,7 @@
 import math
 
 from executor.shaper.state import (
-    PUBLISH_LINE, Constraint, Entity, Sketch, check_id, geometry, new_name, record,
+    PUBLISH_LINE, Constraint, Entity, Sketch, check_id, geometry, new_name, offset_plane, record,
     restore, run, sketch_of, snapshot, solver_error, state, status, tool, transaction,
 )
 
@@ -62,7 +62,8 @@ def _taken(sk: Sketch) -> set:
 @tool("create_sketch", category="sketch",
       description=(
           "Start a new empty sketch on a base plane (\"XOY\", \"XOZ\", \"YOZ\") or on a "
-          "plane parallel to one ({\"base\": \"XOY\", \"offset\": 15}). Returns its "
+          "plane parallel to one ({\"base\": \"XOY\", \"offset\": 15}; the offset runs along "
+          "+Z for XOY, +Y for XOZ, +X for YOZ). Returns its "
           "published name. Every sketch has the references ORIGIN (a point) and the two "
           "world axes lying in its plane (XOY: OX, OY; XOZ: OX, OZ; YOZ: OY, OZ), usable "
           "in constraints to anchor the geometry. On XOY sketch coordinates [x, y] are "
@@ -88,8 +89,8 @@ def tool_create_sketch(executor, args: dict):
         offset = _num(offset, "plane offset")
         pv = f"{name}_plane"
         records.append(record("addPlane", (
-            f'{pv} = model.addPlane(shaper_doc, model.selection("FACE", "PartSet/{base}"), '
-            f'{offset!r}, False)\n_name({pv}, {pv!r})'), out=[pv], recv=name))
+            f'{pv} = model.addPlane(shaper_doc, {offset_plane(base, offset)})\n'
+            f'_name({pv}, {pv!r})'), out=[pv], recv=name))
         target = f'model.selection("FACE", {pv!r})'
         refs = [pv]
     elif plane in _PLANES:

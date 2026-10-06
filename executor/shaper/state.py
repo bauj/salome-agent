@@ -452,13 +452,41 @@ def measure(executor, name: str) -> dict:
     return info
 
 
+CONSTRUCTION = frozenset({"point", "axis", "plane"})
+
+
+def offset_plane(base: str, offset) -> str:
+    """addPlane arguments for the plane parallel to `base` at `offset` along +X,
+    +Y or +Z: SHAPER's XOZ normal points to -Y, so its offset is reversed."""
+    return (f'model.selection("FACE", "PartSet/{base}"), {offset!r}, '
+            f'{base == "XOZ"}')
+
+
+def construction_info(executor, name: str) -> dict:
+    """Where a construction point, axis or plane is: they have no size to measure."""
+    import GeomAPI
+    kind = state(executor).objects[name]
+    shape = results_of(executor, name)[0].shape()
+    xyz = lambda p: [round(p.x(), 4) + 0.0, round(p.y(), 4) + 0.0, round(p.z(), 4) + 0.0]
+    if kind == "point":
+        return {"kind": kind, "at": xyz(GeomAPI.GeomAPI_Vertex(shape).point())}
+    if kind == "axis":
+        edge = GeomAPI.GeomAPI_Edge(shape)
+        a, b = xyz(edge.firstPoint()), xyz(edge.lastPoint())
+        n = math.dist(a, b) or 1.0
+        return {"kind": kind, "through": a,
+                "direction": [round((q - p) / n, 6) + 0.0 for p, q in zip(a, b)]}
+    pln = GeomAPI.GeomAPI_Face(shape).getPlane()
+    return {"kind": kind, "point": xyz(pln.location()), "normal": xyz(pln.direction())}
+
+
 def check_results(executor, names: list) -> dict:
     """finish_stage's re-check: a feature whose inputs changed after it was
     made (a sketch edited under a face) no longer builds."""
     st = state(executor)
     out = {}
     for name in names:
-        if name in st.sketches:
+        if name in st.sketches or st.objects.get(name) in CONSTRUCTION:
             out[name] = {"status": "skip"}
         elif name not in st.objects or name not in st.ns:
             out[name] = {"status": "missing"}
