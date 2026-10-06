@@ -95,12 +95,25 @@ def route_start(state: dict) -> str:
 
 
 def _follow_up(state: dict) -> str:
-    """Amend has only GEOM tools, so a later turn that names SHAPER is planned."""
-    from salome_agent.nodes.planner import named_cad_module
-
+    """A later turn is amended, except a SHAPER request on a GEOM study: the
+    plan node answers that one with why it cannot."""
     if (state.get("turn_idx") or 0) == 0:
         return "plan"
-    return "plan" if named_cad_module(state.get("user_request") or "") == "shaper" else "amend"
+    return "plan" if _shaper_on_geom(state) else "amend"
+
+
+def _amend_module(state: dict, graph) -> str:
+    """The module the request names, else the one that built the study's latest
+    CAD stage, else GEOM."""
+    from salome_agent.nodes.planner import named_cad_module
+
+    named = named_cad_module(state.get("user_request") or "")
+    if named:
+        return named
+    for b in reversed(graph.blocks):
+        if b.module in ("geom", "shaper"):
+            return b.module
+    return "geom"
 
 
 def _graph_upstream(state: dict) -> list[str]:
@@ -153,7 +166,7 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     log.info("amend turn %d: %s", turn + 1, state["user_request"])
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
-    session = amend.AmendSession(graph, client, turn)
+    session = amend.AmendSession(graph, client, turn, _amend_module(state, graph))
     extra = {}
     if state.get("image_spec"):
         from salome_agent.nodes.vision_spec import amend_block
@@ -309,7 +322,7 @@ def _shaper_on_geom(state: dict) -> str | None:
     from salome_agent.build_graph import BuildGraph
     from salome_agent.nodes.planner import named_cad_module
 
-    if (state.get("turn_idx") or 0) == 0 or named_cad_module(state["user_request"]) != "shaper":
+    if (state.get("turn_idx") or 0) == 0 or named_cad_module(state.get("user_request") or "") != "shaper":
         return None
     graph = BuildGraph.from_dict(state.get("build_graph"))
     prefix = (state.get("session") or {}).get("name_prefix") or ""
@@ -326,7 +339,6 @@ def _shaper_on_geom(state: dict) -> str | None:
 
 def _plan_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
-    from salome_agent.build_graph import BuildGraph
     from salome_agent.nodes.planner import blank_stages, plan
 
     refusal = _shaper_on_geom(state)
@@ -343,9 +355,6 @@ def _plan_node(state: dict, config: "RunnableConfig"):
     request = state["user_request"]
     if state.get("replan_context"):
         request = f"{request}\n\n{state['replan_context']}"
-    elif (state.get("turn_idx") or 0) > 0:
-        graph = BuildGraph.from_dict(state.get("build_graph"))
-        request = f"{request}\n\n{_replan_context(state, graph)}"
     else:
         # a first turn that was cancelled or failed rolls back, so a follow-up
         # "retry" is planned from scratch and must still see what was asked
