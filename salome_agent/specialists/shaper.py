@@ -155,6 +155,15 @@ PLANNER_TOOL_LINES.update({
     "basic_properties": "length, area, volume of a shape",
     "set_color": "colour of a shape",
     "set_transparency": "transparency of a shape",
+    "translate": "move a shape by dx, dy, dz",
+    "rotate": "rotate a shape about an axis",
+    "mirror": "mirror a shape across a plane, axis or point, optionally keeping the original",
+    "scale": "scale a shape, uniformly or per axis",
+    "multi_translate": "row or grid of copies of a shape",
+    "multi_rotate": "circular pattern of copies of a shape",
+    "offset_shape": "grow or shrink a shape by offsetting its faces",
+    "position": "place a shape built at the origin into a target frame",
+    "align": "move a shape against, on top of or centred on another",
 })
 
 _CATALOGUE = ("SHAPER tools available to a single SHAPER stage:\n"
