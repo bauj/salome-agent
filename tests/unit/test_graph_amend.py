@@ -227,7 +227,7 @@ def test_an_empty_plan_becomes_a_question_not_a_gate(tmp_path, monkeypatch):
     assert out["plan"] == []
 
 
-def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False, graph=None):
+def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False, graph=None, vision=None):
     from salome_agent.nodes import planner as planner_mod
     from salome_agent.nodes import vision as vision_mod
     from salome_agent.specialists import amend as amend_mod
@@ -236,8 +236,8 @@ def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False, graph=None):
         raise AssertionError("a SHAPER follow-up must not reach amend")
 
     monkeypatch.setattr(amend_mod, "run_amend", no_amend)
-    monkeypatch.setattr(vision_mod, "describe_images",
-                        lambda request, images, llm, **kw: {"summary": "a rib", "parts": []})
+    monkeypatch.setattr(vision_mod, "describe_images", vision or (
+        lambda request, images, llm, **kw: {"summary": "a rib", "parts": []}))
     seen = {}
 
     def fake_plan(request, llm, detail="balanced", **kw):
@@ -274,6 +274,16 @@ def test_a_shaper_follow_up_on_a_geom_study_is_answered_without_planning(tmp_pat
     question = seen["out"]["turn_outcome"]["question"]
     assert question.startswith("The objects in the study (box_1) were built in GEOM")
     assert seen["out"]["turn_outcome"]["summary"] is None
+
+
+def test_a_shaper_follow_up_on_a_geom_study_skips_the_image_description(tmp_path,
+                                                                        monkeypatch):
+    def no_vision(*a, **k):
+        raise AssertionError("the refused turn must not describe its images")
+
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, images=True, vision=no_vision)
+    assert "request" not in seen
+    assert "built in GEOM" in seen["out"]["turn_outcome"]["question"]
 
 
 def test_a_shaper_follow_up_on_a_shaper_study_is_planned(tmp_path, monkeypatch):
