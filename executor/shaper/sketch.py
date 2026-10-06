@@ -1,7 +1,8 @@
 import math
 
 from executor.shaper.state import (
-    PUBLISH_LINE, Constraint, Entity, Sketch, check_id, geometry, new_name, offset_plane, record,
+    CONSTRUCTION, PUBLISH_LINE, Constraint, Entity, Sketch, check_id, construction_info,
+    geometry, new_name, offset_plane, record, subshapes,
     restore, run, sketch_of, snapshot, solver_error, state, status, tool, transaction,
 )
 
@@ -67,14 +68,23 @@ def _taken(sk: Sketch) -> set:
           "published name. Every sketch has the references ORIGIN (a point) and the two "
           "world axes lying in its plane (XOY: OX, OY; XOZ: OX, OZ; YOZ: OY, OZ), usable "
           "in constraints to anchor the geometry. On XOY sketch coordinates [x, y] are "
-          "world X, Y."),
+          "world X, Y. A sketch can also go on a make_plane result (its name) or on a "
+          "flat face of a solid ({\"face\": \"F6\", \"of\": \"box_1\"}, ids from "
+          "get_subshapes): then the reply gives its `frame` and sketch coordinates "
+          "[u, v] are the world point origin + u * x_dir + v * y_dir; ORIGIN is the "
+          "world origin projected onto the plane, and only world axes parallel to the "
+          "plane are offered."),
       schema={"type": "object", "properties": {
-          "plane": {"description": "\"XOY\" | \"XOZ\" | \"YOZ\", or {base, offset}",
-                    "anyOf": [{"type": "string", "enum": list(_PLANES)},
+          "plane": {"description": ("\"XOY\" | \"XOZ\" | \"YOZ\", {base, offset}, a "
+                                    "make_plane name, or {face, of}"),
+                    "anyOf": [{"type": "string"},
                               {"type": "object", "properties": {
                                   "base": {"type": "string", "enum": list(_PLANES)},
                                   "offset": {"type": "number"}},
-                               "required": ["base", "offset"]}]}},
+                               "required": ["base", "offset"]},
+                              {"type": "object", "properties": {
+                                  "face": {"type": "string"}, "of": {"type": "string"}},
+                               "required": ["face", "of"]}]}},
           "required": ["plane"]})
 def tool_create_sketch(executor, args: dict):
     st = state(executor)
@@ -82,7 +92,27 @@ def tool_create_sketch(executor, args: dict):
     name = new_name(executor, "sketch")
     records = []
     refs = []
-    if isinstance(plane, dict):
+    normal = None
+    if isinstance(plane, dict) and "face" in plane:
+        face, of = plane.get("face"), plane.get("of")
+        if not isinstance(of, str) or (of not in st.objects):
+            raise ValueError(f"of must name a built shape, got {of!r}")
+        if st.objects[of] in CONSTRUCTION:
+            raise ValueError(f"{of!r} is a construction {st.objects[of]}, not a solid")
+        subs = {u.id: u for u in subshapes(executor, of, "face")}
+        if face not in subs:
+            raise ValueError(f"{of} has no face {face!r} — get_subshapes(sub_type=face) "
+                             f"lists them ({', '.join(subs)})")
+        normal = _face_normal(subs[face].shape)
+        if normal is None:
+            raise ValueError(f"{face} of {of} is not flat: a sketch needs a flat face")
+        target = f'model.selection("FACE", {subs[face].naming!r})'
+        refs = [of]
+    elif isinstance(plane, str) and st.objects.get(plane) == "plane":
+        normal = construction_info(executor, plane)["normal"]
+        target = f'model.selection("FACE", {plane!r})'
+        refs = [plane]
+    elif isinstance(plane, dict):
         base, offset = plane.get("base"), plane.get("offset")
         if base not in _PLANES:
             raise ValueError(f"plane base must be one of {', '.join(_PLANES)}, got {base!r}")
@@ -97,11 +127,14 @@ def tool_create_sketch(executor, args: dict):
         base = plane
         target = f"model.defaultPlane({plane!r})"
     else:
-        raise ValueError(f"plane must be one of {', '.join(_PLANES)} or "
-                         f"{{base, offset}}, got {plane!r}")
+        raise ValueError(f"plane must be one of {', '.join(_PLANES)}, {{base, offset}}, "
+                         f"a make_plane name or {{face, of}}, got {plane!r}")
     records.append(record("addSketch", f"{name} = model.addSketch(shaper_doc, {target})",
                           out=[name], refs=refs, publish=True))
-    axes = _PLANES[base]
+    if normal is None:
+        axes = _PLANES[base]
+    else:
+        axes = tuple(ax for ax, i in (("OX", 0), ("OY", 1), ("OZ", 2)) if abs(normal[i]) < 1e-9)
     records.append(record("addProjection", (
         f'{name}_ORIGIN = {name}.addProjection(model.selection("VERTEX", '
         f'"PartSet/Origin"), False)'), out=[f"{name}_ORIGIN"], recv=name))
@@ -111,8 +144,34 @@ def tool_create_sketch(executor, args: dict):
             f'"PartSet/{ax}"), False)'), out=[f"{name}_{ax}"], recv=name))
     exec_records(st, records)
     sk = Sketch(name, st.ns[name], axes)
+    extra = {}
+    if normal is not None:
+        o, x, y, n = _frame(sk)
+        sk.frame = (o, x, y)
+        extra["frame"] = {"origin": o, "x_dir": x, "y_dir": y, "normal": n}
     st.sketches[name] = sk
-    return _reply(executor, sk, records, None)
+    return _reply(executor, sk, records, None, **extra)
+
+
+def _face_normal(face) -> list | None:
+    import GeomAPI
+    f = GeomAPI.GeomAPI_Face(face)
+    if not f.isPlanar():
+        return None
+    d = f.getPlane().direction()
+    return [d.x(), d.y(), d.z()]
+
+
+def _frame(sk: Sketch) -> tuple:
+    """(origin, x_dir, y_dir, normal) of a sketch, from its feature."""
+    import GeomDataAPI
+    f = sk.api.feature()
+    o = GeomDataAPI.geomDataAPI_Point(f.attribute("Origin")).pnt()
+    x = GeomDataAPI.geomDataAPI_Dir(f.attribute("DirX")).dir()
+    n = GeomDataAPI.geomDataAPI_Dir(f.attribute("Norm")).dir()
+    xyz = lambda p: [round(p.x(), 6) + 0.0, round(p.y(), 6) + 0.0, round(p.z(), 6) + 0.0]
+    y = n.cross(x)
+    return xyz(o), xyz(x), xyz(y), xyz(n)
 
 
 # --- sketch_add -------------------------------------------------------------

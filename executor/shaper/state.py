@@ -53,8 +53,11 @@ class Constraint:
 
 
 class Sketch:
-    def __init__(self, name, api, axes):
+    def __init__(self, name, api, axes, frame=None):
         self.name, self.api, self.axes = name, api, axes
+        # (origin, x_dir, y_dir) of a sketch on a face or a construction plane:
+        # its coordinates are local to that frame
+        self.frame = frame
         self.entities: dict[str, Entity] = {}
         self.constraints: dict[str, Constraint] = {}
         self.next_k = 0
@@ -302,6 +305,42 @@ def loose_ends(sk: Sketch, geos: dict) -> list:
     return out
 
 
+def _point_inside_frame(face, frame) -> list | None:
+    """As _point_inside, on a sketch with its own frame: the point in sketch
+    coordinates [u, v]."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_PointBuilder as PB, GeomAlgoAPI_ShapeTools as T
+    o, xd, yd = frame
+    uv = lambda p: [sum((p[i] - o[i]) * d[i] for i in range(3)) for d in (xd, yd)]
+    world = lambda u, v: [o[i] + u * xd[i] + v * yd[i] for i in range(3)]
+    pts = [uv([q.x(), q.y(), q.z()]) for q in
+           (GeomAPI.GeomAPI_Vertex(vx).point() for vx in face.subShapes(GeomAPI.GeomAPI_Shape.VERTEX))]
+    edges = face.subShapes(GeomAPI.GeomAPI_Shape.EDGE)
+    for e in edges:     # a circle has one vertex: widen by its box corners
+        ok, *b = e.computeSize()
+        if ok:
+            pts += [uv([b[i], b[j], b[k]]) for i in (0, 3) for j in (1, 4) for k in (2, 5)]
+    if not pts:
+        return None
+    lo = [min(p[i] for p in pts) for i in range(2)]
+    hi = [max(p[i] for p in pts) for i in range(2)]
+    for n in (8, 16):
+        best, best_d = None, -1.0
+        for a in range(1, n):
+            for b in range(1, n):
+                u = lo[0] + (hi[0] - lo[0]) * a / n
+                v = lo[1] + (hi[1] - lo[1]) * b / n
+                vert = PB.vertex(GeomAPI.GeomAPI_Pnt(*world(u, v)))
+                if not T.isSubShapeInsideShape(vert, face):
+                    continue
+                d = min(T.minimalDistance(vert, e) for e in edges)
+                if d > best_d:
+                    best, best_d = [u, v], d
+        if best is not None:
+            return [round(c, 4) + 0.0 for c in best]
+    return None
+
+
 def _point_inside(face) -> list | None:
     """A point well inside a planar region: of a grid over its box (7 x 7, then
     15 x 15 for a thin region), the inside point farthest from its edges."""
@@ -347,7 +386,8 @@ def regions(executor, sk: Sketch) -> list:
         face = rc.face(i)
         entry = {"index": i, "area": round(GeomAlgoAPI_ShapeTools.area(face), 4)}
         try:
-            inside = _point_inside(face)
+            inside = (_point_inside_frame(face, sk.frame) if sk.frame
+                      else _point_inside(face))
         except Exception:  # noqa: BLE001 — the area alone still identifies the region
             inside = None
         if inside is not None:
@@ -515,3 +555,60 @@ def shape_status(info: dict) -> dict:
     if info["faces"] > 0 and info["area"] <= 1e-9:
         return {"status": "empty", "detail": "its faces have zero area"}
     return {"status": "ok"}
+
+
+# --- sub-shapes -------------------------------------------------------------
+# The model names an edge or face by a short id ("E3", "F2"), numbered by
+# centre (x, then y, then z) so the same shape always gives the same ids;
+# result.py gets SHAPER's own naming string, which survives a rebuild.
+
+SUB_TYPES = {"vertex": "V", "edge": "E", "face": "F", "solid": "S"}
+
+
+class Sub:
+    def __init__(self, id_, shape, naming, centre, size):
+        self.id, self.shape, self.naming = id_, shape, naming
+        self.centre, self.size = centre, size
+
+
+def _naming_names(executor, result, shapes: list) -> list:
+    """SHAPER's naming string for each sub-shape of `result`, read from a
+    throwaway Group that selects them by object."""
+    doc = state(executor).ns["shaper_doc"]
+    with transaction() as m:
+        probe = m.addGroup(doc, [m.selection(result, s) for s in shapes])
+    try:
+        lst = probe.feature().selectionList("group_list")
+        return [lst.value(k).namingName() for k in range(lst.size())]
+    finally:
+        with transaction():
+            doc.removeFeature(probe.feature())
+
+
+def subshapes(executor, name: str, sub_type: str) -> list:
+    """Every sub-shape of `sub_type` of the published feature `name`, as Subs
+    with their ids."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    if sub_type not in SUB_TYPES:
+        raise ValueError(f"sub_type must be one of {', '.join(SUB_TYPES)}, got {sub_type!r}")
+    kind = getattr(GeomAPI.GeomAPI_Shape, sub_type.upper())
+    names = []
+    for res in results_of(executor, name):
+        uniq = []
+        for s in res.shape().subShapes(kind):
+            if not any(s.isSame(t) for t in uniq):
+                uniq.append(s)
+        if uniq:
+            names += list(zip(uniq, _naming_names(executor, res, uniq)))
+    out = []
+    for s, naming in names:
+        ok, *b = s.computeSize()
+        centre = [round((b[i] + b[i + 3]) / 2, 4) + 0.0 for i in range(3)]
+        size = {"vertex": 0.0, "edge": T.length(s), "face": T.area(s),
+                "solid": T.volume(s)}[sub_type]
+        out.append(Sub(None, s, naming, centre, round(size, 4) + 0.0))
+    out.sort(key=lambda u: tuple(u.centre))
+    for i, u in enumerate(out, start=1):
+        u.id = f"{SUB_TYPES[sub_type]}{i}"
+    return out

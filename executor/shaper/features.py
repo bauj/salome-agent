@@ -249,7 +249,7 @@ def _not_construction(st, name: str) -> None:
     kind = st.objects.get(name)
     if kind in CONSTRUCTION:
         raise ValueError(f"{name!r} is a construction {kind}, not a shape — use it as the origin, "
-                         "corner or axis of a primitive")
+                         "corner or axis of a primitive, or a plane to sketch on")
 
 
 def _boolean(executor, args: dict, op: str) -> dict:
