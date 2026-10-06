@@ -169,3 +169,38 @@ def test_result_py_rebuilds_fillet_sketch_on_face_and_shell(agent_client, tmp_pa
     assert m, out.stdout[-2000:] + out.stderr[-2000:]
     assert float(m.group(1)) == pytest.approx(live, abs=1e-3)
     assert live < 6000 - math.pi * 9 * 30 + 1
+
+
+def test_ids_of_coaxial_rims_are_stable_and_distinct(agent_client):
+    outer = _ok(agent_client, "make_cylinder", radius=10, height=5)["name"]
+    inner = _ok(agent_client, "make_cylinder", radius=5, height=5)["name"]
+    tube = _ok(agent_client, "cut", objects=[outer], tools=[inner])["name"]
+    first = _ok(agent_client, "get_subshapes", shape=tube, sub_type="edge")["subshapes"]
+    again = _ok(agent_client, "get_subshapes", shape=tube, sub_type="edge")["subshapes"]
+    assert first == again
+    rims = [u for u in first if u["centre"] == pytest.approx([0, 0, 5])]
+    assert sorted(round(u["size"], 3) for u in rims) == [round(2 * math.pi * 5, 3),
+                                                         round(2 * math.pi * 10, 3)]
+
+
+def test_a_face_shared_by_two_results_has_one_id(agent_client):
+    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10)["name"]
+    b = _ok(agent_client, "make_box_two_pnt", pnt1=[10, 0, 0], pnt2=[20, 10, 10])["name"]
+    p = _ok(agent_client, "partition", shapes=[a, b])["name"]
+    assert len(_ids(agent_client, p, "face")) == 11
+
+
+def test_review_fixes_refuse_repeats_and_odd_args(agent_client):
+    a = _box(agent_client)
+    r = _call(agent_client, "partition", shapes=[a, a])
+    assert r["ok"] is False and "more than once" in r["error"]
+    r = _call(agent_client, "split", objects=[a], tools=[a])
+    assert r["ok"] is False and "more than once" in r["error"]
+    r = _call(agent_client, "partition", shapes=[a], tools="")
+    assert r["ok"] is False
+    r = _call(agent_client, "create_sketch", plane={"face": ["F1"], "of": a})
+    assert r["ok"] is False and "id" in r["error"]
+    r = _call(agent_client, "get_subshapes", shape=a, sub_type=["edge"])
+    assert r["ok"] is False
+    ex = _ok(agent_client, "explode", shape=a, sub_type="face")
+    assert all(not n["name"].startswith(a + "_") for n in ex["names"])
