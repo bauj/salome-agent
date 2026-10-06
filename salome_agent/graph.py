@@ -99,7 +99,7 @@ def _follow_up(state: dict) -> str:
     plan node answers that one with why it cannot."""
     if (state.get("turn_idx") or 0) == 0:
         return "plan"
-    return "plan" if _shaper_on_geom(state) else "amend"
+    return "plan" if _cross_module(state) else "amend"
 
 
 def _amend_module(state: dict, graph) -> str:
@@ -290,7 +290,7 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
 
     images = state.get("reference_images")
     after = _follow_up(state)
-    if not images or _shaper_on_geom(state):
+    if not images or _cross_module(state):
         return Command(goto=after)
     llm = config["configurable"]["llm_client"]
     retries = ((state.get("config") or {}).get("llm") or {}).get("vision_fix_retries", 2)
@@ -316,32 +316,35 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
     return Command(update=update, goto=after)
 
 
-def _shaper_on_geom(state: dict) -> str | None:
-    """SHAPER tools cannot use GEOM objects, so a later SHAPER request on a GEOM
-    study is answered without planning."""
+def _cross_module(state: dict) -> str | None:
+    """GEOM and SHAPER cannot use each other's objects, so a later request that
+    names one on a study the other built is answered without planning."""
     from salome_agent.build_graph import BuildGraph
     from salome_agent.nodes.planner import named_cad_module
 
-    if (state.get("turn_idx") or 0) == 0 or named_cad_module(state.get("user_request") or "") != "shaper":
+    named = named_cad_module(state.get("user_request") or "")
+    if (state.get("turn_idx") or 0) == 0 or named not in ("geom", "shaper"):
         return None
+    other = "shaper" if named == "geom" else "geom"
     graph = BuildGraph.from_dict(state.get("build_graph"))
     prefix = (state.get("session") or {}).get("name_prefix") or ""
     names = [n.removeprefix(prefix) if prefix else n
-             for b in graph.blocks if b.module == "geom"
+             for b in graph.blocks if b.module == other
              for n in b.result_names or
              [p for node in graph.block_nodes(b.id) for p in node.published]]
     if not names:
         return None
-    return (f"The objects in the study ({', '.join(names)}) were built in GEOM, and "
-            f"SHAPER cannot use GEOM objects. Ask for this change in GEOM, or start "
-            f"a new conversation to build it in SHAPER.")
+    built, asked = other.upper(), named.upper()
+    return (f"The objects in the study ({', '.join(names)}) were built in {built}, and "
+            f"{asked} cannot use {built} objects. Ask for this change in {built}, or "
+            f"start a new conversation to build it in {asked}.")
 
 
 def _plan_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
     from salome_agent.nodes.planner import blank_stages, plan
 
-    refusal = _shaper_on_geom(state)
+    refusal = _cross_module(state)
     if refusal:
         log.info("  %s", refusal)
         return Command(update={"plan": [], "stages": {}, "stage_idx": 0,
