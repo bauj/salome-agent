@@ -301,11 +301,38 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
     return Command(update=update, goto=after)
 
 
+def _shaper_on_geom(state: dict) -> str | None:
+    """SHAPER tools cannot use GEOM objects, so a later SHAPER request on a GEOM
+    study is answered without planning."""
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.nodes.planner import named_cad_module
+
+    if (state.get("turn_idx") or 0) == 0 or named_cad_module(state["user_request"]) != "shaper":
+        return None
+    graph = BuildGraph.from_dict(state.get("build_graph"))
+    prefix = (state.get("session") or {}).get("name_prefix") or ""
+    names = [n.removeprefix(prefix) if prefix else n
+             for b in graph.blocks if b.module == "geom"
+             for n in b.result_names or
+             [p for node in graph.block_nodes(b.id) for p in node.published]]
+    if not names:
+        return None
+    return (f"The objects in the study ({', '.join(names)}) were built in GEOM, and "
+            f"SHAPER cannot use GEOM objects. Ask for this change in GEOM, or start "
+            f"a new conversation to build it in SHAPER.")
+
+
 def _plan_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
     from salome_agent.build_graph import BuildGraph
     from salome_agent.nodes.planner import blank_stages, plan
 
+    refusal = _shaper_on_geom(state)
+    if refusal:
+        log.info("  %s", refusal)
+        return Command(update={"plan": [], "stages": {}, "stage_idx": 0,
+                               "turn_outcome": {"question": refusal, "summary": None}},
+                       goto="assemble")
     llm = config["configurable"]["llm_client"]
     detail = state["config"]["policy"].get("plan_detail", "balanced")
     log.info("planning... (plan_detail=%s)", detail)

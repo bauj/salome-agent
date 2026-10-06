@@ -227,7 +227,7 @@ def test_an_empty_plan_becomes_a_question_not_a_gate(tmp_path, monkeypatch):
     assert out["plan"] == []
 
 
-def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False):
+def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False, graph=None):
     from salome_agent.nodes import planner as planner_mod
     from salome_agent.nodes import vision as vision_mod
     from salome_agent.specialists import amend as amend_mod
@@ -246,27 +246,60 @@ def _shaper_follow_up_seen(tmp_path, monkeypatch, images=False):
         raise RuntimeError("stop after planning")
 
     monkeypatch.setattr(planner_mod, "plan", fake_plan)
-    state = _state(tmp_path, _graph(), "add a rib in SHAPER")
+    state = _state(tmp_path, graph or _graph(), "add a rib in SHAPER")
     state["history"] = [{"event": "turn", "turn": 0, "text": "a box in GEOM",
                          "status": "ok", "summary": "box"}]
     if images:
         state["reference_images"] = ["data:image/png;base64,AAAA"]
     cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
                             "executor_client": None}}
-    build_graph(batch=True).invoke(state, config=cfg)
+    seen["out"] = build_graph(batch=True).invoke(state, config=cfg)
     return seen
+
+
+def _shaper_graph():
+    g = BuildGraph()
+    g.requests.append("a plate in SHAPER")
+    b = g.add_block(0, "stage 1/1: shaper", "shaper", ["extrusion_1"])
+    g.append(b, "extrude", {"base": "face_1", "size": 5},
+             [{"fn": "addExtrusion", "args": [], "out_vars": ["extrusion_1"],
+               "publish": ["extrusion_1"]}], 0, module="shaper")
+    return g
+
+
+def test_a_shaper_follow_up_on_a_geom_study_is_answered_without_planning(tmp_path,
+                                                                         monkeypatch):
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch)
+    assert "request" not in seen
+    question = seen["out"]["turn_outcome"]["question"]
+    assert question.startswith("The objects in the study (box_1) were built in GEOM")
+    assert seen["out"]["turn_outcome"]["summary"] is None
+
+
+def test_a_shaper_follow_up_on_a_shaper_study_is_planned(tmp_path, monkeypatch):
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, graph=_shaper_graph())
+    assert "extrusion_1" in seen["request"]
 
 
 def test_a_shaper_follow_up_is_planned_with_the_study_and_earlier_requests(tmp_path,
                                                                           monkeypatch):
-    seen = _shaper_follow_up_seen(tmp_path, monkeypatch)
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, graph=_shaper_graph())
     assert seen["request"].startswith("add a rib in SHAPER")
-    assert "The study already contains: box_1." in seen["request"]
+    assert "The study already contains: extrusion_1." in seen["request"]
     assert "a box in GEOM" in seen["request"]
     assert seen["pin_from"] == "add a rib in SHAPER"
 
 
 def test_a_shaper_follow_up_with_images_is_described_then_planned(tmp_path, monkeypatch):
-    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, images=True)
-    assert "box_1" in seen["request"]
+    seen = _shaper_follow_up_seen(tmp_path, monkeypatch, images=True, graph=_shaper_graph())
+    assert "extrusion_1" in seen["request"]
     assert seen["image_spec"]["summary"] == "a rib"
+
+
+def test_the_geom_refusal_names_objects_without_the_run_prefix():
+    from salome_agent.graph import _shaper_on_geom
+    g = BuildGraph()
+    g.add_block(0, "stage 1/1: geom", "geom", ["sa_r1_box_1"])
+    state = {"turn_idx": 1, "user_request": "add a rib in SHAPER", "build_graph": g.to_dict(),
+             "session": {"name_prefix": "sa_r1_"}}
+    assert "(box_1)" in _shaper_on_geom(state)
