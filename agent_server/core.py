@@ -69,7 +69,7 @@ class Core:
             if pkg is None:
                 return {"id": rid, "ok": False, "error": f"no tool module {module!r}"}
             if cmd == "list_tools":
-                return {"id": rid, "tools": pkg.list_tools()}
+                return {"id": rid, "tools": pkg.list_tools(), "module": module}
             call = lambda: pkg.call_tool(b, req["name"], req["args"], pin=req.get("pin"))
             r = call() if module == "geom" else b.run_tool(call, _TOOL_TIMEOUT)
             if r.get("ok"):
