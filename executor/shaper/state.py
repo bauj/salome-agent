@@ -23,9 +23,35 @@ NAME_HELPER = '''def _name(obj, n):
     feat.data().setName(n)
     for i, r in enumerate(feat.results()):
         r.data().setName(n if i == 0 else f"{n}_{i + 1}")
+
+
+def _unjoin(sk, a, b):
+    """Remove the coincidences tying the point a to the point b, each given as
+    (feature name, attribute id): a corner being rounded."""
+    import ModelAPI
+    cf = ModelAPI.featureToCompositeFeature(sk.feature())
+    for i in reversed(range(cf.numberOfSubs())):
+        f = cf.subFeature(i)
+        if not f.getKind().startswith("SketchConstraintCoincidence"):
+            continue
+        ends = set()
+        for k in ("ConstraintEntityA", "ConstraintEntityB"):
+            ra = f.refattr(k)
+            if ra.isInitialized() and not ra.isObject() and ra.attr() is not None:
+                ends.add((ModelAPI.objectToFeature(ra.attr().owner()).data().name(),
+                          ra.attr().id()))
+        if ends == {a, b}:
+            sk.feature().document().removeFeature(f)
+
+
+def _wrap(ent):
+    """A sketch entity SHAPER made itself (a fillet arc, a mirrored copy) as its API object."""
+    f = ent if hasattr(ent, "getKind") else ent.feature()
+    return getattr(SketchAPI, "SketchAPI_" + f.getKind()[len("Sketch"):])(f)
 '''
 
 PREAMBLE = ('from salome.shaper import model\n'
+            'import SketchAPI\n'
             'from SketchAPI import SketchAPI_Point\n'
             'model.begin()\n'
             'shaper_doc = model.addPart(model.moduleDocument()).document()\n'
@@ -53,8 +79,11 @@ class Constraint:
 
 
 class Sketch:
-    def __init__(self, name, api, axes):
+    def __init__(self, name, api, axes, frame=None):
         self.name, self.api, self.axes = name, api, axes
+        # (origin, x_dir, y_dir) of a sketch on a face or a construction plane:
+        # its coordinates are local to that frame
+        self.frame = frame
         self.entities: dict[str, Entity] = {}
         self.constraints: dict[str, Constraint] = {}
         self.next_k = 0
@@ -89,9 +118,10 @@ def state(executor) -> ShaperState:
     global _USED
     st = executor.__dict__.get("shaper_state")
     if st is None:
+        import SketchAPI
         from SketchAPI import SketchAPI_Point
         _USED = True
-        ns = {"model": model(), "SketchAPI_Point": SketchAPI_Point}
+        ns = {"model": model(), "SketchAPI": SketchAPI, "SketchAPI_Point": SketchAPI_Point}
         with transaction() as m:
             ns["shaper_doc"] = m.addPart(m.moduleDocument()).document()
         exec(NAME_HELPER, ns)
@@ -176,7 +206,7 @@ def record(fn: str, code: str, *, out=(), refs=(), recv=None, publish=False) -> 
 
 
 def check_id(id_: str, what: str) -> None:
-    if not isinstance(id_, str) or not _ID.match(id_):
+    if not isinstance(id_, str) or not _ID.fullmatch(id_):
         raise ValueError(f"{what} id {id_!r} must start with a letter and use only "
                          "letters and digits (e.g. L1, C2, K3)")
 
@@ -202,7 +232,20 @@ def geometry(ent: Entity) -> dict:
         s = _pt(a.startPoint())
         return {"center": c, "start": s, "end": _pt(a.endPoint()),
                 "radius": round(math.dist(c, s), 6)}
+    if ent.type == "ellipse":
+        return {"center": _pt(a.center()), "major_radius": round(a.majorRadius().value(), 6),
+                "minor_radius": round(a.minorRadius().value(), 6)}
+    if ent.type in ("spline", "curve"):
+        if a.feature().getKind() == "SketchBSplinePeriodic":
+            return {"closed": True}
+        return {"start": _pt(a.startPoint()), "end": _pt(a.endPoint())}
     return {"at": _pt(a.coordinates())}
+
+
+# a sketch feature kind -> the entity type the tools call it
+KIND_TYPES = {"SketchLine": "line", "SketchCircle": "circle", "SketchArc": "arc",
+              "SketchPoint": "point", "SketchEllipse": "ellipse",
+              "SketchBSpline": "spline", "SketchBSplinePeriodic": "spline"}
 
 
 def snapshot(sk: Sketch) -> dict:
@@ -212,6 +255,8 @@ def snapshot(sk: Sketch) -> dict:
 def restore(sk: Sketch, geos: dict) -> None:
     """Put entities back where `geos` (a snapshot) had them."""
     for i, geo in moved(geos, snapshot(sk)).items():
+        if sk.entities[i].type not in ("line", "circle", "arc", "point"):
+            continue    # an ellipse or spline is moved through its own points
         old, a = geos[i], sk.entities[i].api
         if "start" in old:
             a.startPoint().setValue(*old["start"])
@@ -236,6 +281,8 @@ def moved(before: dict, after: dict) -> dict:
 
 
 def _far(a, b) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a != b
     if isinstance(a, list):
         return any(abs(x - y) > 1e-6 for x, y in zip(a, b))
     return abs(a - b) > 1e-6
@@ -258,12 +305,37 @@ def solver_error(sk: Sketch) -> str:
 
 
 def _ends(ent: Entity, geo: dict) -> list:
-    if ent.type in ("line", "arc"):
+    if ent.type in ("line", "arc") or (ent.type in ("spline", "curve") and "start" in geo):
         return [(f"{ent.id}.start", geo["start"]), (f"{ent.id}.end", geo["end"])]
     return []
 
 
-def _on(p, ent: Entity, geo: dict) -> bool:
+def sketch_frame(sk: Sketch) -> tuple:
+    """(origin, x_dir, y_dir, normal) of a sketch, from its feature."""
+    import GeomDataAPI
+    f = sk.api.feature()
+    o = GeomDataAPI.geomDataAPI_Point(f.attribute("Origin")).pnt()
+    x = GeomDataAPI.geomDataAPI_Dir(f.attribute("DirX")).dir()
+    n = GeomDataAPI.geomDataAPI_Dir(f.attribute("Norm")).dir()
+    xyz = lambda p: [p.x(), p.y(), p.z()]
+    return xyz(o), xyz(x), xyz(n.cross(x)), xyz(n)
+
+
+def _on_curve(p, ent: Entity, sk: Sketch) -> bool:
+    """p (sketch coordinates) lies on an ellipse or spline: measured on its edge."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_PointBuilder as PB, GeomAlgoAPI_ShapeTools as T
+    res = ent.api.feature().lastResult()
+    if res is None or res.shape() is None:
+        return False
+    o, x, y, _ = sketch_frame(sk)
+    w = [o[i] + p[0] * x[i] + p[1] * y[i] for i in range(3)]
+    return T.minimalDistance(PB.vertex(GeomAPI.GeomAPI_Pnt(*w)), res.shape()) < TOL
+
+
+def _on(p, ent: Entity, geo: dict, sk: Sketch | None = None) -> bool:
+    if ent.type in ("ellipse", "spline", "curve"):
+        return sk is not None and _on_curve(p, ent, sk)
     if ent.type == "line":
         (ax, ay), (bx, by) = geo["start"], geo["end"]
         dx, dy = bx - ax, by - ay
@@ -293,13 +365,49 @@ def loose_ends(sk: Sketch, geos: dict) -> list:
     for e in drawn:
         for ref, p in _ends(e, geos[e.id]):
             others = [o for o in drawn if o is not e]
-            touches = any(_on(p, o, geos[o.id]) for o in others)
+            touches = any(_on(p, o, geos[o.id], sk) for o in others)
             if not touches and e.type == "arc":
                 # an arc closing on itself is not open
                 touches = math.dist(geos[e.id]["start"], geos[e.id]["end"]) < TOL
             if not touches:
                 out.append({"ref": ref, "at": p})
     return out
+
+
+def _point_inside_frame(face, frame) -> list | None:
+    """As _point_inside, on a sketch with its own frame: the point in sketch
+    coordinates [u, v]."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_PointBuilder as PB, GeomAlgoAPI_ShapeTools as T
+    o, xd, yd = frame
+    uv = lambda p: [sum((p[i] - o[i]) * d[i] for i in range(3)) for d in (xd, yd)]
+    world = lambda u, v: [o[i] + u * xd[i] + v * yd[i] for i in range(3)]
+    pts = [uv([q.x(), q.y(), q.z()]) for q in
+           (GeomAPI.GeomAPI_Vertex(vx).point() for vx in face.subShapes(GeomAPI.GeomAPI_Shape.VERTEX))]
+    edges = face.subShapes(GeomAPI.GeomAPI_Shape.EDGE)
+    for e in edges:     # a circle has one vertex: widen by its box corners
+        ok, *b = e.computeSize()
+        if ok:
+            pts += [uv([b[i], b[j], b[k]]) for i in (0, 3) for j in (1, 4) for k in (2, 5)]
+    if not pts:
+        return None
+    lo = [min(p[i] for p in pts) for i in range(2)]
+    hi = [max(p[i] for p in pts) for i in range(2)]
+    for n in (8, 16):
+        best, best_d = None, -1.0
+        for a in range(1, n):
+            for b in range(1, n):
+                u = lo[0] + (hi[0] - lo[0]) * a / n
+                v = lo[1] + (hi[1] - lo[1]) * b / n
+                vert = PB.vertex(GeomAPI.GeomAPI_Pnt(*world(u, v)))
+                if not T.isSubShapeInsideShape(vert, face):
+                    continue
+                d = min(T.minimalDistance(vert, e) for e in edges)
+                if d > best_d:
+                    best, best_d = [u, v], d
+        if best is not None:
+            return [round(c, 4) + 0.0 for c in best]
+    return None
 
 
 def _point_inside(face) -> list | None:
@@ -347,7 +455,8 @@ def regions(executor, sk: Sketch) -> list:
         face = rc.face(i)
         entry = {"index": i, "area": round(GeomAlgoAPI_ShapeTools.area(face), 4)}
         try:
-            inside = _point_inside(face)
+            inside = (_point_inside_frame(face, sk.frame) if sk.frame
+                      else _point_inside(face))
         except Exception:  # noqa: BLE001 — the area alone still identifies the region
             inside = None
         if inside is not None:
@@ -423,9 +532,8 @@ def _precise_box(executor, results) -> list | None:
     return box
 
 
-def measure(executor, name: str) -> dict:
-    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
-    import GeomAPI
+def raw_box(executor, name: str) -> list:
+    """[xmin, ymin, zmin, xmax, ymax, zmax], unrounded."""
     results = results_of(executor, name)
     if not results:
         raise ValueError(f"{name} has no result")
@@ -434,7 +542,14 @@ def measure(executor, name: str) -> dict:
         sizes = [r.shape().computeSize()[1:] for r in results]
         box = [min(s[i] for s in sizes) for i in range(3)] + \
             [max(s[i] for s in sizes) for i in range(3, 6)]
-    xmin, ymin, zmin, xmax, ymax, zmax = box
+    return box
+
+
+def measure(executor, name: str) -> dict:
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    import GeomAPI
+    results = results_of(executor, name)
+    xmin, ymin, zmin, xmax, ymax, zmax = raw_box(executor, name)
     r4 = lambda v: round(v, 4) + 0.0
     shapes = [r.shape() for r in results]
     info = {
@@ -452,13 +567,41 @@ def measure(executor, name: str) -> dict:
     return info
 
 
+CONSTRUCTION = frozenset({"point", "axis", "plane"})
+
+
+def offset_plane(base: str, offset) -> str:
+    """addPlane arguments for the plane parallel to `base` at `offset` along +X,
+    +Y or +Z: SHAPER's XOZ normal points to -Y, so its offset is reversed."""
+    return (f'model.selection("FACE", "PartSet/{base}"), {offset!r}, '
+            f'{base == "XOZ"}')
+
+
+def construction_info(executor, name: str) -> dict:
+    """Where a construction point, axis or plane is: they have no size to measure."""
+    import GeomAPI
+    kind = state(executor).objects[name]
+    shape = results_of(executor, name)[0].shape()
+    xyz = lambda p: [round(p.x(), 4) + 0.0, round(p.y(), 4) + 0.0, round(p.z(), 4) + 0.0]
+    if kind == "point":
+        return {"kind": kind, "at": xyz(GeomAPI.GeomAPI_Vertex(shape).point())}
+    if kind == "axis":
+        edge = GeomAPI.GeomAPI_Edge(shape)
+        a, b = xyz(edge.firstPoint()), xyz(edge.lastPoint())
+        n = math.dist(a, b) or 1.0
+        return {"kind": kind, "through": a,
+                "direction": [round((q - p) / n, 6) + 0.0 for p, q in zip(a, b)]}
+    pln = GeomAPI.GeomAPI_Face(shape).getPlane()
+    return {"kind": kind, "point": xyz(pln.location()), "normal": xyz(pln.direction())}
+
+
 def check_results(executor, names: list) -> dict:
     """finish_stage's re-check: a feature whose inputs changed after it was
     made (a sketch edited under a face) no longer builds."""
     st = state(executor)
     out = {}
     for name in names:
-        if name in st.sketches:
+        if name in st.sketches or st.objects.get(name) in CONSTRUCTION:
             out[name] = {"status": "skip"}
         elif name not in st.objects or name not in st.ns:
             out[name] = {"status": "missing"}
@@ -481,3 +624,70 @@ def shape_status(info: dict) -> dict:
     if info["faces"] > 0 and info["area"] <= 1e-9:
         return {"status": "empty", "detail": "its faces have zero area"}
     return {"status": "ok"}
+
+
+# --- sub-shapes -------------------------------------------------------------
+# The model names an edge or face by a short id ("E3", "F2"), numbered by
+# centre (x, then y, then z) so the same shape always gives the same ids;
+# result.py gets SHAPER's own naming string, which survives a rebuild.
+
+SUB_TYPES = {"vertex": "V", "edge": "E", "face": "F", "solid": "S"}
+
+
+class Sub:
+    def __init__(self, id_, shape, naming, centre, size):
+        self.id, self.shape, self.naming = id_, shape, naming
+        self.centre, self.size = centre, size
+
+
+def _naming_names(executor, result, shapes: list) -> list:
+    """SHAPER's naming string for each sub-shape of `result`, read from a
+    throwaway Group that selects them by object."""
+    doc = state(executor).ns["shaper_doc"]
+    with transaction() as m:
+        probe = m.addGroup(doc, [m.selection(result, s) for s in shapes])
+    try:
+        lst = probe.feature().selectionList("group_list")
+        if lst.size() != len(shapes):
+            raise RuntimeError(f"SHAPER named {lst.size()} of {len(shapes)} sub-shapes")
+        names = []
+        for k, s in enumerate(shapes):
+            got = lst.value(k)
+            if got.value() is None or not got.value().isSame(s):
+                raise RuntimeError("SHAPER named a different sub-shape than the one asked for")
+            names.append(got.namingName())
+        return names
+    finally:
+        with transaction():
+            doc.removeFeature(probe.feature())
+
+
+def subshapes(executor, name: str, sub_type: str) -> list:
+    """Every sub-shape of `sub_type` of the published feature `name`, as Subs
+    with their ids."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    if not isinstance(sub_type, str) or sub_type not in SUB_TYPES:
+        raise ValueError(f"sub_type must be one of {', '.join(SUB_TYPES)}, got {sub_type!r}")
+    kind = getattr(GeomAPI.GeomAPI_Shape, sub_type.upper())
+    names, seen = [], []
+    for res in results_of(executor, name):
+        uniq = []
+        for s in res.shape().subShapes(kind):
+            if not any(s.isSame(t) for t in seen):   # shared between results too
+                uniq.append(s)
+                seen.append(s)
+        if uniq:
+            names += list(zip(uniq, _naming_names(executor, res, uniq)))
+    out = []
+    for s, naming in names:
+        ok, *b = s.computeSize()
+        centre = [round((b[i] + b[i + 3]) / 2, 4) + 0.0 for i in range(3)]
+        size = {"vertex": 0.0, "edge": T.length(s), "face": T.area(s),
+                "solid": T.volume(s)}[sub_type]
+        out.append(Sub(None, s, naming, centre, round(size, 4) + 0.0))
+    # ties (coaxial rims, faces with one box centre) by size, then by name
+    out.sort(key=lambda u: (tuple(u.centre), u.size, u.naming))
+    for i, u in enumerate(out, start=1):
+        u.id = f"{SUB_TYPES[sub_type]}{i}"
+    return out

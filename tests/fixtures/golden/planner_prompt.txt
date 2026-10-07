@@ -130,8 +130,8 @@ GEOM tools available to a single GEOM stage:
   basic_properties -- Report [length, area, volume] of `shape` (mm): length for an edge/wire, area for a face/shell, volume for a solid; the others are 0.
 
 SHAPER tools available to a single SHAPER stage:
-  create_sketch -- new sketch on XOY / XOZ / YOZ or a plane offset from one
-  sketch_add -- lines, circles, arcs, points (construction lines too)
+  create_sketch -- new sketch on XOY / XOZ / YOZ, a plane offset from one, a construction plane or a flat face of a solid
+  sketch_add -- lines, circles, arcs, points, ellipses, splines, rectangles, polylines, projected edges (construction too)
   sketch_constrain -- dimensions and relations: length, radius, distance, angle, coincident, tangent, ...
   sketch_remove -- remove entities or constraints from a sketch
   sketch_status -- solved coordinates, dof, open ends and closed regions of a sketch
@@ -144,3 +144,42 @@ SHAPER tools available to a single SHAPER stage:
   cut -- cut faces or solids from faces or solids
   common -- keep only where faces or solids overlap
   measure -- area, volume, face count, validity of shaper objects
+  make_box -- box with a corner at the origin, from dx, dy, dz
+  make_box_two_pnt -- box between two opposite corners
+  make_cylinder -- cylinder from radius and height, placed at an origin along an axis
+  make_sphere -- sphere from radius and centre
+  make_cone -- cone or truncated cone from two radii and a height
+  make_torus -- torus from ring and tube radii
+  make_point -- construction point at x, y, z
+  make_axis -- construction axis through two points or a point and a direction
+  make_plane -- construction plane from a point and a normal, or offset from a base plane
+  check_shape -- is a shape valid geometry
+  list_study_objects -- every sketch and feature built so far, used-up ones marked
+  min_distance -- shortest distance between two shapes
+  basic_properties -- length, area, volume of a shape
+  set_color -- colour of a shape
+  set_transparency -- transparency of a shape
+  translate -- move a shape by dx, dy, dz
+  rotate -- rotate a shape about an axis
+  mirror -- mirror a shape across a plane, axis or point, optionally keeping the original
+  scale -- scale a shape, uniformly or per axis
+  multi_translate -- row or grid of copies of a shape
+  multi_rotate -- circular pattern of copies of a shape
+  offset_shape -- grow or shrink a shape by offsetting its faces
+  position -- place a shape built at the origin into a target frame
+  align -- move a shape against, on top of or centred on another
+  get_subshapes -- ids of a shape's edges, faces, vertices or solids, filtered by position, size or plane
+  get_subshape -- new shape copied from some faces or edges of a shape
+  explode -- every edge, face, ... of a shape as its own shape
+  fillet_edges -- round edges of a solid
+  chamfer_edges -- bevel edges of a solid
+  make_thick_solid -- hollow a solid into a wall, open at chosen faces
+  partition -- cut shapes by each other, keeping every piece with shared faces
+  split -- split shapes into pieces with other shapes or planes
+  make_polyline -- 3D wire of straight segments through points
+  make_curve -- smooth 3D curve through points
+  make_pipe -- sweep a face or wire along a path
+  make_loft -- solid through two sections
+  make_filling -- surface spanning boundary curves
+  sketch_fillet -- round a corner of a sketch
+  sketch_copy -- mirror, offset or pattern curves of a sketch
