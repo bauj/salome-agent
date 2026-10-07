@@ -710,6 +710,7 @@ def _made_by(st, sk: Sketch, op_code: str, op_var: str, getter: str, prefix: str
     op_code += (f"\n{new} = [_x for _x in {op_var}.{getter} "
                 f"if _x.feature().data().name() not in {tuple(sources)!r}]")
     first = record(fn, op_code, out=[op_var], recv=sk.name)
+    had_error = bool(solver_error(sk))
     try:
         exec_records(st, [first])
     except Exception:
@@ -728,11 +729,20 @@ def _made_by(st, sk: Sketch, op_code: str, op_var: str, getter: str, prefix: str
                     out=[v for _, v in made], recv=sk.name)
     try:
         exec_records(st, [second])
+        err = None if had_error else solver_error(sk)
     except Exception:
         with transaction():
             st.ns["shaper_doc"].removeFeature(st.ns.pop(op_var).feature())
         _drop_helpers(st, [first])
         raise
+    if err:
+        with transaction():
+            for _, v in made:
+                st.ns.pop(v, None)
+            st.ns["shaper_doc"].removeFeature(st.ns.pop(op_var).feature())
+        _drop_helpers(st, [first])
+        raise ValueError(f"the copy conflicts with the constraints of the sketch ({err}); "
+                         "nothing was added")
     return [first, second], made
 
 
