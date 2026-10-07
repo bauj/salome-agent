@@ -156,7 +156,9 @@ def test_measure_gives_the_exact_box_of_a_curved_solid(agent_client):
 
 def test_cut_that_misses_carries_a_delta_note(agent_client):
     name, r = _plate(agent_client)
-    ext = _call(agent_client, "extrude", base=name, size=10)
+    outer = next(g["index"] for g in r["regions"] if round(g["area"], 2) == 721.46)
+    face = _call(agent_client, "make_face", sketch=name, regions=[outer])
+    ext = _call(agent_client, "extrude", base=face["name"], size=10)
     far = _call(agent_client, "create_sketch", plane="XOY")
     _call(agent_client, "sketch_add", sketch=far["sketch"], entities=[
         {"id": "C", "type": "circle", "center": [100, 100], "radius": 2}])

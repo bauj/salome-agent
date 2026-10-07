@@ -216,3 +216,27 @@ def test_result_py_rebuilds_new_sketch_entities(agent_client, tmp_path):
     assert m, out.stdout[-2000:] + out.stderr[-2000:]
     assert float(m.group(1)) == pytest.approx(live, abs=1e-3)
     assert live < (800 - (4 - math.pi) * 9 - 2 * math.pi * 8) * 4
+
+
+def test_sub_batch_4_refusals(agent_client):
+    sk = _sketch(agent_client)
+    for ent in ({"id": "S", "type": "spline", "points": [[0, 0], [5, 5], [0, 0]]},
+                {"id": "S", "type": "polyline", "points": [[0, 0], [5, 0], [5, 5], [0, 0]],
+                 "closed": True},
+                {"id": "S", "type": "ellipse", "center": [0, 0], "major_radius": 3,
+                 "minor_radius": 3}):
+        r = _call(agent_client, "sketch_add", sketch=sk, entities=[ent])
+        assert r["ok"] is False, ent
+    _ok(agent_client, "sketch_add", sketch=sk, entities=[
+        {"id": "C", "type": "circle", "center": [0, 0], "radius": 2},
+        {"id": "A", "type": "line", "start": [0, -5], "end": [0, 5], "construction": True}])
+    for kw in ({"op": "mirror", "of": ["C", "C"], "axis": "A"},
+               {"op": "mirror", "of": ["A"], "axis": "A"},
+               {"op": "mirror", "of": ["C"], "axis": "A", "count": 3},
+               {"op": "offset", "of": ["C"], "distance": -2}):
+        r = _call(agent_client, "sketch_copy", sketch=sk, id="M", **kw)
+        assert r["ok"] is False, kw
+    assert _ok(agent_client, "sketch_status", sketch=sk)["entities"].keys() == {"C", "A"}
+    a = _ok(agent_client, "make_point", x=0, y=0, z=0)["name"]
+    r = _call(agent_client, "make_polyline", points=[a, a, [1, 0, 0]])
+    assert r["ok"] is False
