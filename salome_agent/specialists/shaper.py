@@ -105,8 +105,9 @@ values that disagree: build anyway and let the tool replies tell you which value
 fits. If the spec's prose and its data disagree, the data wins. Explicit
 dimensions in the stage's params win over the spec.
 
-You may be given only a subset of the SHAPER tools. If you need one that is not
-in your list, call load_tools with its name or category."""
+You start with a subset of the SHAPER tools. All of them are listed below; call
+load_tools with the names of any you need that are not in your list yet.
+{catalogue}"""
 
 # policy.verify_cadence: how hard the specialist is pushed to check placement.
 _VERIFY_HINT = {
@@ -126,7 +127,8 @@ _VERIFY_HINT = {
 
 def _shaper_prompt(verify_cadence: str = "final") -> str:
     return (SHAPER_SYSTEM_PROMPT.format(
-        verify=_VERIFY_HINT.get(verify_cadence, _VERIFY_HINT["final"]))
+        verify=_VERIFY_HINT.get(verify_cadence, _VERIFY_HINT["final"]),
+        catalogue=_tool_lines())
             + "\n\n" + CALC_PROMPT)
 
 # Planner-facing one-liners: what a shaper stage can do, not how to call it.
@@ -191,8 +193,11 @@ PLANNER_TOOL_LINES.update({
     "sketch_copy": "mirror, offset or pattern curves of a sketch",
 })
 
-_CATALOGUE = ("SHAPER tools available to a single SHAPER stage:\n"
-              + "\n".join(f"  {n} -- {d}" for n, d in PLANNER_TOOL_LINES.items()))
+def _tool_lines() -> str:
+    return "\n".join(f"  {n} -- {d}" for n, d in PLANNER_TOOL_LINES.items())
+
+
+_CATALOGUE = "SHAPER tools available to a single SHAPER stage:\n" + _tool_lines()
 
 
 def _finish(args: dict, call_log: list) -> dict:

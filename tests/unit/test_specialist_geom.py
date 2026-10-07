@@ -645,7 +645,8 @@ def test_repeated_failing_call_is_answered_locally_without_a_round_trip():
                                                  "category": "primitive"}]}
     client.call_tool.return_value = {"ok": False, "error": "'(0,0,0)'"}
 
-    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": []},
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                                  "tools": ["make_box_two_pnt"]},
                                  llm, client, iteration_cap=12, verify_cadence="none")
 
     assert client.call_tool.call_count == 1
@@ -671,10 +672,33 @@ def test_a_different_call_after_a_failure_still_runs():
         {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
                                   "out_vars": ["box_1"], "publish": ["box_1"]}]},
     ]
-    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": []},
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                                  "tools": ["make_box_two_pnt"]},
                                  llm, client, iteration_cap=12, verify_cadence="none")
     assert client.call_tool.call_count == 2
     assert result["result_names"] == ["box_1"]
+
+
+def test_a_call_to_a_tool_not_loaded_loads_it_and_is_not_run():
+    llm = MagicMock()
+    call = ("make_box_two_pnt", {"pnt1": [0, 0, 0], "pnt2": [1, 1, 1]})
+    llm.chat.side_effect = [_resp(call), _resp(call),
+                            _resp(("finish_stage", {"result_names": ["box_1"]}))]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box_two_pnt", "category": "primitive"},
+        {"name": "make_box", "category": "primitive"}]}
+    client.call_tool.return_value = {"ok": True, "records": [
+        {"fn": "MakeBoxTwoPnt", "args": [], "out_vars": ["box_1"], "publish": ["box_1"]}]}
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": []},
+                                 llm, client, iteration_cap=12, verify_cadence="none")
+    assert client.call_tool.call_count == 1
+    assert result["result_names"] == ["box_1"]
+    first, second = (c.kwargs for c in llm.chat.call_args_list[:2])
+    assert "make_box_two_pnt" not in [t["name"] for t in first["tools"]]
+    assert "make_box_two_pnt" in [t["name"] for t in second["tools"]]
+    assert any("was not loaded, so this call was not run" in str(m.get("content"))
+               for m in second["messages"])
 
 
 def test_compact_result_keeps_a_delta_note():
