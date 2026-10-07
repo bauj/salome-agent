@@ -320,6 +320,12 @@ def _projectable(sk: Sketch, shape, w: str) -> None:
     if shape.shapeType() != GeomAPI.GeomAPI_Shape.EDGE:
         return
     edge = GeomAPI.GeomAPI_Edge(shape)
+    if edge.isCircle() or edge.isArc():
+        c, n = edge.circle().normal(), sketch_frame(sk)[3]
+        if abs(c.x() * n[0] + c.y() * n[1] + c.z() * n[2]) < 1e-9:
+            raise ValueError(f"{w}: that circle is seen edge-on by the sketch plane and "
+                             "projects to a line; use a sketch plane it faces")
+        return
     if not edge.isLine():
         return
     a, b = edge.firstPoint(), edge.lastPoint()
