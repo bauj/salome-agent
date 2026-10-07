@@ -231,3 +231,26 @@ def test_a_revolved_profile_touching_its_axis_lists_its_real_edges(agent_client)
     rim = _ids(agent_client, shell, "edge", {"sorted_by": "z", "take": "max", "count": 2})
     filleted = _ok(agent_client, "fillet_edges", shape=shell, edges=rim, radius=0.5)
     assert filleted["measure"]["valid"]
+
+
+def test_fillets_meeting_across_a_rim_are_refused_not_run(agent_client):
+    # Vase of run 84e7b7cb7844: radius 1 on both circles of its 2 mm rim
+    # segfaulted OCC and killed the server (task 354).
+    sk = _ok(agent_client, "create_sketch", plane="XOZ")["sketch"]
+    _ok(agent_client, "sketch_add", sketch=sk, entities=[
+        {"id": "L1", "type": "line", "start": [0, 0], "end": [30, 0]},
+        {"id": "L2", "type": "line", "start": [30, 0], "end": [30, 5]},
+        {"id": "S1", "type": "spline", "points": [[30, 5], [50, 60], [40, 120]]},
+        {"id": "L3", "type": "line", "start": [40, 120], "end": [38, 120]},
+        {"id": "S2", "type": "spline", "points": [[38, 120], [48, 60], [28, 5]]},
+        {"id": "L4", "type": "line", "start": [28, 5], "end": [0, 5]},
+        {"id": "L5", "type": "line", "start": [0, 5], "end": [0, 0]}])
+    _ok(agent_client, "close_sketch", sketch=sk)
+    vase = _ok(agent_client, "revolve", base=sk, axis="OZ", angle=360)["name"]
+    rim = _ids(agent_client, vase, "edge",
+               {"on_plane": {"point": [0, 0, 120], "normal": [0, 0, 1]}, "state": "on"})
+    assert len(rim) == 2
+    r = _call(agent_client, "fillet_edges", shape=vase, radius=1, edges=rim)
+    assert r["ok"] is False and "would meet" in r["error"] and "below 0.95" in r["error"]
+    f = _ok(agent_client, "fillet_edges", shape=vase, radius=0.9, edges=rim)
+    assert f["measure"]["valid"] is True
