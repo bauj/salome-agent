@@ -2,9 +2,11 @@ import math
 
 from executor.shaper.features import _build, _operands
 from executor.shaper.primitives import _num
-from executor.shaper.state import SUB_TYPES, forget, new_name, state, subshapes, tool
+from executor.shaper.state import (SUB_TYPES, forget, new_name, results_of, state,
+                                   subshapes, tool)
 
 _MAX_EXPLODE = 50
+_MEET = 0.95   # OCC segfaults when two fillets on one face meet (2r ~ face width)
 _USED = " `shape` is used up: refer to the result by its new name."
 
 _WHERE = {"description": (
@@ -200,9 +202,42 @@ def tool_explode(executor, args: dict):
     return {"ok": True, "records": records, "names": names}
 
 
-def _edge_feature(executor, args: dict, prefix: str, fn: str, call) -> dict:
+def fillets_meet(radius: float, pairs: list):
+    """The refusal for fillets of `radius` on edge pairs (id, id, distance) that
+    bound one face and would meet across it, or None."""
+    for a, b, d in pairs:
+        if d > 1e-7 and 2 * radius >= _MEET * d:
+            return (f"fillets of radius {radius:g} on {a} and {b} would meet across the "
+                    f"{d:.4g} mm face between them, which SHAPER cannot build; use a "
+                    f"radius below {_MEET * d / 2:.4g}")
+    return None
+
+
+def _face_pairs(executor, name: str, picked: list) -> list:
+    """(id, id, distance) for each two picked edges that bound one face and do
+    not touch."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    E, F = GeomAPI.GeomAPI_Shape.EDGE, GeomAPI.GeomAPI_Shape.FACE
+    seen, out = set(), []
+    for res in results_of(executor, name):
+        for f in res.shape().subShapes(F):
+            on = [u for u in picked if any(u.shape.isSame(e) for e in f.subShapes(E))]
+            for i, a in enumerate(on):
+                for b in on[i + 1:]:
+                    if (a.id, b.id) not in seen:
+                        seen.add((a.id, b.id))
+                        out.append((a.id, b.id, T.minimalDistance(a.shape, b.shape)))
+    return out
+
+
+def _edge_feature(executor, args: dict, prefix: str, fn: str, call, radius=None) -> dict:
     name = _shape_name(executor, args)
     picked = _pick(executor, name, "edge", args.get("edges"), args.get("where"))
+    if radius is not None:
+        refusal = fillets_meet(radius, _face_pairs(executor, name, picked))
+        if refusal:
+            raise ValueError(refusal)
     out = new_name(executor, prefix)
     code = f"{out} = model.{fn}(shaper_doc, [{_sels('edge', picked)}], {call})"
     r = _build(executor, out, fn, code, [name], "solid")
@@ -220,7 +255,7 @@ def _edge_feature(executor, args: dict, prefix: str, fn: str, call) -> dict:
           "edges": _IDS, "where": _WHERE}, "required": ["shape", "radius"]})
 def tool_fillet_edges(executor, args: dict):
     r = _num(args.get("radius"), "radius", positive=True)
-    return _edge_feature(executor, args, "fillet", "addFillet", repr(r))
+    return _edge_feature(executor, args, "fillet", "addFillet", repr(r), radius=r)
 
 
 @tool("chamfer_edges", category="feature",
