@@ -21,7 +21,7 @@ _EXPECTED_LOAD_TOOLS_PARAMETERS = {
     "type": "object",
     "properties": {
         "names": {"type": "array", "items": {"type": "string"},
-                  "description": "specific geom tool names to add"},
+                  "description": "specific tool names to add"},
         "categories": {"type": "array", "items": {
             "type": "string",
             "enum": ["primitive", "sketch", "swept", "boolean",
