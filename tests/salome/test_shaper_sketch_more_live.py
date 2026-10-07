@@ -34,12 +34,14 @@ def test_extruding_a_sketch_with_a_hole_is_refused(agent_client):
     _ok(agent_client, "sketch_add", sketch=sk, entities=[
         {"id": "R", "type": "rectangle", "corner1": [0, 0], "corner2": [40, 20]},
         {"id": "C", "type": "circle", "center": [20, 10], "radius": 5}])
+    _ok(agent_client, "close_sketch", sketch=sk)
     r = _call(agent_client, "extrude", base=sk, size=5)
     assert r["ok"] is False and "make_face" in r["error"]
     two = _sketch(agent_client)
     _ok(agent_client, "sketch_add", sketch=two, entities=[
         {"id": "A", "type": "circle", "center": [0, 0], "radius": 2},
         {"id": "B", "type": "circle", "center": [10, 0], "radius": 2}])
+    _ok(agent_client, "close_sketch", sketch=two)
     ext = _ok(agent_client, "extrude", base=two, size=1)["measure"]
     assert ext["volume"] == pytest.approx(2 * math.pi * 4, abs=1e-3)
 
@@ -71,6 +73,7 @@ def test_ellipse_and_splines(agent_client):
         {"id": "E", "type": "ellipse", "center": [0, 0], "major_radius": 20,
          "minor_radius": 10, "angle": 30}])
     assert _areas(r) == pytest.approx([math.pi * 200], abs=1e-3)
+    _ok(agent_client, "close_sketch", sketch=sk)
     ext = _ok(agent_client, "extrude", base=sk, size=2)["measure"]
     assert ext["volume"] == pytest.approx(math.pi * 200 * 2, rel=1e-4)
     sp = _sketch(agent_client)
@@ -82,6 +85,7 @@ def test_ellipse_and_splines(agent_client):
         {"type": "coincident", "refs": ["S.end", "L.start"]},
         {"type": "coincident", "refs": ["L.end", "S.start"]}])
     assert r["loose_ends"] == [] and len(r["regions"]) == 1
+    _ok(agent_client, "close_sketch", sketch=sp)
     loop = _sketch(agent_client)
     r = _ok(agent_client, "sketch_add", sketch=loop, entities=[
         {"id": "S", "type": "spline", "points": [[0, 0], [10, 0], [10, 10], [0, 10]],
@@ -136,6 +140,7 @@ def test_sketch_copies(agent_client):
                      if k.startswith("Q"))
     assert len(r["made"]) == 3
     assert centres == [(0.0, -10.0), (0.0, 10.0), (10.0, 0.0)]
+    _ok(agent_client, "close_sketch", sketch=sk)
     off = _sketch(agent_client)
     _ok(agent_client, "sketch_add", sketch=off, entities=[
         {"id": "C", "type": "circle", "center": [0, 0], "radius": 5}])
@@ -151,15 +156,18 @@ def test_pipe_loft_and_filling(agent_client):
     sk = _sketch(agent_client)
     _ok(agent_client, "sketch_add", sketch=sk, entities=[
         {"id": "C", "type": "circle", "center": [0, 0], "radius": 2}])
+    _ok(agent_client, "close_sketch", sketch=sk)
     pipe = _ok(agent_client, "make_pipe", base=sk, path=path)["measure"]
     assert pipe["volume"] == pytest.approx(math.pi * 4 * 50, rel=1e-6)
     bottom = _sketch(agent_client)
     _ok(agent_client, "sketch_add", sketch=bottom, entities=[
         {"id": "C", "type": "circle", "center": [0, 0], "radius": 5}])
+    _ok(agent_client, "close_sketch", sketch=bottom)
     f1 = _ok(agent_client, "make_face", sketch=bottom, regions="all")["name"]
     top = _ok(agent_client, "create_sketch", plane={"base": "XOY", "offset": 10})["sketch"]
     _ok(agent_client, "sketch_add", sketch=top, entities=[
         {"id": "C", "type": "circle", "center": [0, 0], "radius": 2}])
+    _ok(agent_client, "close_sketch", sketch=top)
     f2 = _ok(agent_client, "make_face", sketch=top, regions="all")["name"]
     loft = _ok(agent_client, "make_loft", first=f1, second=f2)["measure"]
     assert loft["volume"] == pytest.approx(math.pi * 10 * (25 + 10 + 4) / 3, rel=1e-3)
@@ -189,6 +197,7 @@ def test_result_py_rebuilds_new_sketch_entities(agent_client, tmp_path):
         {"id": "R", "type": "rectangle", "corner1": [0, 0], "corner2": [40, 20]},
         {"id": "A", "type": "line", "start": [20, -5], "end": [20, 25], "construction": True}])
     call("sketch_fillet", sketch=sk, at="R1.end", radius=3, id="F")
+    call("close_sketch", sketch=sk)
     face = call("make_face", sketch=sk, regions="all")["name"]
     plate = call("extrude", base=face, size=4)["name"]
     holes = call("create_sketch", plane="XOY")["sketch"]
@@ -198,6 +207,7 @@ def test_result_py_rebuilds_new_sketch_entities(agent_client, tmp_path):
          "closed": True},
         {"id": "A", "type": "line", "start": [20, -5], "end": [20, 25], "construction": True}])
     call("sketch_copy", sketch=holes, op="mirror", of=["E"], axis="A", id="M")
+    call("close_sketch", sketch=holes)
     cut = call("extrude_cut", base=holes, target=plate, through_all=True)
     live = cut["measure"]["volume"]
     log = [rec for c_ in calls for rec in c_["records"]]
@@ -237,6 +247,7 @@ def test_sub_batch_4_refusals(agent_client):
         r = _call(agent_client, "sketch_copy", sketch=sk, id="M", **kw)
         assert r["ok"] is False, kw
     assert _ok(agent_client, "sketch_status", sketch=sk)["entities"].keys() == {"C", "A"}
+    _ok(agent_client, "close_sketch", sketch=sk)
     a = _ok(agent_client, "make_point", x=0, y=0, z=0)["name"]
     r = _call(agent_client, "make_polyline", points=[a, a, [1, 0, 0]])
     assert r["ok"] is False
@@ -253,7 +264,23 @@ def test_swept_and_face_refusals(agent_client):
     _ok(agent_client, "sketch_add", sketch=sk, entities=[
         {"id": "O", "type": "circle", "center": [0, 0], "radius": 10},
         {"id": "I", "type": "circle", "center": [0, 0], "radius": 3}])
+    _ok(agent_client, "close_sketch", sketch=sk)
     assert _call(agent_client, "make_face", sketch=sk, regions="all")["ok"] is False
     r = _call(agent_client, "sketch_add", sketch=sk, entities=[
         {"id": "L", "type": "line", "start": [0, 0], "end": [1, 1], "closed": True}])
     assert r["ok"] is False
+
+
+def test_projection_of_a_circle_seen_edge_on(agent_client):
+    cyl = _ok(agent_client, "make_cylinder", radius=5, height=10)["name"]
+    edges = _ok(agent_client, "get_subshapes", shape=cyl, sub_type="edge")["subshapes"]
+    ring = [u["id"] for u in edges if u["size"] == pytest.approx(2 * math.pi * 5)][0]
+    edge_on = _sketch(agent_client, "XOZ")
+    r = _call(agent_client, "sketch_add", sketch=edge_on, entities=[
+        {"id": "P", "type": "projection", "edge": ring, "of": cyl}])
+    assert r["ok"] is False and "edge-on" in r["error"]
+    _ok(agent_client, "close_sketch", sketch=edge_on)
+    face_on = _sketch(agent_client, "XOY")
+    _ok(agent_client, "sketch_add", sketch=face_on, entities=[
+        {"id": "P", "type": "projection", "edge": ring, "of": cyl}])
+    assert _ok(agent_client, "sketch_status", sketch=face_on)["entities"]["P"]["type"] == "circle"

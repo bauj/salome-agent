@@ -87,6 +87,9 @@ class Sketch:
         self.entities: dict[str, Entity] = {}
         self.constraints: dict[str, Constraint] = {}
         self.next_k = 0
+        # while a closed sketch is edited again: the later features' check
+        # status from before, to tell which ones the edit breaks
+        self.baseline: dict | None = None
 
 
 class ShaperState:
@@ -95,6 +98,8 @@ class ShaperState:
         self.sketches: dict[str, Sketch] = {}
         # published feature name -> kind ("face", "solid", ...)
         self.objects: dict[str, str] = {}
+        # the sketch being edited (executor/shaper/editing.py), or None
+        self.editing: str | None = None
 
 
 def model():
@@ -157,6 +162,8 @@ def forget(executor, names: list) -> list:
     with transaction():
         for name in names:
             if name in st.sketches:
+                if st.editing == name:
+                    st.editing = None
                 feats = [st.sketches.pop(name).api.feature()]
                 plane = st.ns.get(f"{name}_plane")
                 if plane is not None:
@@ -472,6 +479,11 @@ def status(executor, sk: Sketch, before: dict | None = None) -> dict:
     if before is not None:
         out["moved"] = moved(before, geos)
     return out
+
+
+def history_index(st: ShaperState) -> dict:
+    """Feature name -> its place in the document's history."""
+    return {f.data().name(): i for i, f in enumerate(st.ns["shaper_doc"].allFeatures())}
 
 
 def sketch_of(executor, name) -> Sketch:
