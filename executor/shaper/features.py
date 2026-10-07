@@ -1,7 +1,7 @@
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
-    CONSTRUCTION, PUBLISH_LINE, construction_info, measure, new_name, publish_study,
-    record, sketch_of, state, tool, transaction,
+    CONSTRUCTION, PUBLISH_LINE, construction_info, forget, measure, new_name, publish_study,
+    record, sketch_frame, sketch_of, state, tool, transaction,
 )
 
 _AXES = ("OX", "OY", "OZ")
@@ -220,8 +220,19 @@ def _boolean_extrusion(executor, args: dict, op: str) -> dict:
     if out["ok"]:
         after = out["measure"]["volume"]
         if abs(after - before) <= 1e-6 * max(1.0, abs(before)):
-            out["delta"] = (f"{name}: the volume did not change ({before:g}) — the "
-                            f"extrusion does not reach {target}")
+            forget(executor, [name])
+            what = "removed" if op == "Cut" else "added"
+            base = args.get("base")
+            along = args.get("direction")
+            if not along:
+                along = "the sketch normal"
+                if base in st.sketches:
+                    n = [round(c, 6) + 0.0 for c in sketch_frame(st.sketches[base])[3]]
+                    along += f" {n}"
+            return {"ok": False, "error": (
+                f"addExtrusion{op}: nothing was {what} — the extrusion of {base} along "
+                f"{along} does not reach {target}, so it was undone. Give direction, or "
+                f"from_size to extrude the other way.")}
     return out
 
 
