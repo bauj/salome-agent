@@ -76,8 +76,8 @@ def test_plan_unknown_detail_falls_back_to_no_hint():
     llm.chat.return_value = {"stages": []}
     plan("x", llm, detail="bogus")  # no crash, no extra hint
     system = llm.chat.call_args.kwargs["messages"][0]["content"]
-    from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT
-    assert system == PLANNER_SYSTEM_PROMPT
+    from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT, _SHAPER_STAGES
+    assert system == PLANNER_SYSTEM_PROMPT + _SHAPER_STAGES
 
 
 def test_plan_appends_the_compact_spec_to_the_request():
@@ -213,24 +213,24 @@ def test_named_module_is_told_to_the_planner():
     assert 'every CAD geometry stage uses module "shaper".' in system
 
 
-def test_a_named_shaper_request_is_told_it_may_split_a_part():
-    from salome_agent.nodes.planner import _SHAPER_SPLIT
-    llm = MagicMock()
-    llm.chat.return_value = {"stages": []}
-    plan("In shaper: a ring with four bars", llm)
-    system = llm.chat.call_args.kwargs["messages"][0]["content"]
-    assert system.endswith(_SHAPER_SPLIT)
-
-
-def test_only_a_named_shaper_request_is_told_it_may_split_a_part():
-    from salome_agent.nodes.planner import _SHAPER_SPLIT
-    for request in ("a box using geom", "a box"):
+def test_a_shaper_request_is_told_to_build_in_small_stages():
+    from salome_agent.nodes.planner import _SHAPER_STAGES
+    for request in ("In shaper: a ring with four bars", "a plate with a hole"):
         llm = MagicMock()
         llm.chat.return_value = {"stages": []}
         plan(request, llm)
         system = llm.chat.call_args.kwargs["messages"][0]["content"]
-        assert _SHAPER_SPLIT not in system
-        assert "distinct pieces" not in system
+        assert system.endswith(_SHAPER_STAGES)
+
+
+def test_a_named_geom_request_keeps_one_stage_per_part():
+    from salome_agent.nodes.planner import _SHAPER_STAGES
+    llm = MagicMock()
+    llm.chat.return_value = {"stages": []}
+    plan("a plate with a hole using geom", llm)
+    system = llm.chat.call_args.kwargs["messages"][0]["content"]
+    assert _SHAPER_STAGES not in system
+    assert "small stages" not in system
 
 
 def test_named_module_moves_cad_stages_and_keeps_smesh():
