@@ -89,7 +89,8 @@ def _taken(sk: Sketch) -> set:
           "get_subshapes): then the reply gives its `frame` and sketch coordinates "
           "[u, v] are the world point origin + u * x_dir + v * y_dir; ORIGIN is the "
           "world origin projected onto the plane, and only world axes parallel to the "
-          "plane are offered."),
+          "plane are offered. The reply gives the sketch normal: extrude, extrude_cut "
+          "and extrude_fuse run along it unless given a direction (XOZ's normal is -Y)."),
       schema={"type": "object", "properties": {
           "plane": {"description": ("\"XOY\" | \"XOZ\" | \"YOZ\", {base, offset}, a "
                                     "make_plane name, or {face, of}"),
@@ -164,16 +165,16 @@ def tool_create_sketch(executor, args: dict):
             f'"PartSet/{ax}"), False)'), out=[f"{name}_{ax}"], recv=name))
     exec_records(st, records)
     sk = Sketch(name, st.ns[name], axes)
-    extra = {}
     st.sketches[name] = sk
+    try:
+        o, x, y, n = sketch_frame(sk)
+    except Exception:
+        forget(executor, [name])
+        raise
+    r6 = lambda v: [round(c, 6) + 0.0 for c in v]
+    extra = {"normal": r6(n)}
     if normal is not None:
-        try:
-            o, x, y, n = sketch_frame(sk)
-        except Exception:
-            forget(executor, [name])
-            raise
         sk.frame = (o, x, y)
-        r6 = lambda v: [round(c, 6) + 0.0 for c in v]
         extra["frame"] = {"origin": r6(o), "x_dir": r6(x), "y_dir": r6(y), "normal": r6(n)}
     return _reply(executor, sk, records, None, **extra)
 
