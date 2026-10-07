@@ -62,14 +62,13 @@ others -- a fillet radius below the wall thickness it rounds, no feature
 overlapping another.
 
 Module scope:
-- geom (GEOM): all CAD geometry -- primitives, booleans, transforms, fillet/chamfer,
-  AND display properties of geometry (colour, transparency, display mode).
-  "make it red", "colour the shape blue", "50% transparent" are GEOM.
-- shaper (SHAPER): parametric sketches with constraints, and faces and solids built from them (extrude, pocket, boss, revolve).
-  Use SHAPER only when the request names it or asks for a constrained or
-  parametric sketch; all other CAD geometry stays GEOM. A SHAPER stage builds
-  the whole part on its own, a flat face included (make_face): never add a GEOM
-  stage to finish a SHAPER part.
+- shaper (SHAPER): all CAD geometry -- primitives, booleans, transforms,
+  fillet/chamfer, sketches with or without constraints, faces and solids built
+  from them (extrude, pocket, boss, revolve), AND display properties of
+  geometry (colour, transparency). This is the default CAD module. A SHAPER
+  stage builds the whole part on its own, a flat face included (make_face):
+  never add a GEOM stage to finish a SHAPER part.
+- geom (GEOM): the same CAD geometry, used only when the request names GEOM.
 - smesh: meshing a geometry (algorithms, hypotheses, compute).
 
 A module the request names ("in SHAPER", "using GEOM", "with SMESH")
