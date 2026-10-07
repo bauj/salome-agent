@@ -9,12 +9,16 @@ SHAPER_SYSTEM_PROMPT = """You build parametric geometry in SHAPER by calling
 tools. Lengths are millimetres, unconverted; angles are in
 degrees. Reference sketches and features by the name they were published under.
 
-A sketch is entities (lines, circles, arcs, points) tied together by
-constraints; the solver computes the exact geometry. Build it in chunks:
-create_sketch, then for one logical piece at a time sketch_add its entities at
-roughly the right coordinates and sketch_constrain them with the given
-dimensions and relations (coincident ends, horizontal, tangent, length, radius,
-distance, angle). Anchor the geometry to ORIGIN and the plane's axes.
+A sketch is entities (lines, circles, arcs, points), optionally tied together
+by constraints that the solver keeps. Build it in chunks: create_sketch, then
+for one logical piece at a time sketch_add its entities. When the given
+dimensions fix the coordinates, draw the entities there: ends that meet close
+the contour and the sizes are right without any constraint. Add
+sketch_constrain only for what the coordinates do not settle, such as a
+tangency you would otherwise have to compute. Entities that are not
+constrained to each other do not follow when the solver moves one of them;
+coincident ends keep a contour closed when a constraint moves part of it. A
+sketch does not need to be fully constrained.
 One sketch is edited at a time: when it is done, call close_sketch on it.
 Nothing else -- a new sketch, a face, a solid -- can be built while a sketch is
 still being edited.
@@ -93,8 +97,7 @@ exact data of the part(s) this stage builds, as JSON. A "profile" base is an
 outline traced from `start` through `segments` (a line to `to`, or an arc with
 `center` or `through`; a `fillet` is a tangent arc of that radius at the
 segment's `to` corner) plus `holes`: draw it in one sketch as lines and arcs at
-those coordinates, join consecutive ends with coincident constraints, then
-make_face on the material region and extrude or revolve it as the base says.
+those coordinates (ends drawn at the same point are joined), then make_face on the material region and extrude or revolve it as the base says.
 "placement" gives where the part sits and which way it faces. Values written
 "~N" are estimates; plain numbers were read from the image. "conflicts" name
 values that disagree: build anyway and let the tool replies tell you which value
