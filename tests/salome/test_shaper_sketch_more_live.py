@@ -257,3 +257,17 @@ def test_swept_and_face_refusals(agent_client):
     r = _call(agent_client, "sketch_add", sketch=sk, entities=[
         {"id": "L", "type": "line", "start": [0, 0], "end": [1, 1], "closed": True}])
     assert r["ok"] is False
+
+
+def test_projection_of_a_circle_seen_edge_on(agent_client):
+    cyl = _ok(agent_client, "make_cylinder", radius=5, height=10)["name"]
+    edges = _ok(agent_client, "get_subshapes", shape=cyl, sub_type="edge")["subshapes"]
+    ring = [u["id"] for u in edges if u["size"] == pytest.approx(2 * math.pi * 5)][0]
+    edge_on = _sketch(agent_client, "XOZ")
+    r = _call(agent_client, "sketch_add", sketch=edge_on, entities=[
+        {"id": "P", "type": "projection", "edge": ring, "of": cyl}])
+    assert r["ok"] is False and "edge-on" in r["error"]
+    face_on = _sketch(agent_client, "XOY")
+    _ok(agent_client, "sketch_add", sketch=face_on, entities=[
+        {"id": "P", "type": "projection", "edge": ring, "of": cyl}])
+    assert _ok(agent_client, "sketch_status", sketch=face_on)["entities"]["P"]["type"] == "circle"
