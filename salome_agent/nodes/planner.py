@@ -113,22 +113,27 @@ _DETAIL_HINT = {
 }
 
 
-# Told only when the request names SHAPER: GEOM keeps "never split one part".
-_SHAPER_SPLIT = """
+# Told unless the request names GEOM: GEOM keeps "never split one part".
+_SHAPER_STAGES = """
 
-When the request describes one SHAPER part as several distinct pieces (a ring
-and bars, a plate and its ribs), build it in stages: one stage per piece or
-group of alike pieces, then a final stage that combines them (fuse, cut or
-common) into the one result. For SHAPER this replaces "never split one part's
-construction": a later SHAPER stage is given the earlier stages' results by
-name. Each piece stage leaves its piece as its own result, fused to nothing;
-only the final stage fuses, cuts or commons the pieces together. A piece stage
-may look at an earlier piece to find where it stops, but does not fuse onto it.
-Write each piece stage's intent as a complete brief: the piece's own
-measurements, where it may run into another piece (bar ends may overlap into
-the ring), where it must stop (never past the outer circle), and which pieces
-it does not build. A cut-out that belongs to one piece goes in that piece's
-stage. A part with one outline, such as a plate with holes, stays one stage."""
+In SHAPER, build in small stages; a later SHAPER stage is given the earlier
+stages' results by name. For SHAPER this replaces "never split one part's
+construction".
+- One part with features (a plate with holes and a slot, a box with a vent and
+  rounded edges, a vase with a wall and a rounded rim): the first stage builds
+  the base body only -- the main outline or profile made solid. Each later
+  stage adds or removes one feature, or one group of alike features (four bolt
+  holes), on the previous stage's result: a hole, a slot, a pocket, a boss, a
+  fillet, a shell.
+- One part described as several distinct pieces (a ring and bars, a plate and
+  its ribs): one stage per piece or group of alike pieces, each left as its own
+  result, fused to nothing; a final stage combines them (fuse, cut or common).
+  A piece stage may look at an earlier piece to find where it stops, but does
+  not fuse onto it.
+Write each stage's intent as a complete brief: its own measurements, where it
+sits on what earlier stages built (a hole "through the centre of the top
+face"), where it may run into earlier geometry and where it must stop, and
+what it does not build -- later stages build the rest."""
 
 
 def blank_stages(stage_plans: list[dict]) -> dict:
@@ -148,8 +153,8 @@ def plan(request: str, llm, detail: str = "balanced",
     if pinned:
         system += (f"\n\nThe request names {pinned.upper()}: every CAD geometry stage "
                    f'uses module "{pinned}".')
-        if pinned == "shaper":
-            system += _SHAPER_SPLIT
+    if pinned != "geom":
+        system += _SHAPER_STAGES
     if image_spec:
         request = f"{request}\n\n{compact_spec(image_spec)}"
     messages = [{"role": "system", "content": system},
