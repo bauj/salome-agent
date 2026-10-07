@@ -5,7 +5,8 @@ message-shape / prompt-wiring / schema bugs — those only surface against a
 real endpoint (see the geom-specialist bugs 19-23). This drives the real
 smesh path against the configured LLM and a live SALOME session.
 
-Skipped unless BOTH a real ./config.json is present AND -m salome is run.
+Spends tokens: deselected by default; run with `pytest -m llm`. Also skipped
+without a real ./config.json.
 """
 import json
 from pathlib import Path
@@ -17,6 +18,7 @@ CONFIG_PATH = REPO_ROOT / "config.json"
 
 pytestmark = [
     pytest.mark.salome,
+    pytest.mark.llm,
     pytest.mark.skipif(not CONFIG_PATH.exists(),
                        reason="no config.json — needs a real LLM endpoint"),
 ]
