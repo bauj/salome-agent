@@ -124,7 +124,7 @@ def _shaper_prompt(verify_cadence: str = "final") -> str:
 # Planner-facing one-liners: what a shaper stage can do, not how to call it.
 PLANNER_TOOL_LINES = {
     "create_sketch": "new sketch on XOY / XOZ / YOZ, a plane offset from one, a construction plane or a flat face of a solid",
-    "sketch_add": "lines, circles, arcs, points (construction lines too)",
+    "sketch_add": "lines, circles, arcs, points, ellipses, splines, rectangles, polylines, projected edges (construction too)",
     "sketch_constrain": "dimensions and relations: length, radius, distance, angle, coincident, tangent, ...",
     "sketch_remove": "remove entities or constraints from a sketch",
     "sketch_status": "solved coordinates, dof, open ends and closed regions of a sketch",
@@ -172,6 +172,13 @@ PLANNER_TOOL_LINES.update({
     "make_thick_solid": "hollow a solid into a wall, open at chosen faces",
     "partition": "cut shapes by each other, keeping every piece with shared faces",
     "split": "split shapes into pieces with other shapes or planes",
+    "make_polyline": "3D wire of straight segments through points",
+    "make_curve": "smooth 3D curve through points",
+    "make_pipe": "sweep a face or wire along a path",
+    "make_loft": "solid through two sections",
+    "make_filling": "surface spanning boundary curves",
+    "sketch_fillet": "round a corner of a sketch",
+    "sketch_copy": "mirror, offset or pattern curves of a sketch",
 })
 
 _CATALOGUE = ("SHAPER tools available to a single SHAPER stage:\n"
