@@ -393,8 +393,8 @@ _PT = {"type": "array", "items": {"type": "number"}}
           "construction: false). "
           "construction: true marks a helper (a centre line, an axis of symmetry): it can "
           "be constrained against but forms no region and is never an open end. Lines and "
-          "arcs are not joined by being drawn end to end: add coincident constraints for "
-          "that. The reply gives dof, loose_ends, regions (closed areas with index, area, a "
+          "arcs whose ends are drawn at the same point are joined; coincident constraints "
+          "keep them joined when the solver moves one of them. The reply gives dof, loose_ends, regions (closed areas with index, area, a "
           "point inside)."),
       schema={"type": "object", "properties": {
           "sketch": {"type": "string"},
