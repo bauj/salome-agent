@@ -96,11 +96,9 @@ def _axis(executor, value, what: str = "axis") -> tuple[str, list]:
 
 def _placed(executor, args: dict, name: str, default_axis: str = "OZ"):
     """Origin point and axis of a primitive: (selections, code, refs, helpers)."""
-    origin = args.get("origin")
-    if origin is None:
-        point, code, refs, helpers = 'model.selection("VERTEX", "PartSet/Origin")', "", [], ()
-    else:
-        point, code, refs, helpers = _point(executor, origin, f"{name}_origin", "origin")
+    if args.get("origin") is None:
+        raise ValueError("origin is required: [x, y, z] or a make_point name")
+    point, code, refs, helpers = _point(executor, args["origin"], f"{name}_origin", "origin")
     axis, arefs = _axis(executor, args.get("axis") or default_axis)
     return point, axis, code, refs + arefs, helpers
 
@@ -114,19 +112,24 @@ def _primitive(executor, prefix: str, fn: str, args: dict, sizes: list) -> dict:
 
 
 _PLACE_PROPS = {"origin": _XYZ, "axis": _AXIS}
-_PLACE_TEXT = (" `origin` (default the world origin) and `axis` (default OZ) place it.")
+_PLACE_TEXT = " `axis` defaults to OZ."
 
 
 @tool("make_box", category="primitive",
-      description=("Axis-aligned solid box with one corner at the origin, extending "
-                   "+X/+Y/+Z by dx/dy/dz. For a box elsewhere use make_box_two_pnt."),
+      description="Axis-aligned solid box of size dx/dy/dz centred at `center`.",
       schema={"type": "object", "properties": {
-          "dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"}},
-          "required": ["dx", "dy", "dz"]})
+          "dx": {"type": "number"}, "dy": {"type": "number"}, "dz": {"type": "number"},
+          "center": _XYZ},
+          "required": ["dx", "dy", "dz", "center"]})
 def tool_make_box(executor, args: dict):
     dims = [_num(args.get(k), k, positive=True) for k in ("dx", "dy", "dz")]
     name = new_name(executor, "box")
-    code = f"{name} = model.addBox(shaper_doc, {', '.join(repr(d) for d in dims)})"
+    center = _xyz_of(executor, args.get("center"))
+    if center is None:
+        raise ValueError(f"center is required: [x, y, z] or a make_point name, got "
+                         f"{args.get('center')!r}")
+    nums = list(center) + [d / 2 for d in dims]
+    code = f"{name} = model.addBox(shaper_doc, {', '.join(repr(n) for n in nums)})"
     return _build(executor, name, "addBox", code, [], "solid")
 
 
@@ -147,23 +150,22 @@ def tool_make_box_two_pnt(executor, args: dict):
       description="Solid cylinder: base centred at `origin`, height along `axis`." + _PLACE_TEXT,
       schema={"type": "object", "properties": {
           "radius": {"type": "number"}, "height": {"type": "number"}, **_PLACE_PROPS},
-          "required": ["radius", "height"]})
+          "required": ["radius", "height", "origin"]})
 def tool_make_cylinder(executor, args: dict):
     sizes = [_num(args.get("radius"), "radius", True), _num(args.get("height"), "height", True)]
     return _primitive(executor, "cylinder", "addCylinder", args, sizes)
 
 
 @tool("make_sphere", category="primitive",
-      description="Solid sphere centred at `center` (default the world origin).",
+      description="Solid sphere centred at `center`.",
       schema={"type": "object", "properties": {
-          "radius": {"type": "number"}, "center": _XYZ}, "required": ["radius"]})
+          "radius": {"type": "number"}, "center": _XYZ}, "required": ["radius", "center"]})
 def tool_make_sphere(executor, args: dict):
     radius = _num(args.get("radius"), "radius", True)
     name = new_name(executor, "sphere")
     if args.get("center") is None:
-        point, code, refs, helpers = 'model.selection("VERTEX", "PartSet/Origin")', "", [], ()
-    else:
-        point, code, refs, helpers = _point(executor, args["center"], f"{name}_origin", "center")
+        raise ValueError("center is required: [x, y, z] or a make_point name")
+    point, code, refs, helpers = _point(executor, args["center"], f"{name}_origin", "center")
     code += f"{name} = model.addSphere(shaper_doc, {point}, {radius!r})"
     return _build(executor, name, "addSphere", code, refs, "solid", helpers=helpers)
 
@@ -174,7 +176,7 @@ def tool_make_sphere(executor, args: dict):
       schema={"type": "object", "properties": {
           "radius1": {"type": "number"}, "radius2": {"type": "number"},
           "height": {"type": "number"}, **_PLACE_PROPS},
-          "required": ["radius1", "radius2", "height"]})
+          "required": ["radius1", "radius2", "height", "origin"]})
 def tool_make_cone(executor, args: dict):
     r1, r2 = _num(args.get("radius1"), "radius1"), _num(args.get("radius2"), "radius2")
     if r1 < 0 or r2 < 0 or r1 == r2 == 0:
@@ -189,7 +191,7 @@ def tool_make_cone(executor, args: dict):
       schema={"type": "object", "properties": {
           "radius_major": {"type": "number"}, "radius_minor": {"type": "number"},
           **_PLACE_PROPS},
-          "required": ["radius_major", "radius_minor"]})
+          "required": ["radius_major", "radius_minor", "origin"]})
 def tool_make_torus(executor, args: dict):
     big = _num(args.get("radius_major"), "radius_major", True)
     small = _num(args.get("radius_minor"), "radius_minor", True)

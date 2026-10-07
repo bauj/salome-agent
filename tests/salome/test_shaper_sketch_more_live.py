@@ -94,7 +94,7 @@ def test_ellipse_and_splines(agent_client):
 
 
 def test_projection_of_a_solid_edge(agent_client):
-    box = _ok(agent_client, "make_box", dx=10, dy=20, dz=30)["name"]
+    box = _ok(agent_client, "make_box", dx=10, dy=20, dz=30, center=[5, 10, 15])["name"]
     edges = _ok(agent_client, "get_subshapes", shape=box, sub_type="edge")["subshapes"]
     upright = [u["id"] for u in edges if u["size"] == pytest.approx(30)][0]
     across = [u["id"] for u in edges if u["size"] == pytest.approx(20)][0]
@@ -254,7 +254,7 @@ def test_sub_batch_4_refusals(agent_client):
 
 
 def test_swept_and_face_refusals(agent_client):
-    box = _ok(agent_client, "make_box", dx=5, dy=5, dz=5)["name"]
+    box = _ok(agent_client, "make_box", dx=5, dy=5, dz=5, center=[2.5, 2.5, 2.5])["name"]
     pts = [[0, 0, 0], [0, 0, 10]]
     path = _ok(agent_client, "make_polyline", points=pts)["name"]
     for kw in ({"base": box, "path": path}, {"base": path, "path": box}):
@@ -272,7 +272,7 @@ def test_swept_and_face_refusals(agent_client):
 
 
 def test_projection_of_a_circle_seen_edge_on(agent_client):
-    cyl = _ok(agent_client, "make_cylinder", radius=5, height=10)["name"]
+    cyl = _ok(agent_client, "make_cylinder", radius=5, height=10, origin=[0, 0, 0])["name"]
     edges = _ok(agent_client, "get_subshapes", shape=cyl, sub_type="edge")["subshapes"]
     ring = [u["id"] for u in edges if u["size"] == pytest.approx(2 * math.pi * 5)][0]
     edge_on = _sketch(agent_client, "XOZ")

@@ -12,10 +12,10 @@ _PLANNER_BASE = """You turn a natural-language SALOME request into an
 ordered list of stages. Each stage has: module (geom|shaper|smesh), intent
 (short description of the job for that stage), params (dims in millimetres,
 unconverted), inputs (a plain-words list of what this stage needs from earlier ones), and
--- for a GEOM stage -- an optional "tools" list naming the GEOM tool names you expect
-that stage to use (from the GEOM catalogue below; names only, e.g.
-["make_box", "translate", "set_color"]). The "tools" list is a hint that
-narrows what the GEOM specialist is offered; omit it if unsure. Respond as
+-- for a GEOM or SHAPER stage -- an optional "tools" list naming the tool names
+you expect that stage to use (from that module's catalogue below; names only,
+e.g. ["make_box", "translate", "set_color"]). The "tools" list is a hint that
+widens what the stage's specialist is offered at the start; omit it if unsure. Respond as
 JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
 prose before or after it.
 
@@ -121,7 +121,7 @@ stages' results by name. For SHAPER this replaces "never split one part's
 construction".
 - One part with features (a plate with holes and a slot, a box with a vent and
   rounded edges, a vase with a wall and a rounded rim): the first stage builds
-  the base body only -- the main outline or profile made solid. Each later
+  the base body only -- the main solid, without its features. Each later
   stage adds or removes one feature, or one group of alike features (four bolt
   holes), on the previous stage's result: a hole, a slot, a pocket, a boss, a
   fillet, a shell.
