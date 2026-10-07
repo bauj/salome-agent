@@ -252,7 +252,8 @@ def _upstream(client, names: list[str]) -> str | None:
     if not names:
         return None
     return ("Objects built by an EARLIER stage — use them by these exact names "
-            "(fuse, cut, measure); do not rebuild them:\n"
+            "(fuse, cut, measure); do not rebuild them. Their numbers were measured "
+            "by SHAPER and are exact: take them as given, do not recompute them:\n"
             + "\n".join(_upstream_line(n, info.get(n)) for n in names))
 
 
