@@ -58,8 +58,8 @@ def test_gate_ignores_closed_and_unreached_sketches():
 
 def test_finish_returns_result_names_and_call_log():
     log = [_rec("sketch_1")]
-    out = spec_for("shaper").terminator.handle({"result_names": ["sketch_1"]}, log)
-    assert out == {"result_names": ["sketch_1"], "call_log": log}
+    out = spec_for("shaper").terminator.handle({"result_names": ["sketch_1"], "built": "x"}, log)
+    assert out == {"result_names": ["sketch_1"], "call_log": log, "built": "x"}
 
 
 def test_prompt_offers_both_routes_for_a_part_in_pieces():

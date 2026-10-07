@@ -232,6 +232,23 @@ def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
     return available
 
 
+def _built_block(plan: list[dict], stages: dict, idx: int) -> str | None:
+    """What each earlier stage said it built: the measured numbers alone do not
+    tell a later stage that its job is already done (a wall built into the
+    revolved profile, task 345)."""
+    lines = []
+    for j in range(idx):
+        prior = stages.get(j) or {}
+        if prior.get("status") == "ok" and prior.get("built"):
+            lines.append(f'  stage {j + 1} ({plan[j].get("intent", "")}): "{prior["built"]}"')
+    if not lines:
+        return None
+    return ("What each earlier stage said it built:\n" + "\n".join(lines)
+            + "\nIf an earlier stage already did this stage's job, do not redo it: "
+            "call finish_stage with that earlier result's name and say in `built` "
+            "that it was already done.")
+
+
 def retry_context(state: dict, idx: int, client) -> dict | None:
     """What a tool stage's PREVIOUS attempt left behind, for the retry prompt
     (GH #38). None on a first attempt. The failed attempt's call_log is
@@ -427,6 +444,9 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         block = spec.render_upstream(client, upstream)
         if block:
             blocks.append(block)
+    built = _built_block(state["plan"], state["stages"], idx)
+    if built:
+        blocks.append(built)
     if module in ("geom", "shaper"):
         # smesh never sees the image spec: it only feeds CAD construction
         image_spec = state.get("image_spec")
@@ -475,6 +495,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         if "result_names" in result:
             stage["status"] = "ok"
             stage["result_names"] = result["result_names"]
+            stage["built"] = result.get("built")
             update["last_error"] = None
             log.info("  %s specialist done: %d tool call(s), %d %s call(s), results=%s",
                      module, len(result.get("calls") or []),
