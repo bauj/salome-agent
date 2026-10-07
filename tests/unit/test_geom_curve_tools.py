@@ -354,6 +354,9 @@ class TestMakeProfileFace:
 
 
 def test_profile_face_comes_with_the_profile_tools():
+    from salome_agent.modules import spec_for
+    from salome_agent.specialists.geom import CORE_TOOLS
     from salome_agent.specialists.tool_selection import initial_offered
 
-    assert "make_profile_face" in initial_offered({"tools": ["make_arc"]}, set(geom_tools.TOOLS))
+    assert "make_profile_face" in initial_offered({"tools": ["make_arc"]}, set(geom_tools.TOOLS),
+                                                  CORE_TOOLS, spec_for("geom").tool_groups)

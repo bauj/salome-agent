@@ -1,33 +1,25 @@
-"""Per-stage geom tool retrieval (see
+"""Per-stage tool retrieval (see
 docs/superpowers/specs/2026-09-02-geom-tool-retrieval-design.md).
 
-Pure functions, no I/O -- the geom specialist loop uses these to decide which
-tool definitions to send the LLM on each turn instead of the whole registry.
+Pure functions, no I/O -- the specialist loop uses these to decide which tool
+definitions to send the LLM on each turn instead of the whole registry. Each
+module keeps its own starting set and tool groups (ModuleSpec.core_tools,
+tool_groups).
 """
 
 import difflib
 
-CORE_TOOLS = frozenset({
-    "measure", "check_shape", "list_study_objects", "get_subshapes",
-    "make_box", "fuse", "cut", "translate", "align",
-})
 
-# A 2D profile needs all of these: offering one of the trigger tools offers the set.
-PROFILE_TOOLS = frozenset({
-    "make_line", "make_arc", "make_circle", "make_wire", "make_face_from_wires",
-    "make_profile_face",
-})
-_PROFILE_TRIGGERS = frozenset({"make_arc", "make_wire", "make_face_from_wires"})
-
-
-def _with_companions(names: set[str], all_tool_names) -> set[str]:
-    if names & _PROFILE_TRIGGERS:
-        names |= PROFILE_TOOLS & set(all_tool_names)
+def _with_companions(names: set[str], all_tool_names, groups=()) -> set[str]:
+    """`groups`: (triggers, group) pairs -- offering a trigger offers its group."""
+    for triggers, group in groups:
+        if names & triggers:
+            names |= group & set(all_tool_names)
     return names
 
 
 def hint_tool_names(stage_plan: dict) -> list[str]:
-    """Geom tool names the planner expects this stage to use.
+    """Tool names the planner expects this stage to use.
 
     Reads `stage_plan["tools"]` (list of names) or, as a fallback,
     `stage_plan["operations"]` (list of {"tool": name, ...} dicts). Tolerates
@@ -44,13 +36,13 @@ def hint_tool_names(stage_plan: dict) -> list[str]:
 
 
 def initial_offered(stage_plan: dict, all_tool_names: set[str],
-                    core=CORE_TOOLS) -> set[str]:
+                    core, groups=()) -> set[str]:
     """The module's core tools plus any planner-hinted names that are real tools."""
     hinted = {n for n in hint_tool_names(stage_plan) if n in all_tool_names}
-    return set(core) | _with_companions(hinted, all_tool_names)
+    return set(core) | _with_companions(hinted, all_tool_names, groups)
 
 
-def resolve_load(names, categories, all_defs: dict[str, dict]) -> set[str]:
+def resolve_load(names, categories, all_defs: dict[str, dict], groups=()) -> set[str]:
     """Expand a load_tools(names=, categories=) request to concrete tool names.
 
     `all_defs`: tool name -> its list_tools() entry (must carry "category").
@@ -59,7 +51,7 @@ def resolve_load(names, categories, all_defs: dict[str, dict]) -> set[str]:
     want = {n for n in (names or []) if n in all_defs}
     cats = set(categories or [])
     want |= {n for n, d in all_defs.items() if d.get("category") in cats}
-    return _with_companions(want, all_defs)
+    return _with_companions(want, all_defs, groups)
 
 
 def suggest_tool_names(name: str, all_defs: dict[str, dict]) -> list[str]:

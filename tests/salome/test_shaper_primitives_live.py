@@ -30,12 +30,31 @@ def test_list_tools_has_the_primitives_and_queries(agent_client):
 
 
 def test_box_from_dimensions_and_from_two_corners(agent_client):
-    box = _ok(agent_client, "make_box", dx=10, dy=20, dz=30)["measure"]
+    box = _ok(agent_client, "make_box", dx=10, dy=20, dz=30, center=[5, 10, 15])["measure"]
     assert box["volume"] == pytest.approx(6000)
     assert box["bbox"] == pytest.approx([0, 10, 0, 20, 0, 30])
     two = _ok(agent_client, "make_box_two_pnt", pnt1=[1, 2, 3], pnt2="11,12,13")["measure"]
     assert two["bbox"] == pytest.approx([1, 11, 2, 12, 3, 13])
     assert two["faces"] == 6
+
+
+def test_box_placed_by_its_center(agent_client):
+    box = _ok(agent_client, "make_box", dx=50, dy=50, dz=720, center=[75, 75, 360])["measure"]
+    assert box["bbox"] == pytest.approx([50, 100, 50, 100, 0, 720])
+    assert box["volume"] == pytest.approx(50 * 50 * 720)
+    pt = _ok(agent_client, "make_point", x=-5, y=0, z=2)["name"]
+    named = _ok(agent_client, "make_box", dx=2, dy=4, dz=6, center=pt)["measure"]
+    assert named["bbox"] == pytest.approx([-6, -4, -2, 2, -1, 5])
+
+
+def test_every_primitive_needs_its_placement_point(agent_client):
+    for name, args in [("make_box", {"dx": 1, "dy": 1, "dz": 1}),
+                       ("make_sphere", {"radius": 1}),
+                       ("make_cylinder", {"radius": 1, "height": 1}),
+                       ("make_cone", {"radius1": 1, "radius2": 0, "height": 1}),
+                       ("make_torus", {"radius_major": 2, "radius_minor": 1})]:
+        r = _call(agent_client, name, **args)
+        assert r["ok"] is False and "is required" in r["error"], (name, r)
 
 
 def test_round_primitives_are_placed_by_origin_and_axis(agent_client):
@@ -45,10 +64,11 @@ def test_round_primitives_are_placed_by_origin_and_axis(agent_client):
     assert cyl["volume"] == pytest.approx(math.pi * 25 * 10, rel=1e-6)
     sph = _ok(agent_client, "make_sphere", radius=10, center=[0, 0, 5])["measure"]
     assert sph["bbox"] == pytest.approx([-10, 10, -10, 10, -5, 15], abs=1e-6)
-    cone = _ok(agent_client, "make_cone", radius1=10, radius2=0, height=20)["measure"]
+    cone = _ok(agent_client, "make_cone", radius1=10, radius2=0, height=20,
+               origin=[0, 0, 0])["measure"]
     assert cone["volume"] == pytest.approx(math.pi * 100 * 20 / 3, rel=1e-6)
     torus = _ok(agent_client, "make_torus", radius_major=15, radius_minor=3,
-                axis="OY")["measure"]
+                axis="OY", origin=[0, 0, 0])["measure"]
     assert torus["bbox"] == pytest.approx([-18, 18, -3, 3, -18, 18], abs=1e-3)
 
 
@@ -68,26 +88,26 @@ def test_construction_point_axis_and_plane(agent_client):
 
 
 def test_a_construction_object_is_not_a_boolean_operand(agent_client):
-    box = _ok(agent_client, "make_box", dx=5, dy=5, dz=5)["name"]
+    box = _ok(agent_client, "make_box", dx=5, dy=5, dz=5, center=[2.5, 2.5, 2.5])["name"]
     pl = _ok(agent_client, "make_plane", base="XOY", offset=2)["name"]
     r = _call(agent_client, "cut", objects=[box], tools=[pl])
     assert r["ok"] is False and "construction plane" in r["error"]
 
 
 def test_bad_arguments_are_refused_with_a_message(agent_client):
-    r = _call(agent_client, "make_torus", radius_major=3, radius_minor=5)
+    r = _call(agent_client, "make_torus", radius_major=3, radius_minor=5, origin=[0, 0, 0])
     assert r["ok"] is False and "smaller" in r["error"]
     r = _call(agent_client, "make_cylinder", radius=1, height=2, origin="nope")
     assert r["ok"] is False and "make_point" in r["error"]
-    r = _call(agent_client, "make_cylinder", radius=1, height=2, axis="nope")
+    r = _call(agent_client, "make_cylinder", radius=1, height=2, axis="nope", origin=[0, 0, 0])
     assert r["ok"] is False and "make_axis" in r["error"]
 
 
 def test_min_distance_of_separate_overlapping_and_nested_solids(agent_client):
     # SHAPER's own solid-to-solid distance crashes on overlapping solids
-    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10)["name"]
+    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10, center=[5, 5, 5])["name"]
     far = _ok(agent_client, "make_box_two_pnt", pnt1=[30, 0, 0], pnt2=[40, 10, 10])["name"]
-    over = _ok(agent_client, "make_cylinder", radius=5, height=10)["name"]
+    over = _ok(agent_client, "make_cylinder", radius=5, height=10, origin=[0, 0, 0])["name"]
     inner = _ok(agent_client, "make_sphere", radius=1, center=[5, 5, 5])["name"]
     assert _ok(agent_client, "min_distance", shape1=a, shape2=far)["distance"] == pytest.approx(20)
     assert _ok(agent_client, "min_distance", shape1=a, shape2=over)["distance"] == 0
@@ -96,7 +116,7 @@ def test_min_distance_of_separate_overlapping_and_nested_solids(agent_client):
 
 
 def test_queries_check_list_and_properties(agent_client):
-    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10)["name"]
+    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10, center=[5, 5, 5])["name"]
     b = _ok(agent_client, "make_box_two_pnt", pnt1=[5, 0, 0], pnt2=[15, 10, 10])["name"]
     f = _ok(agent_client, "fuse", objects=[a, b])["name"]
     chk = _ok(agent_client, "check_shape", shape=f)
@@ -165,7 +185,7 @@ def test_an_offset_plane_and_sketch_on_xoz_go_to_plus_y(agent_client):
 
 
 def test_review_fixes_refuse_bad_input(agent_client):
-    box = _ok(agent_client, "make_box", dx=5, dy=5, dz=5)["name"]
+    box = _ok(agent_client, "make_box", dx=5, dy=5, dz=5, center=[2.5, 2.5, 2.5])["name"]
     pt = _ok(agent_client, "make_point", x=1, y=1, z=1)["name"]
     pl = _ok(agent_client, "make_plane", base="XOY", offset=1)["name"]
     sk = _ok(agent_client, "create_sketch", plane="XOY")["sketch"]

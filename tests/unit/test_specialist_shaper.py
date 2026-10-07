@@ -147,6 +147,12 @@ def test_initial_offer_uses_the_modules_core_set():
     assert got == {"sketch_add", "revolve"}
 
 
+def test_shaper_core_set_offers_primitives_and_colour():
+    core = spec_for("shaper").core_tools
+    assert {"make_box", "make_cylinder", "set_color", "create_sketch", "extrude"} <= core
+    assert "make_torus" not in core
+
+
 def test_retry_block_names_the_error_hint_and_built_objects():
     text = spec_for("shaper").render_retry({
         "last_error": {"message": "sketch_1 has open ends"}, "hint": "close it",
