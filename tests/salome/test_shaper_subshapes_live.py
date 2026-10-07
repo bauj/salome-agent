@@ -207,3 +207,27 @@ def test_review_fixes_refuse_repeats_and_odd_args(agent_client):
     assert r["ok"] is False
     ex = _ok(agent_client, "explode", shape=a, sub_type="face")
     assert all(not n["name"].startswith(a + "_") for n in ex["names"])
+
+
+def test_a_revolved_profile_touching_its_axis_lists_its_real_edges(agent_client):
+    # The quarter arc starts on the axis: OCC adds a zero-length edge at that pole,
+    # which SHAPER cannot name; it must not fail the whole query (task 349).
+    sk = _ok(agent_client, "create_sketch", plane="XOZ")["sketch"]
+    _ok(agent_client, "sketch_add", sketch=sk, entities=[
+        {"id": "A", "type": "arc", "center": [20, 0], "start": [0, 0], "end": [20, 20],
+         "reversed": True},
+        {"id": "L1", "type": "line", "start": [20, 20], "end": [20, 40]},
+        {"id": "L2", "type": "line", "start": [20, 40], "end": [0, 40]},
+        {"id": "L3", "type": "line", "start": [0, 40], "end": [0, 0]}])
+    _ok(agent_client, "close_sketch", sketch=sk)
+    rev = _ok(agent_client, "revolve", base=sk, axis="OZ", angle=360)
+    edges = _ok(agent_client, "get_subshapes", shape=rev["name"], sub_type="edge")["subshapes"]
+    assert all(e["size"] > 0 for e in edges)
+    assert len(edges) == rev["measure"]["edges"]
+    top = [f["id"] for f in _ok(agent_client, "get_subshapes", shape=rev["name"],
+                                sub_type="face")["subshapes"] if f["centre"][2] == 40]
+    shell = _ok(agent_client, "make_thick_solid", shape=rev["name"], faces=top,
+                thickness=2, inside=True)["name"]
+    rim = _ids(agent_client, shell, "edge", {"sorted_by": "z", "take": "max", "count": 2})
+    filleted = _ok(agent_client, "fillet_edges", shape=shell, edges=rim, radius=0.5)
+    assert filleted["measure"]["valid"]

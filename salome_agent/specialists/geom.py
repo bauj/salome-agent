@@ -143,12 +143,18 @@ GEOM_SYSTEM_PROMPT = _geom_prompt("final")
 
 FINISH_STAGE_SCHEMA = {
     "type": "object",
-    "properties": {"result_names": {"type": "array", "items": {"type": "string"}}},
-    "required": ["result_names"],
+    "properties": {
+        "result_names": {"type": "array", "items": {"type": "string"}},
+        "built": {"type": "string", "description": (
+            "One sentence: what this stage built, with its main sizes (e.g. "
+            "'revolved vase body, wall 2 mm, rim filleted 0.5 mm').")},
+    },
+    "required": ["result_names", "built"],
 }
 FINISH_STAGE_DESCRIPTION = (
     "Finish this stage. `result_names` = the published names that matter; "
-    "their dependencies are kept, everything else is dropped."
+    "their dependencies are kept, everything else is dropped. Later stages "
+    "read `built`."
 )
 
 # Boolean ops consume their operands into the result — an operand kept in
@@ -257,7 +263,8 @@ def _result_names(args: dict) -> list[str]:
 
 def _finish_stage(args: dict, call_log: list) -> dict:
     return {"call_log": call_log,
-            "result_names": _leaf_result_names(call_log, _result_names(args))}
+            "result_names": _leaf_result_names(call_log, _result_names(args)),
+            "built": args.get("built")}
 
 
 # Tools whose output is a part the model meant to keep or build on. Sketch

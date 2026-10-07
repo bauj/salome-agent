@@ -655,3 +655,15 @@ def test_multi_stage_request_block_says_other_stages_build_the_rest(monkeypatch)
 def test_no_request_block_without_a_request(monkeypatch):
     stage = {"module": "geom", "intent": "box", "params": {}, "inputs": []}
     assert _blocks_for(monkeypatch, [stage], "  ") == ()
+
+
+def test_built_block_quotes_what_each_earlier_ok_stage_said_it_built():
+    from salome_agent.graph import _built_block
+    plan = [{"intent": "vase body"}, {"intent": "hollow it"}, {"intent": "fillet rim"}]
+    stages = {0: {"status": "ok", "built": "revolved vase, wall 2 mm"},
+              1: {"status": "failed", "built": "nothing"}}
+    text = _built_block(plan, stages, 2)
+    assert 'stage 1 (vase body): "revolved vase, wall 2 mm"' in text
+    assert "stage 2" not in text
+    assert "do not redo it" in text
+    assert _built_block(plan, stages, 0) is None

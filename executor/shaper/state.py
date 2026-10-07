@@ -505,11 +505,18 @@ def results_of(executor, name: str) -> list:
     return [r for r in feat.results() if r.shape() is not None]
 
 
+def _real(s) -> bool:
+    """False for a degenerated edge: the zero-length edge OCC puts where a
+    revolved profile touches its axis. SHAPER cannot name or select it."""
+    import GeomAPI
+    return not (s.shapeType() == GeomAPI.GeomAPI_Shape.EDGE and s.edge().isDegenerated())
+
+
 def _unique(shape, kind) -> int:
     """Sub-shapes of `kind`, each once: SHAPER lists a seam edge twice."""
     seen = []
     for s in shape.subShapes(kind):
-        if not any(s.isSame(t) for t in seen):
+        if _real(s) and not any(s.isSame(t) for t in seen):
             seen.append(s)
     return len(seen)
 
@@ -686,7 +693,7 @@ def subshapes(executor, name: str, sub_type: str) -> list:
     for res in results_of(executor, name):
         uniq = []
         for s in res.shape().subShapes(kind):
-            if not any(s.isSame(t) for t in seen):   # shared between results too
+            if _real(s) and not any(s.isSame(t) for t in seen):   # shared between results too
                 uniq.append(s)
                 seen.append(s)
         if uniq:
