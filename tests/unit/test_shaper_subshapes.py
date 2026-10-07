@@ -57,3 +57,13 @@ def test_bad_predicates_are_refused(where):
 def test_review_fixes_refuse_odd_predicate_values(where):
     with pytest.raises(ValueError):
         select(_subs(), where, _points)
+
+
+def test_fillets_meeting_across_a_face_are_refused():
+    from executor.shaper.subshapes import fillets_meet
+    rim = [("E4", "E5", 2.0)]
+    assert fillets_meet(0.9, rim) is None
+    for r in (0.95, 1.0, 3.0):
+        msg = fillets_meet(r, rim)
+        assert "E4 and E5 would meet" in msg and "below 0.95" in msg
+    assert fillets_meet(5.0, [("E1", "E2", 0.0)]) is None   # edges that touch
