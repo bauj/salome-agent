@@ -1,6 +1,6 @@
 from executor.shaper.features import _base_selections, _build, _operands
 from executor.shaper.primitives import _XYZ, _point
-from executor.shaper.state import new_name, tool
+from executor.shaper.state import new_name, state, tool
 
 _POINTS = {"type": "array", "items": _XYZ, "minItems": 2,
            "description": "points: [x, y, z] or make_point names"}
@@ -20,6 +20,12 @@ def _points(executor, points, name: str, least: int, closed: bool = False) -> tu
         refs += r
         helpers += h
     return sels, code, refs, helpers
+
+
+def _kind_not(executor, name, refused: tuple, role: str) -> None:
+    kind = state(executor).objects.get(name)
+    if kind in refused:
+        raise ValueError(f"{name!r} is a {kind}: {role}")
 
 
 def _flag(args: dict, key: str) -> bool:
@@ -68,6 +74,8 @@ def tool_make_pipe(executor, args: dict):
             raise ValueError(f"{k} must be one name, got {args.get(k)!r}")
     if args["base"] == args["path"]:
         raise ValueError("base and path must be two different shapes")
+    _kind_not(executor, args["base"], ("solid",), "sweep a face, a sketch or a wire")
+    _kind_not(executor, args["path"], ("solid", "face"), "a path is a wire or an edge")
     sels, refs = _base_selections(executor, args.get("base"))
     path, prefs = _operands(executor, [args.get("path")], "path")
     if len(path) != 1:
@@ -89,6 +97,8 @@ def tool_make_loft(executor, args: dict):
             raise ValueError(f"{k} must be one name, got {args.get(k)!r}")
     if args.get("first") == args.get("second"):
         raise ValueError("first and second must be two different sections")
+    for k in ("first", "second"):
+        _kind_not(executor, args[k], ("solid",), "a section is a face or a closed wire")
     a, ra = _base_selections(executor, args.get("first"))
     b, rb = _base_selections(executor, args.get("second"))
     if len(a) != 1 or len(b) != 1:
