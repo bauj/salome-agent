@@ -204,7 +204,7 @@ def _finish(args: dict, call_log: list) -> dict:
     names = args.get("result_names") or []
     if isinstance(names, str):
         names = [names]
-    return {"result_names": list(names), "call_log": call_log}
+    return {"result_names": list(names), "call_log": call_log, "built": args.get("built")}
 
 
 def _gate(args: dict, call_log: list, infos: dict) -> str | None:

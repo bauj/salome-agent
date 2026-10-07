@@ -13,15 +13,15 @@ def test_geom_terminator_is_finish_stage():
     t = spec_for("geom").terminator
     assert isinstance(t, Terminator)
     assert t.name == "finish_stage"
-    assert t.schema["required"] == ["result_names"]
+    assert t.schema["required"] == ["result_names", "built"]
     assert t.description
 
 
 def test_geom_terminator_handle_returns_call_log_and_leaf_names():
     t = spec_for("geom").terminator
     call_log = [{"fn": "MakeBoxDXDYDZ", "args": [], "out_vars": ["box_1"], "publish": ["box_1"]}]
-    assert t.handle({"result_names": ["box_1"]}, call_log) == {
-        "call_log": call_log, "result_names": ["box_1"]}
+    assert t.handle({"result_names": ["box_1"], "built": "a box"}, call_log) == {
+        "call_log": call_log, "result_names": ["box_1"], "built": "a box"}
 
 
 def test_geom_terminator_handle_decodes_a_json_encoded_result_names():

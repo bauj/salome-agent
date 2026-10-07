@@ -60,6 +60,11 @@ def test_geom_tool_payload_is_pinned():
     assert finish_stage["parameters"] == FINISH_STAGE_SCHEMA
     assert finish_stage["parameters"] == {
         "type": "object",
-        "properties": {"result_names": {"type": "array", "items": {"type": "string"}}},
-        "required": ["result_names"],
+        "properties": {
+            "result_names": {"type": "array", "items": {"type": "string"}},
+            "built": {"type": "string", "description": (
+                "One sentence: what this stage built, with its main sizes (e.g. "
+                "'revolved vase body, wall 2 mm, rim filleted 0.5 mm').")},
+        },
+        "required": ["result_names", "built"],
     }
