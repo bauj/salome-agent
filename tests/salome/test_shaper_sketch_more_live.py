@@ -240,3 +240,20 @@ def test_sub_batch_4_refusals(agent_client):
     a = _ok(agent_client, "make_point", x=0, y=0, z=0)["name"]
     r = _call(agent_client, "make_polyline", points=[a, a, [1, 0, 0]])
     assert r["ok"] is False
+
+
+def test_swept_and_face_refusals(agent_client):
+    box = _ok(agent_client, "make_box", dx=5, dy=5, dz=5)["name"]
+    pts = [[0, 0, 0], [0, 0, 10]]
+    path = _ok(agent_client, "make_polyline", points=pts)["name"]
+    for kw in ({"base": box, "path": path}, {"base": path, "path": box}):
+        assert _call(agent_client, "make_pipe", **kw)["ok"] is False
+    assert _call(agent_client, "make_loft", first=box, second=path)["ok"] is False
+    sk = _sketch(agent_client)
+    _ok(agent_client, "sketch_add", sketch=sk, entities=[
+        {"id": "O", "type": "circle", "center": [0, 0], "radius": 10},
+        {"id": "I", "type": "circle", "center": [0, 0], "radius": 3}])
+    assert _call(agent_client, "make_face", sketch=sk, regions="all")["ok"] is False
+    r = _call(agent_client, "sketch_add", sketch=sk, entities=[
+        {"id": "L", "type": "line", "start": [0, 0], "end": [1, 1], "closed": True}])
+    assert r["ok"] is False

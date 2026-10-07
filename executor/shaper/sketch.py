@@ -239,6 +239,10 @@ def _plan_entity(executor, sk: Sketch, e, taken: set) -> tuple[str, list]:
     closed = e.get("closed", False)
     if not isinstance(closed, bool):
         raise ValueError(f"{w}: closed must be true or false")
+    if closed and t not in ("polyline", "spline"):
+        raise ValueError(f"{w}: closed applies to a polyline or a spline, not a {t}")
+    if not isinstance(e.get("construction", t == "projection"), bool):
+        raise ValueError(f"{w}: construction must be true or false")
     if t in ("line", "circle", "arc", "point"):
         _check_entity(e)
         return _entity_code(sk, e, var), [(w, var)]

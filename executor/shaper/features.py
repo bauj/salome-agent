@@ -132,6 +132,10 @@ def tool_make_face(executor, args: dict):
     res = sk.api.feature().firstResult()
     n = ModelAPI.modelAPI_ResultConstruction(res).facesNum() if res is not None else 0
     if regions == "all":
+        if _nested_regions(sk):
+            raise ValueError(f"{sk.name} has a closed region inside another: \"all\" would "
+                             "fill the hole. List the material regions' indices instead "
+                             "(the sketch reply lists them)")
         sels = [f'model.selection("COMPOUND", "all-in-{sk.name}")']
         count = n
     else:
