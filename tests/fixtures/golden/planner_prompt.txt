@@ -134,6 +134,7 @@ SHAPER tools available to a single SHAPER stage:
   sketch_constrain -- dimensions and relations: length, radius, distance, angle, coincident, tangent, ...
   sketch_remove -- remove entities or constraints from a sketch
   sketch_status -- solved coordinates, dof, open ends and closed regions of a sketch
+  close_sketch -- finish editing a sketch, before anything else is built
   make_face -- flat face from closed regions of a sketch, holes left out; a face can be the final result
   extrude -- solid from a face or sketch
   extrude_cut -- pocket: extrude and cut from a solid

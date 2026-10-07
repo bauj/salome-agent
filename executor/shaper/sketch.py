@@ -3,7 +3,7 @@ import re
 
 from executor.shaper.state import (
     CONSTRUCTION, PUBLISH_LINE, Constraint, Entity, Sketch, check_id, construction_info,
-    KIND_TYPES, forget, geometry, new_name, offset_plane, record, sketch_frame, subshapes,
+    KIND_TYPES, forget, geometry, history_index, new_name, offset_plane, record, sketch_frame, subshapes,
     restore, run, sketch_of, snapshot, solver_error, state, status, tool, transaction,
 )
 
@@ -279,6 +279,10 @@ def _plan_entity(executor, sk: Sketch, e, taken: set) -> tuple[str, list]:
         st = state(executor)
         if not isinstance(of, str) or of not in st.objects:
             raise ValueError(f"{w}: of must name a built shape, got {of!r}")
+        order = history_index(st)
+        if order.get(of, -1) > order.get(sk.name, -1):
+            raise ValueError(f"{w}: {of} was built after {sk.name}; a sketch can only use "
+                             "what was built before it")
         sub_type = "edge" if e.get("edge") else "vertex"
         subs = {u.id: u for u in subshapes(executor, of, sub_type)}
         if not isinstance(sub, str) or sub not in subs:

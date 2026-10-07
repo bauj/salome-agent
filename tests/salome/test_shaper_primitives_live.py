@@ -159,6 +159,7 @@ def test_an_offset_plane_and_sketch_on_xoz_go_to_plus_y(agent_client):
     sk = _ok(agent_client, "create_sketch", plane={"base": "XOZ", "offset": 7})["sketch"]
     _ok(agent_client, "sketch_add", sketch=sk, entities=[
         {"id": "C", "type": "circle", "center": [0, 0], "radius": 2}])
+    _ok(agent_client, "close_sketch", sketch=sk)
     ext = _ok(agent_client, "extrude", base=sk, size=3)["measure"]
     assert sorted(ext["bbox"][2:4]) in (pytest.approx([4, 7]), pytest.approx([7, 10]))
 
@@ -170,6 +171,7 @@ def test_review_fixes_refuse_bad_input(agent_client):
     sk = _ok(agent_client, "create_sketch", plane="XOY")["sketch"]
     _ok(agent_client, "sketch_add", sketch=sk, entities=[
         {"id": "C", "type": "circle", "center": [0, 0], "radius": 1}])
+    _ok(agent_client, "close_sketch", sketch=sk)
     r = _call(agent_client, "extrude_cut", base=sk, target=pl, size=1)
     assert r["ok"] is False and "construction plane" in r["error"]
     r = _call(agent_client, "set_color", shape=box, red=True, green=0, blue=0)
