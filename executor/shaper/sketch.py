@@ -1,4 +1,5 @@
 import math
+import re
 
 from executor.shaper.state import (
     CONSTRUCTION, PUBLISH_LINE, Constraint, Entity, Sketch, check_id, construction_info,
@@ -34,6 +35,20 @@ def exec_records(st, records: list) -> None:
                     except Exception:  # noqa: BLE001 — already gone with its owner
                         pass
         raise
+
+
+def _drop_helpers(st, records: list) -> None:
+    """Remove the helper features (`<var>_x = ...`) a failed batch left behind: they
+    are not outputs of any record, so exec_records does not know them."""
+    names = [m for r in records for m in re.findall(r"^(\w+_[a-z]\w*) = ", r["code"], re.M)
+             if m in st.ns]
+    with transaction():
+        for n in reversed(names):
+            obj = st.ns.pop(n, None)
+            try:
+                st.ns["shaper_doc"].removeFeature(obj.feature())
+            except Exception:  # noqa: BLE001 — already gone with its owner
+                pass
 
 
 def _num(v, what: str):
@@ -196,13 +211,17 @@ def _line_code(sk: Sketch, var: str, a, b) -> str:
     return f"{var} = {sk.name}.addLine({a[0]!r}, {a[1]!r}, {b[0]!r}, {b[1]!r})\n_name({var}, {var!r})"
 
 
-def _points_list(e: dict, w: str, least: int) -> list:
+def _points_list(e: dict, w: str, least: int, distinct: bool = False) -> list:
     pts = e.get("points")
     if not isinstance(pts, list) or len(pts) < least:
         raise ValueError(f"{w}: points must be a list of at least {least} [x, y]")
     pts = [_xy(p, f"{w} point") for p in pts]
-    if any(math.dist(p, q) < 1e-9 for p, q in zip(pts, pts[1:])):
-        raise ValueError(f"{w}: two consecutive points are the same")
+    pairs = list(zip(pts, pts[1:])) + ([(pts[-1], pts[0])] if e.get("closed") else [])
+    if distinct:
+        pairs = [(p, q) for i, p in enumerate(pts) for q in pts[i + 1:]]
+    if any(math.dist(p, q) < 1e-9 for p, q in pairs):
+        raise ValueError(f"{w}: two "
+                         + ("" if distinct else "consecutive ") + "points are the same")
     return pts
 
 
@@ -227,8 +246,9 @@ def _plan_entity(executor, sk: Sketch, e, taken: set) -> tuple[str, list]:
         c = _xy(e.get("center"), f"{w}.center")
         big = _num(e.get("major_radius"), f"{w}.major_radius")
         small = _num(e.get("minor_radius"), f"{w}.minor_radius")
-        if not 0 < small <= big:
-            raise ValueError(f"{w}: need 0 < minor_radius <= major_radius")
+        if not 0 < small < big:
+            raise ValueError(f"{w}: need 0 < minor_radius < major_radius "
+                             "(a circle is type circle)")
         a = math.radians(_num(e.get("angle", 0), f"{w}.angle"))
         m = [c[0] + big * math.cos(a), c[1] + big * math.sin(a)]
         p = [c[0] - small * math.sin(a), c[1] + small * math.cos(a)]
@@ -239,7 +259,7 @@ def _plan_entity(executor, sk: Sketch, e, taken: set) -> tuple[str, list]:
                 f"_name({var}, {var!r})")
         return code, [(w, var)]
     if t == "spline":
-        pts = _points_list(e, w, 3 if closed else 2)
+        pts = _points_list(e, w, 3 if closed else 2, distinct=True)
         code = "".join(f"{var}_q{k} = {sk.name}.addPoint({x!r}, {y!r})\n"
                        f"{var}_q{k}.setAuxiliary(True)\n" for k, (x, y) in enumerate(pts, 1))
         refs = ", ".join(f"{var}_q{k}.coordinates()" for k in range(1, len(pts) + 1))
@@ -248,6 +268,10 @@ def _plan_entity(executor, sk: Sketch, e, taken: set) -> tuple[str, list]:
         return code, [(w, var)]
     if t == "projection":
         of, sub = e.get("of"), e.get("edge") or e.get("vertex")
+        if e.get("edge") and e.get("vertex"):
+            raise ValueError(f"{w}: give edge or vertex, not both")
+        if not isinstance(e.get("construction", True), bool):
+            raise ValueError(f"{w}: construction must be true or false")
         st = state(executor)
         if not isinstance(of, str) or of not in st.objects:
             raise ValueError(f"{w}: of must name a built shape, got {of!r}")
@@ -400,7 +424,11 @@ def tool_sketch_add(executor, args: dict):
     # result keeps SHAPER's own name (SketchLine_N) for the last entity, and a
     # face selected by that name is lost in result.py.
     records.append(record("execute", f"{sk.name}.feature().execute()", recv=sk.name))
-    exec_records(st, records)
+    try:
+        exec_records(st, records)
+    except Exception:
+        _drop_helpers(st, records)
+        raise
     for e, _, made in plans:
         construction = (e.get("construction", True) if e["type"] == "projection"
                         else bool(e.get("construction")))
@@ -678,8 +706,17 @@ def _made_by(st, sk: Sketch, op_code: str, op_var: str, getter: str, prefix: str
     op_code += (f"\n{new} = [_x for _x in {op_var}.{getter} "
                 f"if _x.feature().data().name() not in {tuple(sources)!r}]")
     first = record(fn, op_code, out=[op_var], recv=sk.name)
-    exec_records(st, [first])
+    try:
+        exec_records(st, [first])
+    except Exception:
+        _drop_helpers(st, [first])
+        raise
     n = len(st.ns[new])
+    if n == 0:
+        _drop_helpers(st, [first])
+        with transaction():
+            st.ns["shaper_doc"].removeFeature(st.ns.pop(op_var).feature())
+        raise ValueError("the operation made no entity")
     made = [(f"{prefix}{k}", f"{sk.name}_{prefix}{k}") for k in range(1, n + 1)]
     code = "\n".join(f"{v} = _wrap({new}[{k}])\n_name({v}, {v!r})"
                      for k, (_, v) in enumerate(made))
@@ -690,6 +727,7 @@ def _made_by(st, sk: Sketch, op_code: str, op_var: str, getter: str, prefix: str
     except Exception:
         with transaction():
             st.ns["shaper_doc"].removeFeature(st.ns.pop(op_var).feature())
+        _drop_helpers(st, [first])
         raise
     return [first, second], made
 
@@ -725,6 +763,8 @@ def tool_sketch_fillet(executor, args: dict):
     first, _, end1 = ref.text.partition(".")
     if ref.kind != _POINT or end1 not in ("start", "end") or sk.entities[first].type != "line":
         raise ValueError(f"at must be the end of a line, like \"L1.end\", got {ref.text!r}")
+    if sk.entities[first].construction:
+        raise ValueError(f"{first} is a construction line: round a corner of the profile")
     r = _num(args.get("radius"), "radius")
     if r <= 0:
         raise ValueError("radius must be positive")
@@ -745,7 +785,7 @@ def tool_sketch_fillet(executor, args: dict):
         raise ValueError(f"{first} and {second} are in line at {ref.text}: no corner to round")
     t = r / math.tan(half)
     for i, k in ((first, end1), (second, end2)):
-        if t >= math.dist(p, other(i, k)) - 1e-9:
+        if t >= math.dist(p, other(i, k)) * (1 - 1e-6):
             raise ValueError(f"radius {r:g} is too large: it needs {t:.4g} of {i}, which is "
                              f"only {math.dist(p, other(i, k)):.4g} long")
     t1 = [p[i] + u[i] * t for i in range(2)]
@@ -770,7 +810,21 @@ def tool_sketch_fillet(executor, args: dict):
             f"{sk.name}.setRadius({var}.results()[1], {r!r})\nmodel.do()\n"
             f"{sk.name}.feature().execute()")
     rec = record("fillet", code, out=[var], refs=[l1, l2], recv=sk.name)
-    exec_records(st, [rec])
+    try:
+        exec_records(st, [rec])
+        err = solver_error(sk)
+    except Exception:
+        with transaction():
+            restore(sk, geos)
+        raise
+    if err:
+        with transaction():
+            obj = st.ns.pop(var, None)
+            if obj is not None:
+                st.ns["shaper_doc"].removeFeature(obj.feature())
+            restore(sk, geos)
+        raise ValueError(f"the fillet conflicts with the constraints on {first} or {second} "
+                         f"({err}); remove them first")
     # our own coincident constraint on that corner went with it
     corner = {f"{first}.{end1}", f"{second}.{end2}"}
     for cid, k in list(sk.constraints.items()):
@@ -784,6 +838,8 @@ def tool_sketch_fillet(executor, args: dict):
 def _sources(sk: Sketch, ids) -> tuple[list, list]:
     if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
         raise ValueError(f"of must be a list of entity ids, got {ids!r}")
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"of lists the same entity twice: {ids!r}")
     srcs, refs = [], []
     for i in ids:
         ref = _resolve_ref(sk, i)
@@ -819,15 +875,29 @@ def tool_sketch_copy(executor, args: dict):
     op = args.get("op")
     ov = f"{sk.name}_{prefix}_op"
     count = lambda: _copies(args.get("count"))
+    own = {"mirror": {"axis"}, "offset": {"distance"}, "linear": {"vector", "count"},
+           "circular": {"center", "count", "angle"}}
+    if op in own:
+        stray = sorted(k for k in ("axis", "distance", "vector", "center", "count", "angle")
+                       if args.get(k) is not None and k not in own[op])
+        if stray:
+            raise ValueError(f"{', '.join(stray)} does not apply to op {op}")
     if op == "mirror":
         axis = _resolve_ref(sk, args.get("axis"))
         if axis.kind != _LINE:
             raise ValueError(f"axis must be a line of the sketch, got {args.get('axis')!r}")
+        if axis.base is not None and axis.base in args["of"]:
+            raise ValueError(f"{axis.base} is the axis: it cannot also be mirrored")
         code, getter = f"{ov} = {sk.name}.addMirror({axis.src}, {objs})\nmodel.do()", "mirrored()"
     elif op == "offset":
         d = _num(args.get("distance"), "distance")
         if d == 0:
             raise ValueError("distance must not be 0")
+        if d < 0:
+            for i in args["of"]:
+                ent = sk.entities[i]
+                if ent.type in ("circle", "arc") and -d >= geometry(ent)["radius"] - 1e-9:
+                    raise ValueError(f"{i}: an inward offset of {-d:g} reaches its radius")
         code = f"{ov} = {sk.name}.addOffset({objs}, {abs(d)!r}, {d < 0})\nmodel.do()"
         getter = "offset()"
     elif op == "linear":

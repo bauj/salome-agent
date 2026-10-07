@@ -206,7 +206,7 @@ def record(fn: str, code: str, *, out=(), refs=(), recv=None, publish=False) -> 
 
 
 def check_id(id_: str, what: str) -> None:
-    if not isinstance(id_, str) or not _ID.match(id_):
+    if not isinstance(id_, str) or not _ID.fullmatch(id_):
         raise ValueError(f"{what} id {id_!r} must start with a letter and use only "
                          "letters and digits (e.g. L1, C2, K3)")
 
