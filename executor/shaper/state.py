@@ -23,9 +23,35 @@ NAME_HELPER = '''def _name(obj, n):
     feat.data().setName(n)
     for i, r in enumerate(feat.results()):
         r.data().setName(n if i == 0 else f"{n}_{i + 1}")
+
+
+def _unjoin(sk, a, b):
+    """Remove the coincidences tying the point a to the point b, each given as
+    (feature name, attribute id): a corner being rounded."""
+    import ModelAPI
+    cf = ModelAPI.featureToCompositeFeature(sk.feature())
+    for i in reversed(range(cf.numberOfSubs())):
+        f = cf.subFeature(i)
+        if not f.getKind().startswith("SketchConstraintCoincidence"):
+            continue
+        ends = set()
+        for k in ("ConstraintEntityA", "ConstraintEntityB"):
+            ra = f.refattr(k)
+            if ra.isInitialized() and not ra.isObject() and ra.attr() is not None:
+                ends.add((ModelAPI.objectToFeature(ra.attr().owner()).data().name(),
+                          ra.attr().id()))
+        if ends == {a, b}:
+            sk.feature().document().removeFeature(f)
+
+
+def _wrap(ent):
+    """A sketch entity SHAPER made itself (a fillet arc, a mirrored copy) as its API object."""
+    f = ent if hasattr(ent, "getKind") else ent.feature()
+    return getattr(SketchAPI, "SketchAPI_" + f.getKind()[len("Sketch"):])(f)
 '''
 
 PREAMBLE = ('from salome.shaper import model\n'
+            'import SketchAPI\n'
             'from SketchAPI import SketchAPI_Point\n'
             'model.begin()\n'
             'shaper_doc = model.addPart(model.moduleDocument()).document()\n'
@@ -92,9 +118,10 @@ def state(executor) -> ShaperState:
     global _USED
     st = executor.__dict__.get("shaper_state")
     if st is None:
+        import SketchAPI
         from SketchAPI import SketchAPI_Point
         _USED = True
-        ns = {"model": model(), "SketchAPI_Point": SketchAPI_Point}
+        ns = {"model": model(), "SketchAPI": SketchAPI, "SketchAPI_Point": SketchAPI_Point}
         with transaction() as m:
             ns["shaper_doc"] = m.addPart(m.moduleDocument()).document()
         exec(NAME_HELPER, ns)
@@ -205,7 +232,20 @@ def geometry(ent: Entity) -> dict:
         s = _pt(a.startPoint())
         return {"center": c, "start": s, "end": _pt(a.endPoint()),
                 "radius": round(math.dist(c, s), 6)}
+    if ent.type == "ellipse":
+        return {"center": _pt(a.center()), "major_radius": round(a.majorRadius().value(), 6),
+                "minor_radius": round(a.minorRadius().value(), 6)}
+    if ent.type in ("spline", "curve"):
+        if a.feature().getKind() == "SketchBSplinePeriodic":
+            return {"closed": True}
+        return {"start": _pt(a.startPoint()), "end": _pt(a.endPoint())}
     return {"at": _pt(a.coordinates())}
+
+
+# a sketch feature kind -> the entity type the tools call it
+KIND_TYPES = {"SketchLine": "line", "SketchCircle": "circle", "SketchArc": "arc",
+              "SketchPoint": "point", "SketchEllipse": "ellipse",
+              "SketchBSpline": "spline", "SketchBSplinePeriodic": "spline"}
 
 
 def snapshot(sk: Sketch) -> dict:
@@ -215,6 +255,8 @@ def snapshot(sk: Sketch) -> dict:
 def restore(sk: Sketch, geos: dict) -> None:
     """Put entities back where `geos` (a snapshot) had them."""
     for i, geo in moved(geos, snapshot(sk)).items():
+        if sk.entities[i].type not in ("line", "circle", "arc", "point"):
+            continue    # an ellipse or spline is moved through its own points
         old, a = geos[i], sk.entities[i].api
         if "start" in old:
             a.startPoint().setValue(*old["start"])
@@ -239,6 +281,8 @@ def moved(before: dict, after: dict) -> dict:
 
 
 def _far(a, b) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a != b
     if isinstance(a, list):
         return any(abs(x - y) > 1e-6 for x, y in zip(a, b))
     return abs(a - b) > 1e-6
@@ -261,12 +305,37 @@ def solver_error(sk: Sketch) -> str:
 
 
 def _ends(ent: Entity, geo: dict) -> list:
-    if ent.type in ("line", "arc"):
+    if ent.type in ("line", "arc") or (ent.type in ("spline", "curve") and "start" in geo):
         return [(f"{ent.id}.start", geo["start"]), (f"{ent.id}.end", geo["end"])]
     return []
 
 
-def _on(p, ent: Entity, geo: dict) -> bool:
+def sketch_frame(sk: Sketch) -> tuple:
+    """(origin, x_dir, y_dir, normal) of a sketch, from its feature."""
+    import GeomDataAPI
+    f = sk.api.feature()
+    o = GeomDataAPI.geomDataAPI_Point(f.attribute("Origin")).pnt()
+    x = GeomDataAPI.geomDataAPI_Dir(f.attribute("DirX")).dir()
+    n = GeomDataAPI.geomDataAPI_Dir(f.attribute("Norm")).dir()
+    xyz = lambda p: [p.x(), p.y(), p.z()]
+    return xyz(o), xyz(x), xyz(n.cross(x)), xyz(n)
+
+
+def _on_curve(p, ent: Entity, sk: Sketch) -> bool:
+    """p (sketch coordinates) lies on an ellipse or spline: measured on its edge."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_PointBuilder as PB, GeomAlgoAPI_ShapeTools as T
+    res = ent.api.feature().lastResult()
+    if res is None or res.shape() is None:
+        return False
+    o, x, y, _ = sketch_frame(sk)
+    w = [o[i] + p[0] * x[i] + p[1] * y[i] for i in range(3)]
+    return T.minimalDistance(PB.vertex(GeomAPI.GeomAPI_Pnt(*w)), res.shape()) < TOL
+
+
+def _on(p, ent: Entity, geo: dict, sk: Sketch | None = None) -> bool:
+    if ent.type in ("ellipse", "spline", "curve"):
+        return sk is not None and _on_curve(p, ent, sk)
     if ent.type == "line":
         (ax, ay), (bx, by) = geo["start"], geo["end"]
         dx, dy = bx - ax, by - ay
@@ -296,7 +365,7 @@ def loose_ends(sk: Sketch, geos: dict) -> list:
     for e in drawn:
         for ref, p in _ends(e, geos[e.id]):
             others = [o for o in drawn if o is not e]
-            touches = any(_on(p, o, geos[o.id]) for o in others)
+            touches = any(_on(p, o, geos[o.id], sk) for o in others)
             if not touches and e.type == "arc":
                 # an arc closing on itself is not open
                 touches = math.dist(geos[e.id]["start"], geos[e.id]["end"]) < TOL

@@ -7,6 +7,19 @@ from executor.shaper.state import (
 _AXES = ("OX", "OY", "OZ")
 
 
+def _nested_regions(sk) -> bool:
+    """A region with a hole in it: the hole is a region of its own, so taking
+    every region fills the hole (task 314)."""
+    import GeomAPI
+    import ModelAPI
+    res = sk.api.feature().firstResult()
+    if res is None:
+        return False
+    rc = ModelAPI.modelAPI_ResultConstruction(res)
+    return any(len(rc.face(i).subShapes(GeomAPI.GeomAPI_Shape.WIRE)) > 1
+               for i in range(rc.facesNum()))
+
+
 def _base_selections(executor, base) -> tuple[list, list]:
     """A sketch (all its regions) or a published feature (all its results) as
     SHAPER selection source, plus the vars it references."""
@@ -14,7 +27,14 @@ def _base_selections(executor, base) -> tuple[list, list]:
     names = base if isinstance(base, list) else [base]
     sels, refs = [], []
     for name in names:
+        if not isinstance(name, str):
+            raise ValueError(f"base must be a published name, got {name!r}")
         if name in st.sketches:
+            if _nested_regions(st.sketches[name]):
+                raise ValueError(
+                    f"{name} has a closed region inside another: taking the whole sketch "
+                    "would fill the hole too. make_face on the material regions (the "
+                    "sketch reply lists them), then use that face")
             sels.append(f'model.selection("COMPOUND", "all-in-{name}")')
         elif name in st.objects:
             _not_construction(st, name)

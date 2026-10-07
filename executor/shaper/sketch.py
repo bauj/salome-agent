@@ -2,13 +2,14 @@ import math
 
 from executor.shaper.state import (
     CONSTRUCTION, PUBLISH_LINE, Constraint, Entity, Sketch, check_id, construction_info,
-    forget, geometry, new_name, offset_plane, record, subshapes,
+    KIND_TYPES, forget, geometry, new_name, offset_plane, record, sketch_frame, subshapes,
     restore, run, sketch_of, snapshot, solver_error, state, status, tool, transaction,
 )
 
 # plane -> the world axes lying in it, offered as sketch references
 _PLANES = {"XOY": ("OX", "OY"), "XOZ": ("OX", "OZ"), "YOZ": ("OY", "OZ")}
-_ENTITY_TYPES = ("line", "circle", "arc", "point")
+_ENTITY_TYPES = ("line", "circle", "arc", "point", "ellipse", "spline", "rectangle",
+                 "polyline", "projection")
 
 
 def exec_records(st, records: list) -> None:
@@ -152,7 +153,7 @@ def tool_create_sketch(executor, args: dict):
     st.sketches[name] = sk
     if normal is not None:
         try:
-            o, x, y, n = _frame(sk)
+            o, x, y, n = sketch_frame(sk)
         except Exception:
             forget(executor, [name])
             raise
@@ -169,18 +170,6 @@ def _face_normal(face) -> list | None:
         return None
     d = f.getPlane().direction()
     return [d.x(), d.y(), d.z()]
-
-
-def _frame(sk: Sketch) -> tuple:
-    """(origin, x_dir, y_dir, normal) of a sketch, from its feature."""
-    import GeomDataAPI
-    f = sk.api.feature()
-    o = GeomDataAPI.geomDataAPI_Point(f.attribute("Origin")).pnt()
-    x = GeomDataAPI.geomDataAPI_Dir(f.attribute("DirX")).dir()
-    n = GeomDataAPI.geomDataAPI_Dir(f.attribute("Norm")).dir()
-    xyz = lambda p: [p.x(), p.y(), p.z()]
-    y = n.cross(x)
-    return xyz(o), xyz(x), xyz(y), xyz(n)
 
 
 # --- sketch_add -------------------------------------------------------------
@@ -200,23 +189,122 @@ def _entity_code(sk: Sketch, e: dict, var: str) -> str:
     else:
         x, y = e["at"]
         call = f"{sk.name}.addPoint({x!r}, {y!r})"
-    code = f"{var} = {call}\n_name({var}, {var!r})"
-    if e.get("construction"):
-        code += f"\n{var}.setAuxiliary(True)"
-    return code
+    return f"{var} = {call}\n_name({var}, {var!r})"
 
 
-def _check_entity(e, taken: set) -> dict:
+def _line_code(sk: Sketch, var: str, a, b) -> str:
+    return f"{var} = {sk.name}.addLine({a[0]!r}, {a[1]!r}, {b[0]!r}, {b[1]!r})\n_name({var}, {var!r})"
+
+
+def _points_list(e: dict, w: str, least: int) -> list:
+    pts = e.get("points")
+    if not isinstance(pts, list) or len(pts) < least:
+        raise ValueError(f"{w}: points must be a list of at least {least} [x, y]")
+    pts = [_xy(p, f"{w} point") for p in pts]
+    if any(math.dist(p, q) < 1e-9 for p, q in zip(pts, pts[1:])):
+        raise ValueError(f"{w}: two consecutive points are the same")
+    return pts
+
+
+def _plan_entity(executor, sk: Sketch, e, taken: set) -> tuple[str, list]:
+    """Code adding entity `e`, and the (id, var) of every entity it makes: a
+    rectangle or polyline makes one line per side, ids <id>1, <id>2, ..."""
     if not isinstance(e, dict):
         raise ValueError(f"each entity is an object, got {e!r}")
     check_id(e.get("id"), "entity")
-    if e["id"] in taken:
-        raise ValueError(f"id {e['id']!r} is already used in this sketch — ids are "
-                         f"unique per sketch (taken: {', '.join(sorted(taken))})")
-    t = e.get("type")
-    if t not in _ENTITY_TYPES:
-        raise ValueError(f"{e['id']}: type must be one of {', '.join(_ENTITY_TYPES)}, got {t!r}")
     w = e["id"]
+    t = e.get("type")
+    if not isinstance(t, str) or t not in _ENTITY_TYPES:
+        raise ValueError(f"{w}: type must be one of {', '.join(_ENTITY_TYPES)}, got {t!r}")
+    var = f"{sk.name}_{w}"
+    closed = e.get("closed", False)
+    if not isinstance(closed, bool):
+        raise ValueError(f"{w}: closed must be true or false")
+    if t in ("line", "circle", "arc", "point"):
+        _check_entity(e)
+        return _entity_code(sk, e, var), [(w, var)]
+    if t == "ellipse":
+        c = _xy(e.get("center"), f"{w}.center")
+        big = _num(e.get("major_radius"), f"{w}.major_radius")
+        small = _num(e.get("minor_radius"), f"{w}.minor_radius")
+        if not 0 < small <= big:
+            raise ValueError(f"{w}: need 0 < minor_radius <= major_radius")
+        a = math.radians(_num(e.get("angle", 0), f"{w}.angle"))
+        m = [c[0] + big * math.cos(a), c[1] + big * math.sin(a)]
+        p = [c[0] - small * math.sin(a), c[1] + small * math.cos(a)]
+        r = lambda v: repr(round(v, 9) + 0.0)
+        code = (f"{var}_m = {sk.name}.addEllipse({r(c[0])}, {r(c[1])}, {r(m[0])}, {r(m[1])}, "
+                f"{r(p[0])}, {r(p[1])}, True)\nmodel.do()\n"
+                f"{var} = _wrap(model.lastSubFeature({sk.name}, \"SketchEllipse\"))\n"
+                f"_name({var}, {var!r})")
+        return code, [(w, var)]
+    if t == "spline":
+        pts = _points_list(e, w, 3 if closed else 2)
+        code = "".join(f"{var}_q{k} = {sk.name}.addPoint({x!r}, {y!r})\n"
+                       f"{var}_q{k}.setAuxiliary(True)\n" for k, (x, y) in enumerate(pts, 1))
+        refs = ", ".join(f"{var}_q{k}.coordinates()" for k in range(1, len(pts) + 1))
+        code += (f"{var} = {sk.name}.addInterpolation([{refs}]"
+                 + (", periodic=True" if closed else "") + f")\n_name({var}, {var!r})")
+        return code, [(w, var)]
+    if t == "projection":
+        of, sub = e.get("of"), e.get("edge") or e.get("vertex")
+        st = state(executor)
+        if not isinstance(of, str) or of not in st.objects:
+            raise ValueError(f"{w}: of must name a built shape, got {of!r}")
+        sub_type = "edge" if e.get("edge") else "vertex"
+        subs = {u.id: u for u in subshapes(executor, of, sub_type)}
+        if not isinstance(sub, str) or sub not in subs:
+            raise ValueError(f"{w}: give edge (or vertex): an id of {of} from get_subshapes, "
+                             f"got {sub!r}")
+        _projectable(sk, subs[sub].shape, w)
+        keep = not e.get("construction", True)
+        code = (f"model.do()\n{var}_p = {sk.name}.addProjection(model.selection("
+                f"\"{sub_type.upper()}\", {subs[sub].naming!r}), {keep})\nmodel.do()\n"
+                f"{var} = _wrap({var}_p.createdFeature())\n_name({var}, {var!r})")
+        return code, [(w, var)]
+    pts = (_points_list(e, w, 3 if closed else 2) if t == "polyline" else None)
+    if t == "rectangle":
+        a, b = _xy(e.get("corner1"), f"{w}.corner1"), _xy(e.get("corner2"), f"{w}.corner2")
+        if abs(a[0] - b[0]) < 1e-9 or abs(a[1] - b[1]) < 1e-9:
+            raise ValueError(f"{w}: the corners must differ in x and in y")
+        code = (f"{var}_r = {sk.name}.addRectangle({a[0]!r}, {a[1]!r}, {b[0]!r}, {b[1]!r})\n"
+                + "\n".join(f"{var}{k} = _wrap({var}_r.lines()[{k - 1}])\n"
+                            f"_name({var}{k}, '{var}{k}')" for k in range(1, 5)))
+        made = [(f"{w}{k}", f"{var}{k}") for k in range(1, 5)]
+    else:   # polyline
+        segs = list(zip(pts, pts[1:])) + ([(pts[-1], pts[0])] if closed else [])
+        made = [(f"{w}{k}", f"{var}{k}") for k in range(1, len(segs) + 1)]
+        code = "\n".join(_line_code(sk, v, a, b) for (_, v), (a, b) in zip(made, segs))
+        joins = list(zip(made, made[1:])) + ([(made[-1], made[0])] if closed else [])
+        code += "".join(f"\n{sk.name}.setCoincident({p[1]}.endPoint(), {q[1]}.startPoint())"
+                        for p, q in joins)
+    clash = [i for i, _ in made if i in taken]
+    if clash:
+        raise ValueError(f"{w}: makes the ids {', '.join(i for i, _ in made)}, but "
+                         f"{', '.join(clash)} is taken — choose another id")
+    return code, made
+
+
+def _projectable(sk: Sketch, shape, w: str) -> None:
+    """A straight edge along the sketch normal projects to a point, which SHAPER
+    cannot make."""
+    import GeomAPI
+    if shape.shapeType() != GeomAPI.GeomAPI_Shape.EDGE:
+        return
+    edge = GeomAPI.GeomAPI_Edge(shape)
+    if not edge.isLine():
+        return
+    a, b = edge.firstPoint(), edge.lastPoint()
+    d = [b.x() - a.x(), b.y() - a.y(), b.z() - a.z()]
+    n = sketch_frame(sk)[3]
+    length = math.sqrt(sum(c * c for c in d))
+    if length and abs(sum(p * q for p, q in zip(d, n))) / length > 1 - 1e-9:
+        raise ValueError(f"{w}: that edge is square to the sketch plane and projects to a "
+                         "point; project one of its vertices instead (vertex: \"V..\")")
+
+
+def _check_entity(e: dict) -> None:
+    t, w = e["type"], e["id"]
     if t == "line":
         s, en = _xy(e.get("start"), f"{w}.start"), _xy(e.get("end"), f"{w}.end")
         if math.dist(s, en) < 1e-9:
@@ -236,7 +324,15 @@ def _check_entity(e, taken: set) -> dict:
                              f"center (got {r1:.6g} and {r2:.6g})")
     else:
         _xy(e.get("at"), f"{w}.at")
-    return e
+
+
+def _register(st, sk: Sketch, made: list, construction: bool) -> None:
+    for i, var in made:
+        kind = st.ns[var].feature().getKind()
+        sk.entities[i] = Entity(i, KIND_TYPES.get(kind, "curve"), var, st.ns[var], construction)
+
+
+_PT = {"type": "array", "items": {"type": "number"}}
 
 
 @tool("sketch_add", category="sketch",
@@ -247,23 +343,34 @@ def _check_entity(e, taken: set) -> dict:
           "{id, type: \"circle\", center, radius}, "
           "{id, type: \"arc\", center, start, end, reversed?} (counter-clockwise from start "
           "to end; reversed: clockwise), "
-          "{id, type: \"point\", at}. "
+          "{id, type: \"point\", at}, "
+          "{id, type: \"ellipse\", center, major_radius, minor_radius, angle?} (angle of "
+          "the major axis, degrees), "
+          "{id, type: \"spline\", points: [[x, y], ...], closed?} (smooth, through every point), "
+          "{id, type: \"rectangle\", corner1, corner2} and "
+          "{id, type: \"polyline\", points, closed?} (one line per side, ids <id>1, <id>2, "
+          "..., already joined), "
+          "{id, type: \"projection\", edge (or vertex): an id from get_subshapes, of: a "
+          "shape} (a solid's edge seen in this sketch; a construction reference unless "
+          "construction: false). "
           "construction: true marks a helper (a centre line, an axis of symmetry): it can "
-          "be constrained against but forms no region and is never an open end. Entities "
-          "are not joined by being drawn end to end: add coincident constraints for that. "
-          "The reply gives dof, loose_ends, regions (closed areas with index, area, a "
+          "be constrained against but forms no region and is never an open end. Lines and "
+          "arcs are not joined by being drawn end to end: add coincident constraints for "
+          "that. The reply gives dof, loose_ends, regions (closed areas with index, area, a "
           "point inside)."),
       schema={"type": "object", "properties": {
           "sketch": {"type": "string"},
           "entities": {"type": "array", "items": {"type": "object", "properties": {
               "id": {"type": "string"},
               "type": {"type": "string", "enum": list(_ENTITY_TYPES)},
-              "start": {"type": "array", "items": {"type": "number"}},
-              "end": {"type": "array", "items": {"type": "number"}},
-              "center": {"type": "array", "items": {"type": "number"}},
-              "radius": {"type": "number"},
-              "at": {"type": "array", "items": {"type": "number"}},
-              "reversed": {"type": "boolean"},
+              "start": _PT, "end": _PT, "center": _PT, "at": _PT,
+              "corner1": _PT, "corner2": _PT,
+              "points": {"type": "array", "items": _PT},
+              "radius": {"type": "number"}, "major_radius": {"type": "number"},
+              "minor_radius": {"type": "number"}, "angle": {"type": "number"},
+              "edge": {"type": "string"}, "vertex": {"type": "string"},
+              "of": {"type": "string"},
+              "reversed": {"type": "boolean"}, "closed": {"type": "boolean"},
               "construction": {"type": "boolean"}},
               "required": ["id", "type"]}}},
           "required": ["sketch", "entities"]})
@@ -274,31 +381,37 @@ def tool_sketch_add(executor, args: dict):
     if not isinstance(entities, list) or not entities:
         raise ValueError("entities must be a non-empty list")
     taken = _taken(sk)
+    plans = []
     for e in entities:
-        _check_entity(e, taken)
-        taken.add(e["id"])
+        if isinstance(e, dict) and isinstance(e.get("id"), str) and e["id"] in taken:
+            raise ValueError(f"id {e['id']!r} is already used in this sketch — ids are "
+                             f"unique per sketch (taken: {', '.join(sorted(taken))})")
+        code, made = _plan_entity(executor, sk, e, taken)
+        taken |= {e["id"]} | {i for i, _ in made}
+        plans.append((e, code, made))
     before = snapshot(sk)
     records = []
-    for e in entities:
-        var = f"{sk.name}_{e['id']}"
-        records.append(record("add" + e["type"].capitalize(), _entity_code(sk, e, var),
-                              out=[var], recv=sk.name))
+    for e, code, made in plans:
+        if e.get("construction") and e["type"] not in ("projection",):
+            code += "".join(f"\n{v}.setAuxiliary(True)" for _, v in made)
+        records.append(record("add" + e["type"].capitalize(), code,
+                              out=[v for _, v in made], recv=sk.name))
     # A rename does not mark the sketch for recompute, so without this its
     # result keeps SHAPER's own name (SketchLine_N) for the last entity, and a
     # face selected by that name is lost in result.py.
     records.append(record("execute", f"{sk.name}.feature().execute()", recv=sk.name))
     exec_records(st, records)
-    for e in entities:
-        var = f"{sk.name}_{e['id']}"
-        sk.entities[e["id"]] = Entity(e["id"], e["type"], var, st.ns[var],
-                                      bool(e.get("construction")))
+    for e, _, made in plans:
+        construction = (e.get("construction", True) if e["type"] == "projection"
+                        else bool(e.get("construction")))
+        _register(st, sk, made, construction)
     return _reply(executor, sk, records, before)
 
 
 # --- sketch_constrain -------------------------------------------------------
 
 # type -> (SketchAPI method, the kinds of its refs, takes a value)
-_POINT, _LINE, _ROUND = "point", "line", "round"
+_POINT, _LINE, _ROUND, _CURVE = "point", "line", "round", "curve"
 _CONSTRAINTS = {
     "coincident": ("setCoincident", None, False),
     "horizontal": ("setHorizontal", (_LINE,), False),
@@ -345,10 +458,16 @@ def _resolve_ref(sk: Sketch, text) -> _Ref:
             return _Ref(text, _LINE, f"{v}.result()", base, v)
         if ent.type in ("circle", "arc"):
             return _Ref(text, _ROUND, f"{v}.results()[1]", base, v)
+        if ent.type in ("ellipse", "spline", "curve"):
+            return _Ref(text, _CURVE, f"{v}.result()", base, v)
         return _Ref(text, _POINT, f"{v}.coordinates()", base, v)
+    open_ends = ent.type in ("spline", "curve") and "start" in geometry(ent)
     subs = {"line": {"start": "startPoint", "end": "endPoint"},
             "arc": {"start": "startPoint", "end": "endPoint", "center": "center"},
-            "circle": {"center": "center"}}.get(ent.type, {})
+            "circle": {"center": "center"}, "ellipse": {"center": "center"},
+            "spline": {"start": "startPoint", "end": "endPoint"} if open_ends else {},
+            "curve": {"start": "startPoint", "end": "endPoint"} if open_ends else {},
+            }.get(ent.type, {})
     if sub not in subs:
         valid = ", ".join(f"{base}.{s}" for s in subs) or f"{base} itself"
         raise ValueError(f"{text!r}: a {ent.type} has no {sub!r} — use {valid}")
@@ -546,3 +665,206 @@ def tool_sketch_status(executor, args: dict):
                        **({"value": c.value} if c.value is not None else {})}
                    for i, c in sk.constraints.items()}
     return _reply(executor, sk, [], None, entities=entities, constraints=constraints)
+
+
+# --- sketch_fillet / sketch_copy --------------------------------------------
+
+def _made_by(st, sk: Sketch, op_code: str, op_var: str, getter: str, prefix: str,
+             fn: str, sources: list) -> tuple[list, list]:
+    """Run an operation that makes sketch entities, then name each one
+    <prefix>1, <prefix>2, ...: two records, both run exactly as result.py runs them.
+    A pattern of a copy lists that copy among its own: left out."""
+    new = f"{op_var}_new"
+    op_code += (f"\n{new} = [_x for _x in {op_var}.{getter} "
+                f"if _x.feature().data().name() not in {tuple(sources)!r}]")
+    first = record(fn, op_code, out=[op_var], recv=sk.name)
+    exec_records(st, [first])
+    n = len(st.ns[new])
+    made = [(f"{prefix}{k}", f"{sk.name}_{prefix}{k}") for k in range(1, n + 1)]
+    code = "\n".join(f"{v} = _wrap({new}[{k}])\n_name({v}, {v!r})"
+                     for k, (_, v) in enumerate(made))
+    second = record("name", code + f"\n{sk.name}.feature().execute()",
+                    out=[v for _, v in made], recv=sk.name)
+    try:
+        exec_records(st, [second])
+    except Exception:
+        with transaction():
+            st.ns["shaper_doc"].removeFeature(st.ns.pop(op_var).feature())
+        raise
+    return [first, second], made
+
+
+def _new_prefix(sk: Sketch, prefix) -> str:
+    check_id(prefix, "id")
+    taken = _taken(sk)
+    clash = sorted(i for i in taken if i == prefix or
+                   (i.startswith(prefix) and i[len(prefix):].isdigit()))
+    if clash:
+        raise ValueError(f"id {prefix!r}: the new entities are named {prefix}1, {prefix}2, "
+                         f"... and {', '.join(clash)} is taken — choose another id")
+    return prefix
+
+
+@tool("sketch_fillet", category="sketch",
+      description=(
+          "Round the corner where two lines meet with an arc of `radius`: `at` is the "
+          "corner (\"L1.end\"); both lines are trimmed to the arc, which gets the id `id` "
+          "and stays tangent to them. Nothing else moves."),
+      schema={"type": "object", "properties": {
+          "sketch": {"type": "string"}, "at": {"type": "string"},
+          "radius": {"type": "number"}, "id": {"type": "string"}},
+          "required": ["sketch", "at", "radius", "id"]})
+def tool_sketch_fillet(executor, args: dict):
+    st = state(executor)
+    sk = sketch_of(executor, args.get("sketch"))
+    fid = args.get("id")
+    check_id(fid, "entity")
+    if fid in _taken(sk):
+        raise ValueError(f"id {fid!r} is already used in this sketch")
+    ref = _resolve_ref(sk, args.get("at"))
+    first, _, end1 = ref.text.partition(".")
+    if ref.kind != _POINT or end1 not in ("start", "end") or sk.entities[first].type != "line":
+        raise ValueError(f"at must be the end of a line, like \"L1.end\", got {ref.text!r}")
+    r = _num(args.get("radius"), "radius")
+    if r <= 0:
+        raise ValueError("radius must be positive")
+    geos = snapshot(sk)
+    p = geos[first][end1]
+    meets = [(i, k) for i, e in sk.entities.items() if i != first and e.type == "line"
+             and not e.construction for k in ("start", "end") if math.dist(geos[i][k], p) < 1e-6]
+    if len(meets) != 1:
+        raise ValueError(f"{ref.text} must be the corner of exactly two drawn lines; "
+                         f"{len(meets)} other lines end there")
+    second, end2 = meets[0]
+    other = lambda i, k: geos[i]["end" if k == "start" else "start"]
+    unit = lambda a: [c / math.hypot(*a) for c in a]
+    u = unit([other(first, end1)[i] - p[i] for i in range(2)])
+    v = unit([other(second, end2)[i] - p[i] for i in range(2)])
+    half = math.acos(max(-1.0, min(1.0, u[0] * v[0] + u[1] * v[1]))) / 2
+    if half < 1e-6 or math.pi / 2 - half < 1e-6:
+        raise ValueError(f"{first} and {second} are in line at {ref.text}: no corner to round")
+    t = r / math.tan(half)
+    for i, k in ((first, end1), (second, end2)):
+        if t >= math.dist(p, other(i, k)) - 1e-9:
+            raise ValueError(f"radius {r:g} is too large: it needs {t:.4g} of {i}, which is "
+                             f"only {math.dist(p, other(i, k)):.4g} long")
+    t1 = [p[i] + u[i] * t for i in range(2)]
+    t2 = [p[i] + v[i] * t for i in range(2)]
+    w = unit([u[0] + v[0], u[1] + v[1]])
+    c = [p[i] + w[i] * r / math.sin(half) for i in range(2)]
+    rev = (t1[0] - c[0]) * (t2[1] - c[1]) - (t1[1] - c[1]) * (t2[0] - c[0]) < 0
+    l1, l2 = sk.entities[first].var, sk.entities[second].var
+    pt = {"start": "startPoint", "end": "endPoint"}
+    attr = {"start": "StartPoint", "end": "EndPoint"}
+    var = f"{sk.name}_{fid}"
+    f6 = lambda x: repr(round(x, 9) + 0.0)
+    code = (f"_unjoin({sk.name}, ({l1!r}, {attr[end1]!r}), ({l2!r}, {attr[end2]!r}))\n"
+            f"{l1}.{pt[end1]}().setValue({f6(t1[0])}, {f6(t1[1])})\n"
+            f"{l2}.{pt[end2]}().setValue({f6(t2[0])}, {f6(t2[1])})\n"
+            f"{var} = {sk.name}.addArc({f6(c[0])}, {f6(c[1])}, {f6(t1[0])}, {f6(t1[1])}, "
+            f"{f6(t2[0])}, {f6(t2[1])}, {rev})\n_name({var}, {var!r})\n"
+            f"{sk.name}.setCoincident({var}.startPoint(), {l1}.{pt[end1]}())\n"
+            f"{sk.name}.setCoincident({var}.endPoint(), {l2}.{pt[end2]}())\n"
+            f"{sk.name}.setTangent({l1}.result(), {var}.results()[1])\n"
+            f"{sk.name}.setTangent({l2}.result(), {var}.results()[1])\n"
+            f"{sk.name}.setRadius({var}.results()[1], {r!r})\nmodel.do()\n"
+            f"{sk.name}.feature().execute()")
+    rec = record("fillet", code, out=[var], refs=[l1, l2], recv=sk.name)
+    exec_records(st, [rec])
+    # our own coincident constraint on that corner went with it
+    corner = {f"{first}.{end1}", f"{second}.{end2}"}
+    for cid, k in list(sk.constraints.items()):
+        if k.type == "coincident" and set(k.refs) == corner:
+            sk.constraints.pop(cid)
+            st.ns.pop(k.var, None)
+    _register(st, sk, [(fid, var)], False)
+    return _reply(executor, sk, [rec], geos)
+
+
+def _sources(sk: Sketch, ids) -> tuple[list, list]:
+    if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
+        raise ValueError(f"of must be a list of entity ids, got {ids!r}")
+    srcs, refs = [], []
+    for i in ids:
+        ref = _resolve_ref(sk, i)
+        if ref.base is None or "." in ref.text or ref.kind == _POINT:
+            raise ValueError(f"{i!r}: copy curves (lines, arcs, circles, ...), not points")
+        srcs.append(ref.src)
+        refs.append(ref.var)
+    return srcs, refs
+
+
+@tool("sketch_copy", category="sketch",
+      description=(
+          "Make copies of curves of a sketch (`of`: entity ids); the new entities are "
+          "named <id>1, <id>2, ... `op`: \"mirror\" across the line `axis` (an entity id or "
+          "an axis of the plane); \"offset\" by `distance` (a parallel curve, the side "
+          "set by the sign); \"linear\" `count` copies in all every `vector` [dx, dy]; "
+          "\"circular\" `count` copies in all round `center` [x, y], evenly over the full "
+          "circle or every `angle` degrees. Copies stay tied to the originals."),
+      schema={"type": "object", "properties": {
+          "sketch": {"type": "string"},
+          "op": {"type": "string", "enum": ["mirror", "offset", "linear", "circular"]},
+          "of": {"type": "array", "items": {"type": "string"}},
+          "id": {"type": "string"}, "axis": {"type": "string"},
+          "distance": {"type": "number"}, "vector": _PT, "center": _PT,
+          "count": {"type": "integer"}, "angle": {"type": "number"}},
+          "required": ["sketch", "op", "of", "id"]})
+def tool_sketch_copy(executor, args: dict):
+    st = state(executor)
+    sk = sketch_of(executor, args.get("sketch"))
+    prefix = _new_prefix(sk, args.get("id"))
+    srcs, refs = _sources(sk, args.get("of"))
+    objs = f"[{', '.join(srcs)}]"
+    op = args.get("op")
+    ov = f"{sk.name}_{prefix}_op"
+    count = lambda: _copies(args.get("count"))
+    if op == "mirror":
+        axis = _resolve_ref(sk, args.get("axis"))
+        if axis.kind != _LINE:
+            raise ValueError(f"axis must be a line of the sketch, got {args.get('axis')!r}")
+        code, getter = f"{ov} = {sk.name}.addMirror({axis.src}, {objs})\nmodel.do()", "mirrored()"
+    elif op == "offset":
+        d = _num(args.get("distance"), "distance")
+        if d == 0:
+            raise ValueError("distance must not be 0")
+        code = f"{ov} = {sk.name}.addOffset({objs}, {abs(d)!r}, {d < 0})\nmodel.do()"
+        getter = "offset()"
+    elif op == "linear":
+        dx, dy = _xy(args.get("vector"), "vector")
+        if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+            raise ValueError("vector must not be [0, 0]")
+        n = count()
+        code = (f"{ov}_a = {sk.name}.addPoint(0.0, 0.0)\n{ov}_a.setAuxiliary(True)\n"
+                f"{ov}_b = {sk.name}.addPoint({dx!r}, {dy!r})\n{ov}_b.setAuxiliary(True)\n"
+                f"{ov} = {sk.name}.addTranslation({objs}, {ov}_a.coordinates(), "
+                f"{ov}_b.coordinates(), {n})\nmodel.do()")
+        getter = "translated()"
+    elif op == "circular":
+        cx, cy = _xy(args.get("center"), "center")
+        n = count()
+        if args.get("angle") is None:
+            angle, full = 360.0, True
+        else:
+            angle, full = _num(args["angle"], "angle"), False
+            if angle % 360 == 0 or abs(angle) * (n - 1) >= 360 - 1e-9:
+                raise ValueError("copies would overlap: keep angle x (count - 1) under 360, "
+                                 "or leave angle out to spread them round the full circle")
+        code = (f"{ov}_c = {sk.name}.addPoint({cx!r}, {cy!r})\n{ov}_c.setAuxiliary(True)\n"
+                f"{ov} = {sk.name}.addRotation({objs}, {ov}_c.coordinates(), {angle!r}, "
+                f"{n}, {full})\nmodel.do()")
+        getter = "rotated()"
+    else:
+        raise ValueError(f"op must be mirror, offset, linear or circular, got {op!r}")
+    before = snapshot(sk)
+    records, made = _made_by(st, sk, code, ov, getter, prefix, "add" + op.capitalize(), refs)
+    records[0]["args"] = [{"kind": "expr", "value": "", "refs": sorted(set(refs))}]
+    _register(st, sk, made, False)
+    return _reply(executor, sk, records, before, made=[i for i, _ in made])
+
+
+def _copies(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) \
+            or not math.isfinite(value) or value != int(value) or not 2 <= value <= 200:
+        raise ValueError(f"count must be a whole number from 2 to 200, got {value!r}")
+    return int(value)
