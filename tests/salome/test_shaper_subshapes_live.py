@@ -24,7 +24,7 @@ def _ok(client, name, **args):
 
 
 def _box(client):
-    return _ok(client, "make_box", dx=10, dy=20, dz=30)["name"]
+    return _ok(client, "make_box", dx=10, dy=20, dz=30, center=[5, 10, 15])["name"]
 
 
 def _ids(client, shape, sub_type, where="all"):
@@ -71,8 +71,8 @@ def test_thick_solid_open_at_the_top(agent_client):
 
 
 def test_partition_and_split(agent_client):
-    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10)["name"]
-    c = _ok(agent_client, "make_cylinder", radius=4, height=20)["name"]
+    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10, center=[5, 5, 5])["name"]
+    c = _ok(agent_client, "make_cylinder", radius=4, height=20, origin=[0, 0, 0])["name"]
     p = _ok(agent_client, "partition", shapes=[a, c])["name"]
     assert len(_ids(agent_client, p, "solid")) == 3
     b = _box(agent_client)
@@ -120,7 +120,7 @@ def test_sketch_on_a_tilted_construction_plane(agent_client):
     _ok(agent_client, "close_sketch", sketch=sk["sketch"])
     ext = _ok(agent_client, "extrude", base=sk["sketch"], size=4)["measure"]
     assert ext["volume"] == pytest.approx(math.pi * 4 * 4, rel=1e-6)
-    cyl = _ok(agent_client, "make_cylinder", radius=2, height=4)["name"]
+    cyl = _ok(agent_client, "make_cylinder", radius=2, height=4, origin=[0, 0, 0])["name"]
     side = _ids(agent_client, cyl, "face", {"by_size": "largest", "count": 1})[0]
     r = _call(agent_client, "create_sketch", plane={"face": side, "of": cyl})
     assert r["ok"] is False and ("flat" in r["error"])
@@ -141,7 +141,7 @@ def test_result_py_rebuilds_fillet_sketch_on_face_and_shell(agent_client, tmp_pa
         calls.append({"tool": name, "tool_args": args, "records": r["records"]})
         return r
 
-    b = call("make_box", dx=10, dy=20, dz=30)["name"]
+    b = call("make_box", dx=10, dy=20, dz=30, center=[5, 10, 15])["name"]
     edges = call("get_subshapes", shape=b, sub_type="edge",
                  where={"by_size": "longest", "count": 4})["subshapes"]
     f = call("fillet_edges", shape=b, radius=2, edges=[e["id"] for e in edges])["name"]
@@ -175,8 +175,8 @@ def test_result_py_rebuilds_fillet_sketch_on_face_and_shell(agent_client, tmp_pa
 
 
 def test_ids_of_coaxial_rims_are_stable_and_distinct(agent_client):
-    outer = _ok(agent_client, "make_cylinder", radius=10, height=5)["name"]
-    inner = _ok(agent_client, "make_cylinder", radius=5, height=5)["name"]
+    outer = _ok(agent_client, "make_cylinder", radius=10, height=5, origin=[0, 0, 0])["name"]
+    inner = _ok(agent_client, "make_cylinder", radius=5, height=5, origin=[0, 0, 0])["name"]
     tube = _ok(agent_client, "cut", objects=[outer], tools=[inner])["name"]
     first = _ok(agent_client, "get_subshapes", shape=tube, sub_type="edge")["subshapes"]
     again = _ok(agent_client, "get_subshapes", shape=tube, sub_type="edge")["subshapes"]
@@ -187,7 +187,7 @@ def test_ids_of_coaxial_rims_are_stable_and_distinct(agent_client):
 
 
 def test_a_face_shared_by_two_results_has_one_id(agent_client):
-    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10)["name"]
+    a = _ok(agent_client, "make_box", dx=10, dy=10, dz=10, center=[5, 5, 5])["name"]
     b = _ok(agent_client, "make_box_two_pnt", pnt1=[10, 0, 0], pnt2=[20, 10, 10])["name"]
     p = _ok(agent_client, "partition", shapes=[a, b])["name"]
     assert len(_ids(agent_client, p, "face")) == 11

@@ -5,7 +5,7 @@ from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT, plan
 
 def test_prompt_documents_the_optional_tools_hint():
     assert '"tools"' in PLANNER_SYSTEM_PROMPT
-    assert "geom tool names" in PLANNER_SYSTEM_PROMPT.lower()
+    assert "for a geom or shaper stage" in PLANNER_SYSTEM_PROMPT.lower()
 
 
 def test_prompt_caps_planner_reasoning_output():

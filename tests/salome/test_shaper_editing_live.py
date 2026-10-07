@@ -32,7 +32,7 @@ def test_one_sketch_is_edited_at_a_time(agent_client):
     assert r["ok"] is False and f"{sk} is still being edited" in r["error"]
     r = _call(agent_client, "extrude", base=sk, size=5)
     assert r["ok"] is False and "close_sketch" in r["error"]
-    r = _call(agent_client, "make_box", dx=1, dy=1, dz=1)
+    r = _call(agent_client, "make_box", dx=1, dy=1, dz=1, center=[0.5, 0.5, 0.5])
     assert r["ok"] is False and "close_sketch" in r["error"]
     _ok(agent_client, "sketch_status", sketch=sk)
     _ok(agent_client, "list_study_objects")
@@ -79,7 +79,7 @@ def test_an_edit_that_breaks_a_later_feature_keeps_the_sketch_edited(agent_clien
 def test_a_sketch_projects_only_what_was_built_before_it(agent_client):
     sk = _square(agent_client)
     _ok(agent_client, "close_sketch", sketch=sk)
-    box = _ok(agent_client, "make_box", dx=10, dy=20, dz=30)["name"]
+    box = _ok(agent_client, "make_box", dx=10, dy=20, dz=30, center=[5, 10, 15])["name"]
     edges = _ok(agent_client, "get_subshapes", shape=box, sub_type="edge")["subshapes"]
     across = [u["id"] for u in edges if u["size"] == pytest.approx(20)][0]
     r = _call(agent_client, "sketch_add", sketch=sk, entities=[
