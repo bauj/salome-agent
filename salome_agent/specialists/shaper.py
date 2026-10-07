@@ -5,9 +5,9 @@ from salome_agent.codegen import _reachable, roots_for
 from salome_agent.modules import ModuleSpec, Terminator, register
 from salome_agent.specialists.geom import FINISH_STAGE_DESCRIPTION, FINISH_STAGE_SCHEMA
 
-SHAPER_SYSTEM_PROMPT = """You build parametric geometry in SHAPER by calling
-tools. Lengths are millimetres, unconverted; angles are in
-degrees. Reference sketches and features by the name they were published under.
+SHAPER_SYSTEM_PROMPT = """You build geometry in SHAPER by calling tools.
+Lengths are millimetres, unconverted; angles are in degrees. Reference
+sketches and features by the name they were published under.
 
 A sketch is entities (lines, circles, arcs, points), optionally tied together
 by constraints that the solver keeps. Build it in chunks: create_sketch, then
@@ -48,10 +48,11 @@ computed by hand:
 - piece by piece: each piece its own face or solid, then fuse, cut and common
   combine them. Every reply carries the result's area, volume and face count.
 
-Solids come from sketches or faces: extrude, extrude_cut (a pocket in a solid),
-extrude_fuse (a boss on a solid), revolve; or from primitives (box, cylinder,
-sphere, cone, torus). Every feature reply carries its measure (volume, area,
-face count, valid).
+A solid comes from a primitive -- make_box, make_cylinder, make_sphere,
+make_cone, make_torus, one call each -- or from a sketch or face: extrude,
+extrude_cut (a pocket in a solid), extrude_fuse (a boss on a solid), revolve.
+Pick whichever builds the shape in the fewest calls.
+Every feature reply carries its measure (volume, area, face count, valid).
 {verify}
 When done, call finish_stage(result_names) with the published names that
 matter (sketches, faces or solids). It is refused while a sketch it uses has
@@ -146,9 +147,10 @@ PLANNER_TOOL_LINES = {
     "common": "keep only where faces or solids overlap",
     "measure": "area, volume, face count, validity of shaper objects",
 }
-CORE_TOOLS = frozenset(PLANNER_TOOL_LINES)
+CORE_TOOLS = frozenset(PLANNER_TOOL_LINES) | {"make_box", "make_cylinder",
+                                              "set_color", "translate"}
 PLANNER_TOOL_LINES.update({
-    "make_box": "box with a corner at the origin, from dx, dy, dz",
+    "make_box": "box from dx, dy, dz, centred at a point",
     "make_box_two_pnt": "box between two opposite corners",
     "make_cylinder": "cylinder from radius and height, placed at an origin along an axis",
     "make_sphere": "sphere from radius and centre",

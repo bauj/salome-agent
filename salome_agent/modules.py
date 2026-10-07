@@ -41,6 +41,8 @@ class ModuleSpec:
     # Everything below is a lever that goes INERT when left empty — that is
     # how smesh runs the geom loop without being changed by it.
     core_tools: frozenset = frozenset()
+    # (triggers, group) pairs: offering any trigger tool offers the whole group.
+    tool_groups: tuple = ()
     # Order-preserving: this list is serialized verbatim into the load_tools
     # tool schema's enum, which is prompt surface — a frozenset would silently
     # alphabetize it.

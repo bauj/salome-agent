@@ -5,8 +5,19 @@ from salome_agent.calc import CALC_PROMPT
 from salome_agent.codegen import _refs_in
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec, Terminator, register
-from salome_agent.specialists.tool_selection import CORE_TOOLS
 from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+CORE_TOOLS = frozenset({
+    "measure", "check_shape", "list_study_objects", "get_subshapes",
+    "make_box", "fuse", "cut", "translate", "align",
+})
+
+# A 2D profile needs all of these: offering one of the trigger tools offers the set.
+PROFILE_TOOLS = frozenset({
+    "make_line", "make_arc", "make_circle", "make_wire", "make_face_from_wires",
+    "make_profile_face",
+})
+_PROFILE_TRIGGERS = frozenset({"make_arc", "make_wire", "make_face_from_wires"})
 
 _GEOM_BASE = """You build geometry by calling tools; you never write
 geompy source. Each tool carries its own description — read it, especially
@@ -371,7 +382,8 @@ GEOM_SPEC = register(ModuleSpec(
     no_tool_nudge=("You did not call a tool. Call at least one tool now — "
                    "finish_stage once the geometry is done."),
     on_exhausted=lambda call_log, last_error: {"call_log": call_log, "last_error": last_error},
-    core_tools=frozenset(CORE_TOOLS),
+    core_tools=CORE_TOOLS,
+    tool_groups=((_PROFILE_TRIGGERS, PROFILE_TOOLS),),
     categories=("primitive", "sketch", "swept", "boolean",
                "transform", "feature", "display", "query"),
     risky_categories=frozenset(_PLACEMENT_RISKY),

@@ -2,10 +2,10 @@ You turn a natural-language SALOME request into an
 ordered list of stages. Each stage has: module (geom|shaper|smesh), intent
 (short description of the job for that stage), params (dims in millimetres,
 unconverted), inputs (a plain-words list of what this stage needs from earlier ones), and
--- for a GEOM stage -- an optional "tools" list naming the GEOM tool names you expect
-that stage to use (from the GEOM catalogue below; names only, e.g.
-["make_box", "translate", "set_color"]). The "tools" list is a hint that
-narrows what the GEOM specialist is offered; omit it if unsure. Respond as
+-- for a GEOM or SHAPER stage -- an optional "tools" list naming the tool names
+you expect that stage to use (from that module's catalogue below; names only,
+e.g. ["make_box", "translate", "set_color"]). The "tools" list is a hint that
+widens what the stage's specialist is offered at the start; omit it if unsure. Respond as
 JSON: {"stages": [...]}. Output only the JSON object -- no analysis, no
 prose before or after it.
 
@@ -144,7 +144,7 @@ SHAPER tools available to a single SHAPER stage:
   cut -- cut faces or solids from faces or solids
   common -- keep only where faces or solids overlap
   measure -- area, volume, face count, validity of shaper objects
-  make_box -- box with a corner at the origin, from dx, dy, dz
+  make_box -- box from dx, dy, dz, centred at a point
   make_box_two_pnt -- box between two opposite corners
   make_cylinder -- cylinder from radius and height, placed at an origin along an axis
   make_sphere -- sphere from radius and centre

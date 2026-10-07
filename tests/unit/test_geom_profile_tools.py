@@ -237,11 +237,14 @@ class TestMakeFaceFromWires:
 
 
 def test_profile_tools_come_together():
+    from salome_agent.specialists.geom import CORE_TOOLS
+    from salome_agent.modules import spec_for
+    groups = spec_for("geom").tool_groups
     from salome_agent.specialists.tool_selection import initial_offered, resolve_load
 
     every = set(geom_tools.TOOLS)
     profile = {"make_line", "make_arc", "make_circle", "make_wire", "make_face_from_wires"}
-    assert profile <= initial_offered({"tools": ["make_arc"]}, every)
+    assert profile <= initial_offered({"tools": ["make_arc"]}, every, CORE_TOOLS, groups)
     defs = {t["name"]: t for t in geom_tools.list_tools()}
-    assert profile <= resolve_load(["make_face_from_wires"], [], defs)
-    assert "make_arc" not in initial_offered({"tools": ["make_line"]}, every)
+    assert profile <= resolve_load(["make_face_from_wires"], [], defs, groups)
+    assert "make_arc" not in initial_offered({"tools": ["make_line"]}, every, CORE_TOOLS, groups)

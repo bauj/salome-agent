@@ -1,5 +1,6 @@
+from salome_agent.specialists.geom import CORE_TOOLS
 from salome_agent.specialists.tool_selection import (
-    CORE_TOOLS, hint_tool_names, initial_offered, resolve_load, suggest_tool_names,
+    hint_tool_names, initial_offered, resolve_load, suggest_tool_names,
 )
 
 ALL = {"make_box", "make_cylinder", "translate", "set_color", "fuse", "cut",
@@ -27,13 +28,13 @@ def test_hint_tool_names_ignores_malformed_entries_and_missing_keys():
 
 
 def test_initial_offered_is_core_union_valid_hints():
-    got = initial_offered({"tools": ["make_cylinder", "not_a_tool"]}, ALL)
+    got = initial_offered({"tools": ["make_cylinder", "not_a_tool"]}, ALL, CORE_TOOLS)
     assert got == set(CORE_TOOLS) | {"make_cylinder"}
     assert "not_a_tool" not in got
 
 
 def test_initial_offered_with_no_hint_is_exactly_core():
-    assert initial_offered({}, ALL) == set(CORE_TOOLS)
+    assert initial_offered({}, ALL, CORE_TOOLS) == set(CORE_TOOLS)
 
 
 def test_resolve_load_expands_names_categories_and_both():

@@ -1974,7 +1974,7 @@ class TestAlignTool:
         assert geom_tools.TOOL_DESCRIPTIONS["align"]
 
     def test_in_core_tools(self):
-        from salome_agent.specialists.tool_selection import CORE_TOOLS
+        from salome_agent.specialists.geom import CORE_TOOLS
         assert "align" in CORE_TOOLS
 
 

@@ -22,7 +22,7 @@ def _ok(client, name, **args):
 
 
 def _box(client, dx=10, dy=10, dz=10):
-    return _ok(client, "make_box", dx=dx, dy=dy, dz=dz)["name"]
+    return _ok(client, "make_box", dx=dx, dy=dy, dz=dz, center=[dx / 2, dy / 2, dz / 2])["name"]
 
 
 def test_translate_moves_the_shape_and_uses_it_up(agent_client):
@@ -122,7 +122,7 @@ def test_result_py_rebuilds_positioned_mirrored_and_patterned_parts(agent_client
         calls.append({"tool": name, "tool_args": args, "records": r["records"]})
         return r
 
-    b = call("make_box", dx=10, dy=20, dz=30)["name"]
+    b = call("make_box", dx=10, dy=20, dz=30, center=[5, 10, 15])["name"]
     p = call("position", shape=b, origin=[100, 0, 0], x_dir=[0, 1, 0], y_dir=[-1, 0, 0])["name"]
     m = call("mirror", shape=p, entity="YOZ", keep_original=True)["name"]
     peg = call("make_cylinder", radius=2, height=5, origin=[20, 0, 0])["name"]
