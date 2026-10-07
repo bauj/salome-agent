@@ -1,10 +1,23 @@
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
-    PUBLISH_LINE, measure, new_name, publish_study, record, sketch_of, state,
-    tool, transaction,
+    CONSTRUCTION, PUBLISH_LINE, construction_info, measure, new_name, publish_study,
+    record, sketch_of, state, tool, transaction,
 )
 
 _AXES = ("OX", "OY", "OZ")
+
+
+def _nested_regions(sk) -> bool:
+    """A region with a hole in it: the hole is a region of its own, so taking
+    every region fills the hole (task 314)."""
+    import GeomAPI
+    import ModelAPI
+    res = sk.api.feature().firstResult()
+    if res is None:
+        return False
+    rc = ModelAPI.modelAPI_ResultConstruction(res)
+    return any(len(rc.face(i).subShapes(GeomAPI.GeomAPI_Shape.WIRE)) > 1
+               for i in range(rc.facesNum()))
 
 
 def _base_selections(executor, base) -> tuple[list, list]:
@@ -14,9 +27,17 @@ def _base_selections(executor, base) -> tuple[list, list]:
     names = base if isinstance(base, list) else [base]
     sels, refs = [], []
     for name in names:
+        if not isinstance(name, str):
+            raise ValueError(f"base must be a published name, got {name!r}")
         if name in st.sketches:
+            if _nested_regions(st.sketches[name]):
+                raise ValueError(
+                    f"{name} has a closed region inside another: taking the whole sketch "
+                    "would fill the hole too. make_face on the material regions (the "
+                    "sketch reply lists them), then use that face")
             sels.append(f'model.selection("COMPOUND", "all-in-{name}")')
         elif name in st.objects:
+            _not_construction(st, name)
             sels += _result_selections(st, name)
         else:
             raise ValueError(_unknown(st, name))
@@ -61,15 +82,22 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
             err = "the operation produced nothing"
     except Exception as e:  # noqa: BLE001
         err = str(e) or type(e).__name__
+    info = None
+    if not err:
+        st.objects[name] = kind
+        try:
+            publish_study(executor)
+            info = (construction_info(executor, name) if kind in CONSTRUCTION
+                    else measure(executor, name))
+        except Exception as e:  # noqa: BLE001
+            st.objects.pop(name)
+            err = str(e) or type(e).__name__
     if err:
         with transaction():
             for var in (name, *reversed(helpers)):
                 if var in st.ns:
                     st.ns["shaper_doc"].removeFeature(st.ns.pop(var).feature())
         return {"ok": False, "error": f"{fn}: {err}"}
-    st.objects[name] = kind
-    publish_study(executor)
-    info = measure(executor, name)
     return {"ok": True, "records": [rec], "name": name, "measure": info,
             "result_shape": name, "shape_info": info}
 
@@ -104,6 +132,10 @@ def tool_make_face(executor, args: dict):
     res = sk.api.feature().firstResult()
     n = ModelAPI.modelAPI_ResultConstruction(res).facesNum() if res is not None else 0
     if regions == "all":
+        if _nested_regions(sk):
+            raise ValueError(f"{sk.name} has a closed region inside another: \"all\" would "
+                             "fill the hole. List the material regions' indices instead "
+                             "(the sketch reply lists them)")
         sels = [f'model.selection("COMPOUND", "all-in-{sk.name}")']
         count = n
     else:
@@ -171,6 +203,7 @@ def _boolean_extrusion(executor, args: dict, op: str) -> dict:
     target = args.get("target")
     if target not in st.objects:
         raise ValueError(_unknown(st, target))
+    _not_construction(st, target)
     targets = _result_selections(st, target)
     before = measure(executor, target)["volume"]
     direction = _direction(args.get("direction"))
@@ -231,8 +264,16 @@ def _operands(executor, names, field: str) -> tuple[list, list]:
                              "(make_face) or a solid (extrude)")
         if name not in st.objects:
             raise ValueError(_unknown(st, name))
+        _not_construction(st, name)
         sels += _result_selections(st, name)
     return sels, list(names)
+
+
+def _not_construction(st, name: str) -> None:
+    kind = st.objects.get(name)
+    if kind in CONSTRUCTION:
+        raise ValueError(f"{name!r} is a construction {kind}, not a shape — use it as the origin, "
+                         "corner or axis of a primitive, or a plane to sketch on")
 
 
 def _boolean(executor, args: dict, op: str) -> dict:
@@ -337,6 +378,8 @@ def tool_measure(executor, args: dict):
     for name in args.get("names") or []:
         if name in st.sketches:
             out[name] = status(executor, st.sketches[name])
+        elif st.objects.get(name) in CONSTRUCTION:
+            out[name] = construction_info(executor, name)
         elif name in st.objects:
             out[name] = measure(executor, name)
             results = st.ns[name].feature().results()
