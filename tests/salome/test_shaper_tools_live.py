@@ -157,7 +157,7 @@ def test_measure_gives_the_exact_box_of_a_curved_solid(agent_client):
     assert (torus["measure"]["faces"], torus["measure"]["edges"]) == (1, 2)
 
 
-def test_cut_that_misses_carries_a_delta_note(agent_client):
+def test_cut_that_misses_is_refused_and_undone(agent_client):
     name, r = _plate(agent_client)
     _call(agent_client, "close_sketch", sketch=name)
     outer = next(g["index"] for g in r["regions"] if round(g["area"], 2) == 721.46)
@@ -169,8 +169,36 @@ def test_cut_that_misses_carries_a_delta_note(agent_client):
     _call(agent_client, "close_sketch", sketch=far["sketch"])
     cut = _call(agent_client, "extrude_cut", base=far["sketch"], target=ext["name"],
                 through_all=True)
+    assert cut["ok"] is False
+    assert "nothing was removed" in cut["error"] and "[0.0, 0.0, 1.0]" in cut["error"]
+    # the target is not concealed by the undone cut
+    hole = _call(agent_client, "create_sketch", plane="XOY")
+    _call(agent_client, "sketch_add", sketch=hole["sketch"], entities=[
+        {"id": "C", "type": "circle", "center": [5, 5], "radius": 2}])
+    _call(agent_client, "close_sketch", sketch=hole["sketch"])
+    cut = _call(agent_client, "extrude_cut", base=hole["sketch"], target=ext["name"],
+                through_all=True)
     assert cut["ok"] is True, cut.get("error")
-    assert "delta" in cut
+
+
+def test_xoz_sketch_normal_is_minus_y_and_a_cut_along_it_misses(agent_client):
+    sk = _call(agent_client, "create_sketch", plane="XOY")
+    assert sk["normal"] == [0.0, 0.0, 1.0]
+    _call(agent_client, "sketch_add", sketch=sk["sketch"], entities=[
+        {"id": "R", "type": "rectangle", "corner1": [0, 0], "corner2": [40, 20]}])
+    _call(agent_client, "close_sketch", sketch=sk["sketch"])
+    box = _call(agent_client, "extrude", base=sk["sketch"], size=10)
+    vent = _call(agent_client, "create_sketch", plane="XOZ")
+    assert vent["normal"] == [0.0, -1.0, 0.0]
+    _call(agent_client, "sketch_add", sketch=vent["sketch"], entities=[
+        {"id": "C", "type": "circle", "center": [20, 5], "radius": 2}])
+    _call(agent_client, "close_sketch", sketch=vent["sketch"])
+    miss = _call(agent_client, "extrude_cut", base=vent["sketch"], target=box["name"], size=5)
+    assert miss["ok"] is False and "[0.0, -1.0, 0.0]" in miss["error"]
+    hit = _call(agent_client, "extrude_cut", base=vent["sketch"], target=box["name"],
+                size=5, direction="OY")
+    assert hit["ok"] is True, hit.get("error")
+    assert hit["measure"]["volume"] == pytest.approx(8000 - 3.14159265 * 4 * 5, abs=0.01)
 
 
 def test_revolve_about_an_axis(agent_client):
