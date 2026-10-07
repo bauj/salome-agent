@@ -4,7 +4,8 @@ from salome_agent.calc import CALC_DEF, run_calc
 from salome_agent.codegen import _reachable, _refs_in
 from salome_agent.executor_client import SessionDied, SessionPoisoned
 from salome_agent.llm import (LLMCancelled, ReasoningBudgetExceeded, RepetitionLoopDetected,
-                              assistant_tool_turn, continuity_fields, reasoning_field)
+                              assistant_tool_turn, continuity_fields, reasoning_field,
+                              text_tool_calls)
 from salome_agent.logs import log
 from salome_agent.modules import ModuleSpec
 from salome_agent.repetition import loop_at_end, loop_nudge
@@ -20,6 +21,10 @@ _LOAD_TOOLS_DESCRIPTION = (
     "tool `names`, a list of `categories`, or both. Use it whenever the tool "
     "you need is not in your current list."
 )
+
+
+_TEXT_CALL_NUDGE = ("You wrote a tool call as text in your reply; tools only run when "
+                    "you make them as tool calls. Make the call now as a tool call.")
 
 
 _DISCARD_DESCRIPTION = (
@@ -299,6 +304,11 @@ class ToolSpecialist:
             if response.get("content"):
                 log.debug("    LLM reasoning: %s", response["content"])
             tool_calls = response["tool_calls"]
+            names = {d["name"] for d in tools} | set(all_defs)
+            if not tool_calls:
+                tool_calls = text_tool_calls(response["content"], names)
+                if tool_calls:
+                    log.info("  %s stage: tool calls read from the reply text", spec.name)
             log.debug("    LLM -> %s", [(c["name"], c["args"]) for c in tool_calls])
             if not tool_calls:
                 # tool_choice="auto" — the model replied with prose and no call.
@@ -307,7 +317,10 @@ class ToolSpecialist:
                                  **continuity_fields(response.get("raw_message")),
                                  **reasoning_field(response.get("reasoning"),
                                                    response.get("raw_message"))})
-                messages.append({"role": "user", "content": spec.no_tool_nudge})
+                content = response["content"] or ""
+                as_text = "```" in content or any(f'"{n}"' in content for n in names)
+                messages.append({"role": "user",
+                                 "content": _TEXT_CALL_NUDGE if as_text else spec.no_tool_nudge})
                 continue
             # The assistant's own tool-call turn must be echoed back before any
             # tool result — without it the model has no memory of what it just

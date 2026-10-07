@@ -283,6 +283,42 @@ def _parse_json_content(content: str):
         f"LLM did not return parseable JSON ({first_err}). Raw content:\n{content}")
 
 
+def text_tool_calls(content: str | None, names) -> list[dict]:
+    """Tool calls a model wrote as JSON in its reply text instead of making them
+    (seen with gemma4 on Ollama): [{"tool": {args}}], {"name": ..., "arguments":
+    ...}, or a list of these. Only names in `names` count; [] when nothing parses."""
+    if not content:
+        return []
+    for text in [m.group(1) for m in _FENCE_RE.finditer(content)] or [content]:
+        try:
+            calls = _as_calls(_parse_json_content(text), names)
+        except ValueError:
+            continue
+        if calls:
+            return calls
+    return []
+
+
+def _as_calls(obj, names) -> list[dict]:
+    out = []
+    for item in obj if isinstance(obj, list) else [obj]:
+        if not isinstance(item, dict):
+            return []
+        name = item.get("name") or item.get("tool")
+        args = item.get("arguments", item.get("args", item.get("parameters")))
+        if name is None and len(item) == 1:
+            name, args = next(iter(item.items()))
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                return []
+        if name not in names or not isinstance(args, dict):
+            return []
+        out.append({"name": name, "args": args, "id": None})
+    return out
+
+
 def _cert_verify(ssl_cert_file: str):
     """requests `verify`: a CA-bundle path, else True (default: verify against
     the system trust store — never "" / False, which disables TLS checks).
