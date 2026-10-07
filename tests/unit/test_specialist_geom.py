@@ -679,6 +679,49 @@ def test_a_different_call_after_a_failure_still_runs():
     assert result["result_names"] == ["box_1"]
 
 
+def test_a_failed_call_runs_again_after_a_call_that_changes_the_study():
+    llm = MagicMock()
+    bad = ("make_box", {"dx": 1, "dy": 1, "dz": 1})
+    llm.chat.side_effect = [
+        _resp(bad),
+        _resp(("translate", {"shape": "box_0", "dx": 1, "dy": 0, "dz": 0})),
+        _resp(bad),
+        _resp(("finish_stage", {"result_names": ["box_1"]})),
+        _resp(("finish_stage", {"result_names": ["box_1"]})),
+    ]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box", "category": "primitive"},
+        {"name": "translate", "category": "transform"}]}
+    client.call_tool.side_effect = [
+        {"ok": False, "error": "still being edited"},
+        {"ok": True, "records": [{"fn": "MakeTranslation", "args": [],
+                                  "out_vars": ["translation_1"], "publish": ["translation_1"]}]},
+        {"ok": True, "records": [{"fn": "MakeBoxDXDYDZ", "args": [],
+                                  "out_vars": ["box_1"], "publish": ["box_1"]}]},
+    ]
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": []},
+                                 llm, client, iteration_cap=12, verify_cadence="none")
+    assert client.call_tool.call_count == 3
+    assert result["result_names"] == ["box_1"]
+
+
+def test_a_failed_call_is_still_refused_after_a_call_that_only_reads():
+    llm = MagicMock()
+    bad = ("make_box", {"dx": 1, "dy": 1, "dz": 1})
+    llm.chat.side_effect = [_resp(bad), _resp(("measure", {"names": ["x"]})), _resp(bad),
+                            _resp(("finish_stage", {"result_names": []}))]
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box", "category": "primitive"},
+        {"name": "measure", "category": "query"}]}
+    client.call_tool.side_effect = [{"ok": False, "error": "bad"},
+                                    {"ok": True, "measurements": {}}]
+    run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": []},
+                        llm, client, iteration_cap=12, verify_cadence="none")
+    assert client.call_tool.call_count == 2
+
+
 def test_a_call_to_a_tool_not_loaded_loads_it_and_is_not_run():
     llm = MagicMock()
     call = ("make_box_two_pnt", {"pnt1": [0, 0, 0], "pnt2": [1, 1, 1]})

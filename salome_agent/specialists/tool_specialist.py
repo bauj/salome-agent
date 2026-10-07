@@ -199,7 +199,8 @@ class ToolSpecialist:
         # error. A byte-identical repeat is answered here without a round-trip to
         # the server, and the model is told it is repeating itself (seen live:
         # weak models loop 4x on the same failing call, inventing a new wrong
-        # diagnosis each time — task 215). Reset per stage.
+        # diagnosis each time — task 215). Reset per stage and after any call that
+        # changes the study (task 350).
         failed_calls: dict[tuple, str] = {}
         # policy.verify_cadence bookkeeping: count placement-risky ops (boolean /
         # transform) since the last measure/check_shape. "final" nudges once at
@@ -362,6 +363,7 @@ class ToolSpecialist:
                     if obs is None:
                         r = client.forget(names)
                         if r.get("ok"):
+                            failed_calls.clear()
                             call_log, calls, gone = prune_records(call_log, calls, set(names))
                             n_seed_calls -= sum(1 for g in gone if g < n_seed_calls)
                             for n in names:
@@ -402,6 +404,9 @@ class ToolSpecialist:
                     if result.get("records"):
                         calls.append({"tool": name, "tool_args": args,
                                       "records": list(result["records"])})
+                        # The study changed, so a call that failed before may work now
+                        # (make_face after close_sketch, task 350).
+                        failed_calls.clear()
                     log.debug("    tool %s ok", name)
                     if result.get("result_shape") and result.get("shape_info"):
                         shape_infos[result["result_shape"]] = result["shape_info"]
