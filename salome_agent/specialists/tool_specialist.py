@@ -16,7 +16,7 @@ from salome_agent.specialists.tool_selection import (
 _STRICT_NUDGE_EVERY = 3
 
 _LOAD_TOOLS_DESCRIPTION = (
-    "Add geom tools to your available set for the rest of this stage. Pass "
+    "Add tools to your available set for the rest of this stage. Pass "
     "tool `names`, a list of `categories`, or both. Use it whenever the tool "
     "you need is not in your current list."
 )
@@ -151,7 +151,7 @@ class ToolSpecialist:
                     "type": "object",
                     "properties": {
                         "names": {"type": "array", "items": {"type": "string"},
-                                  "description": "specific geom tool names to add"},
+                                  "description": "specific tool names to add"},
                         "categories": {"type": "array", "items": {
                             "type": "string",
                             "enum": list(self.spec.categories)},
@@ -370,6 +370,17 @@ class ToolSpecialist:
                         else:
                             obs = f"discard failed: {r.get('error') or 'forget failed'}"
                     log.info("  discard(%s) -> %s", names, obs)
+                    messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
+                    continue
+                # A known tool the model never saw the definition of: it guesses the
+                # parameters from the catalogue one-liner, so load it and ask again.
+                if load_def is not None and name in all_defs and name not in offered:
+                    added = resolve_load([name], None, all_defs, spec.tool_groups)
+                    offered |= added
+                    obs = (f"{name} was not loaded, so this call was not run. It is "
+                           f"loaded now ({', '.join(sorted(added))}): read its parameters "
+                           "in your tool list and call it again.")
+                    log.info("  %s called before loading -> loaded, not run", name)
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
                     continue
                 key = _call_key(name, args)

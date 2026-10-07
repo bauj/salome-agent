@@ -147,6 +147,14 @@ def test_initial_offer_uses_the_modules_core_set():
     assert got == {"sketch_add", "revolve"}
 
 
+def test_prompt_lists_every_shaper_tool_to_load():
+    from salome_agent.specialists.shaper import PLANNER_TOOL_LINES
+    prompt = spec_for("shaper").prompt("final")
+    assert "call\nload_tools with the names" in prompt
+    for name, line in PLANNER_TOOL_LINES.items():
+        assert f"  {name} -- {line}" in prompt
+
+
 def test_shaper_core_set_offers_primitives_and_colour():
     core = spec_for("shaper").core_tools
     assert {"make_box", "make_cylinder", "set_color", "create_sketch", "extrude"} <= core
