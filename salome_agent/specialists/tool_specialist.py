@@ -495,6 +495,7 @@ _CHECK_LINES = {
               "changed after it was made",
     "invalid": "{name} is not a valid shape: {detail}",
     "empty": "{name} is empty: {detail}",
+    "editing": "{name} is still being edited: call close_sketch on it",
 }
 
 

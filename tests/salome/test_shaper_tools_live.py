@@ -118,6 +118,7 @@ def test_construction_lines_form_no_region_and_no_loose_end(agent_client):
 
 def test_face_extrude_and_cut(agent_client):
     name, r = _plate(agent_client)
+    _call(agent_client, "close_sketch", sketch=name)
     outer = next(g["index"] for g in r["regions"] if round(g["area"], 2) == 721.46)
     face = _call(agent_client, "make_face", sketch=name, regions=[outer])
     assert face["ok"] is True, face.get("error")
@@ -130,6 +131,7 @@ def test_face_extrude_and_cut(agent_client):
     hole = _call(agent_client, "create_sketch", plane="XOY")
     _call(agent_client, "sketch_add", sketch=hole["sketch"], entities=[
         {"id": "C", "type": "circle", "center": [5, 5], "radius": 2}])
+    _call(agent_client, "close_sketch", sketch=hole["sketch"])
     cut = _call(agent_client, "extrude_cut", base=hole["sketch"], target=ext["name"],
                 through_all=True)
     assert cut["ok"] is True, cut.get("error")
@@ -145,6 +147,7 @@ def test_measure_gives_the_exact_box_of_a_curved_solid(agent_client):
     sk = _call(agent_client, "create_sketch", plane="XOY")
     _call(agent_client, "sketch_add", sketch=sk["sketch"], entities=[
         {"id": "C", "type": "circle", "center": [50, 0], "radius": 10}])
+    _call(agent_client, "close_sketch", sketch=sk["sketch"])
     face = _call(agent_client, "make_face", sketch=sk["sketch"], regions=[0])
     torus = _call(agent_client, "revolve", base=face["name"], axis="OY", angle=360)
     assert torus["ok"] is True, torus.get("error")
@@ -156,12 +159,14 @@ def test_measure_gives_the_exact_box_of_a_curved_solid(agent_client):
 
 def test_cut_that_misses_carries_a_delta_note(agent_client):
     name, r = _plate(agent_client)
+    _call(agent_client, "close_sketch", sketch=name)
     outer = next(g["index"] for g in r["regions"] if round(g["area"], 2) == 721.46)
     face = _call(agent_client, "make_face", sketch=name, regions=[outer])
     ext = _call(agent_client, "extrude", base=face["name"], size=10)
     far = _call(agent_client, "create_sketch", plane="XOY")
     _call(agent_client, "sketch_add", sketch=far["sketch"], entities=[
         {"id": "C", "type": "circle", "center": [100, 100], "radius": 2}])
+    _call(agent_client, "close_sketch", sketch=far["sketch"])
     cut = _call(agent_client, "extrude_cut", base=far["sketch"], target=ext["name"],
                 through_all=True)
     assert cut["ok"] is True, cut.get("error")
@@ -175,6 +180,7 @@ def test_revolve_about_an_axis(agent_client):
         {"id": "B", "type": "line", "start": [20, 0], "end": [20, 5]},
         {"id": "C", "type": "line", "start": [20, 5], "end": [10, 5]},
         {"id": "D", "type": "line", "start": [10, 5], "end": [10, 0]}])
+    _call(agent_client, "close_sketch", sketch=sk["sketch"])
     rev = _call(agent_client, "revolve", base=sk["sketch"], axis="OZ", angle=360)
     assert rev["ok"] is True, rev.get("error")
     assert rev["measure"]["volume"] == pytest.approx(3.14159265 * (400 - 100) * 5, rel=1e-3)
@@ -211,6 +217,7 @@ def test_result_py_rebuilds_the_same_solid(agent_client, tmp_path):
         {"type": "radius", "refs": ["C1"], "value": 6}])
     assert r["dof"] == 0 and r["rejected"] == []
     outer = max(r["regions"], key=lambda g: g["area"])["index"]
+    call("close_sketch", sketch=sk)
     face = call("make_face", sketch=sk, regions=[outer])["name"]
     ext = call("extrude", base=face, size=10)
     live = ext["measure"]["volume"]
@@ -277,6 +284,7 @@ def test_make_face_merges_touching_regions_and_result_py_rebuilds_it(agent_clien
     r = call("sketch_add", sketch=sk,
              entities=_rect("H", -20, -5, 20, 5) + _rect("V", -5, -20, 5, 20))
     assert len(r["regions"]) == 5
+    call("close_sketch", sketch=sk)
     face = call("make_face", sketch=sk, regions=[g["index"] for g in r["regions"]])
     assert face["measure"]["faces"] == 1
     assert face["measure"]["area"] == pytest.approx(700, abs=1e-6)
@@ -304,6 +312,7 @@ def test_a_merged_face_can_be_discarded(agent_client):
     sk = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
     r = _call(agent_client, "sketch_add", sketch=sk,
               entities=_rect("H", -20, -5, 20, 5) + _rect("V", -5, -20, 5, 20))
+    _call(agent_client, "close_sketch", sketch=sk)
     face = _call(agent_client, "make_face", sketch=sk,
                  regions=[g["index"] for g in r["regions"]])["name"]
     assert agent_client.forget([face])["removed"] == [face]
@@ -315,6 +324,7 @@ def test_a_merged_face_can_be_discarded(agent_client):
 def _rect_face(client, x0, y0, x1, y1):
     sk = _call(client, "create_sketch", plane="XOY")["sketch"]
     _call(client, "sketch_add", sketch=sk, entities=_rect("R", x0, y0, x1, y1))
+    _call(client, "close_sketch", sketch=sk)
     face = _call(client, "make_face", sketch=sk, regions="all")
     assert face["ok"] is True, face.get("error")
     return face["name"]
@@ -379,6 +389,7 @@ def test_a_boolean_refuses_a_sketch(agent_client):
     a = _rect_face(agent_client, 0, 0, 10, 10)
     sk = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
     _call(agent_client, "sketch_add", sketch=sk, entities=_rect("R", 5, 5, 15, 15))
+    _call(agent_client, "close_sketch", sketch=sk)
     r = _call(agent_client, "fuse", objects=[a, sk])
     assert r["ok"] is False
     assert "make_face" in r["error"]
@@ -404,6 +415,7 @@ def test_result_py_rebuilds_a_boolean(agent_client, tmp_path):
     for x0, y0, x1, y1 in ((-20, -5, 20, 5), (-5, -20, 5, 20), (-2, -2, 2, 2)):
         sk = call("create_sketch", plane="XOY")["sketch"]
         call("sketch_add", sketch=sk, entities=_rect("R", x0, y0, x1, y1))
+        call("close_sketch", sketch=sk)
         faces.append(call("make_face", sketch=sk, regions="all")["name"])
     plus = call("fuse", objects=faces[:2])["name"]
     holed = call("cut", objects=[plus], tools=[faces[2]])
@@ -433,6 +445,7 @@ def test_region_names_use_only_published_entity_names(agent_client):
     # built live was discarded, so a face selected by them is lost on replay
     name = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
     r = _call(agent_client, "sketch_add", sketch=name, entities=_rect("R", 0, 0, 10, 5))
+    _call(agent_client, "close_sketch", sketch=name)
     face = _call(agent_client, "make_face", sketch=name, regions=[0])
     assert face["ok"] is True, face.get("error")
     code = "\n".join(rec["code"] for rec in face["records"])
@@ -461,9 +474,11 @@ def test_result_py_selects_a_merged_face_by_its_name(agent_client, tmp_path):
     sk = call("create_sketch", plane="XOY")["sketch"]
     r = call("sketch_add", sketch=sk,
              entities=_rect("H", -20, -5, 20, 5) + _rect("V", -5, -20, 5, 20))
+    call("close_sketch", sketch=sk)
     plus = call("make_face", sketch=sk, regions=[g["index"] for g in r["regions"]])["name"]
     sk2 = call("create_sketch", plane="XOY")["sketch"]
     call("sketch_add", sketch=sk2, entities=_rect("R", 15, -2, 30, 2))
+    call("close_sketch", sketch=sk2)
     bar = call("make_face", sketch=sk2, regions="all")["name"]
     both = call("fuse", objects=[plus, bar])
     assert both["measure"]["area"] == pytest.approx(700 + 40, abs=1e-6)
@@ -490,6 +505,7 @@ def test_check_results_sees_a_face_whose_sketch_was_edited(agent_client):
     # session 77: make_face, then sketch_remove of the lines it was built from
     sk = _call(agent_client, "create_sketch", plane="XOY")["sketch"]
     _call(agent_client, "sketch_add", sketch=sk, entities=_rect("R", 0, 0, 10, 5))
+    _call(agent_client, "close_sketch", sketch=sk)
     face = _call(agent_client, "make_face", sketch=sk, regions="all")["name"]
     good = _rect_face(agent_client, 20, 0, 30, 5)
     r = agent_client.check_results([face, good, sk, "nope"], module="shaper")

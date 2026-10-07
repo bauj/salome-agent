@@ -106,6 +106,7 @@ def test_sketch_on_a_face_of_a_solid_and_pocket(agent_client):
     r = _ok(agent_client, "sketch_add", sketch=sk["sketch"], entities=[
         {"id": "C", "type": "circle", "center": [u, v], "radius": 3}])
     assert r["regions"][0]["inside"] == pytest.approx([u, v], abs=1.5)
+    _ok(agent_client, "close_sketch", sketch=sk["sketch"])
     cut = _ok(agent_client, "extrude_cut", base=sk["sketch"], target=b, through_all=True)
     assert cut["measure"]["volume"] == pytest.approx(6000 - math.pi * 9 * 30, rel=1e-6)
 
@@ -116,6 +117,7 @@ def test_sketch_on_a_tilted_construction_plane(agent_client):
     assert sk["frame"]["normal"] == pytest.approx([0.7071068, 0, 0.7071068], abs=1e-6)
     _ok(agent_client, "sketch_add", sketch=sk["sketch"], entities=[
         {"id": "C", "type": "circle", "center": [0, 0], "radius": 2}])
+    _ok(agent_client, "close_sketch", sketch=sk["sketch"])
     ext = _ok(agent_client, "extrude", base=sk["sketch"], size=4)["measure"]
     assert ext["volume"] == pytest.approx(math.pi * 4 * 4, rel=1e-6)
     cyl = _ok(agent_client, "make_cylinder", radius=2, height=4)["name"]
@@ -151,6 +153,7 @@ def test_result_py_rebuilds_fillet_sketch_on_face_and_shell(agent_client, tmp_pa
     call("sketch_add", sketch=sk["sketch"], entities=[
         {"id": "C", "type": "circle", "center": [c[0] * x[0] + c[1] * x[1],
                                                  c[0] * y[0] + c[1] * y[1]], "radius": 3}])
+    call("close_sketch", sketch=sk["sketch"])
     cut = call("extrude_cut", base=sk["sketch"], target=f, through_all=True)
     live = cut["measure"]["volume"]
     log = [rec for c_ in calls for rec in c_["records"]]
