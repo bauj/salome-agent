@@ -3,7 +3,7 @@ import re
 
 from executor.shaper.state import (
     CONSTRUCTION, PUBLISH_LINE, Constraint, Entity, Sketch, check_id, construction_info,
-    KIND_TYPES, forget, geometry, new_name, offset_plane, record, sketch_frame, subshapes,
+    KIND_TYPES, forget, geometry, history_index, new_name, offset_plane, record, sketch_frame, subshapes,
     restore, run, sketch_of, snapshot, solver_error, state, status, tool, transaction,
 )
 
@@ -279,6 +279,10 @@ def _plan_entity(executor, sk: Sketch, e, taken: set) -> tuple[str, list]:
         st = state(executor)
         if not isinstance(of, str) or of not in st.objects:
             raise ValueError(f"{w}: of must name a built shape, got {of!r}")
+        order = history_index(st)
+        if order.get(of, -1) > order.get(sk.name, -1):
+            raise ValueError(f"{w}: {of} was built after {sk.name}; a sketch can only use "
+                             "what was built before it")
         sub_type = "edge" if e.get("edge") else "vertex"
         subs = {u.id: u for u in subshapes(executor, of, sub_type)}
         if not isinstance(sub, str) or sub not in subs:
@@ -320,6 +324,12 @@ def _projectable(sk: Sketch, shape, w: str) -> None:
     if shape.shapeType() != GeomAPI.GeomAPI_Shape.EDGE:
         return
     edge = GeomAPI.GeomAPI_Edge(shape)
+    if edge.isCircle() or edge.isArc():
+        c, n = edge.circle().normal(), sketch_frame(sk)[3]
+        if abs(c.x() * n[0] + c.y() * n[1] + c.z() * n[2]) < 1e-9:
+            raise ValueError(f"{w}: that circle is seen edge-on by the sketch plane and "
+                             "projects to a line; use a sketch plane it faces")
+        return
     if not edge.isLine():
         return
     a, b = edge.firstPoint(), edge.lastPoint()
@@ -710,6 +720,7 @@ def _made_by(st, sk: Sketch, op_code: str, op_var: str, getter: str, prefix: str
     op_code += (f"\n{new} = [_x for _x in {op_var}.{getter} "
                 f"if _x.feature().data().name() not in {tuple(sources)!r}]")
     first = record(fn, op_code, out=[op_var], recv=sk.name)
+    had_error = bool(solver_error(sk))
     try:
         exec_records(st, [first])
     except Exception:
@@ -728,11 +739,20 @@ def _made_by(st, sk: Sketch, op_code: str, op_var: str, getter: str, prefix: str
                     out=[v for _, v in made], recv=sk.name)
     try:
         exec_records(st, [second])
+        err = None if had_error else solver_error(sk)
     except Exception:
         with transaction():
             st.ns["shaper_doc"].removeFeature(st.ns.pop(op_var).feature())
         _drop_helpers(st, [first])
         raise
+    if err:
+        with transaction():
+            for _, v in made:
+                st.ns.pop(v, None)
+            st.ns["shaper_doc"].removeFeature(st.ns.pop(op_var).feature())
+        _drop_helpers(st, [first])
+        raise ValueError(f"the copy conflicts with the constraints of the sketch ({err}); "
+                         "nothing was added")
     return [first, second], made
 
 

@@ -104,7 +104,7 @@ def _follow_up(state: dict) -> str:
 
 def _amend_module(state: dict, graph) -> str:
     """The module the request names, else the one that built the study's latest
-    CAD stage, else GEOM."""
+    CAD stage, else SHAPER."""
     from salome_agent.nodes.planner import named_cad_module
 
     named = named_cad_module(state.get("user_request") or "")
@@ -113,7 +113,7 @@ def _amend_module(state: dict, graph) -> str:
     for b in reversed(graph.blocks):
         if b.module in ("geom", "shaper"):
             return b.module
-    return "geom"
+    return "shaper"
 
 
 def _graph_upstream(state: dict) -> list[str]:

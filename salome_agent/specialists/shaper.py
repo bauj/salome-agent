@@ -15,6 +15,9 @@ create_sketch, then for one logical piece at a time sketch_add its entities at
 roughly the right coordinates and sketch_constrain them with the given
 dimensions and relations (coincident ends, horizontal, tangent, length, radius,
 distance, angle). Anchor the geometry to ORIGIN and the plane's axes.
+One sketch is edited at a time: when it is done, call close_sketch on it.
+Nothing else -- a new sketch, a face, a solid -- can be built while a sketch is
+still being edited.
 
 Read every sketch reply before the next step:
 - `rejected`: constraints that conflicted with ones already there. Change or
@@ -75,7 +78,8 @@ is never done in the reasoning:
    2..7 area 28.2743 inside each bolt centre
 3. "Material is region 0, the only point outside every hole. Check it."
    calc("pi*30**2 - pi*10**2 - 6*pi*3**2") -> 2343.6281
-4. "Matches." make_face(sketch_1, [0]) -> sh_face_1, area 2343.6281, faces 1
+4. "Matches." close_sketch(sketch_1); make_face(sketch_1, [0]) -> sh_face_1,
+   area 2343.6281, faces 1
 5. finish_stage(["sh_face_1"])
 
 Do only what the request asks. Each turn: state your reasoning in at most 2-3
@@ -128,6 +132,7 @@ PLANNER_TOOL_LINES = {
     "sketch_constrain": "dimensions and relations: length, radius, distance, angle, coincident, tangent, ...",
     "sketch_remove": "remove entities or constraints from a sketch",
     "sketch_status": "solved coordinates, dof, open ends and closed regions of a sketch",
+    "close_sketch": "finish editing a sketch, before anything else is built",
     "make_face": "flat face from closed regions of a sketch, holes left out; a face can be the final result",
     "extrude": "solid from a face or sketch",
     "extrude_cut": "pocket: extrude and cut from a solid",
@@ -205,7 +210,7 @@ def _gate(args: dict, call_log: list, infos: dict) -> str | None:
             lines.append(f"- {name} has open ends: {refs}")
     if not lines:
         return None
-    return ("Not finished: a sketch you use is not closed.\n" + "\n".join(lines)
+    return ("Not finished: a sketch you use has open ends.\n" + "\n".join(lines)
             + "\nJoin these ends (coincident constraints, or the missing curve), or "
             "remove the stray curves, then call finish_stage again.")
 
