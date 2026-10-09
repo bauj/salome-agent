@@ -138,3 +138,16 @@ def test_hold_is_released_when_the_holder_disconnects(server):
     f2.write(b'{"cmd":"hello","token":"secret","id":1}\n'); f2.flush()
     assert json.loads(f2.readline())["ready"] is True
     s2.close()
+
+
+def test_hello_waits_for_a_connection_that_is_closing(server):
+    _, port = server
+    s1, f1 = _client(port)
+    f1.write(b'{"cmd":"hello","token":"secret","id":1}\n'); f1.flush()
+    f1.readline()
+    s2, f2 = _client(port)
+    f2.write(b'{"cmd":"hello","token":"secret","id":1}\n'); f2.flush()
+    time.sleep(0.2)
+    f1.close(); s1.close()
+    assert json.loads(f2.readline())["ready"] is True
+    s2.close()
