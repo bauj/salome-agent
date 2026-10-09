@@ -224,7 +224,8 @@ def main(argv: list[str] | None = None) -> int:
             # always has both trace halves, or neither.
             record_path = (os.path.join(run_dir, "exec_trace.jsonl")
                            if args.verbose >= 2 else None)
-            client = server_conn.connect(run_id, record_path=record_path, hold=args.chat)
+            client = server_conn.connect(run_id, record_path=record_path, hold=args.chat,
+                                         run_dir=os.path.abspath(run_dir))
         except server_conn.ServerUnavailable as e:
             log.error("%s", e)
             return 1

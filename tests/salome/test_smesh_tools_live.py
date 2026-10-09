@@ -160,3 +160,44 @@ def test_group_on_late_shaper_group_and_from_geometry(agent_client):
     r = _ok(agent_client, "smesh", "compute", mesh=m)
     assert r["groups"]["inlet"] > 0 and r["groups"]["side"] > 0
     assert _call(agent_client, "smesh", "group_on_geometry", mesh=m, group="inlet")["ok"] is False
+
+
+def test_check_results_refuses_until_computed(agent_client):
+    b = shaper_box(agent_client)
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    r = agent_client.check_results([m], module="smesh")["results"][m]
+    assert r["status"] == "not_meshed" and "not computed" in r["detail"]
+    _ok(agent_client, "smesh", "compute", mesh=m)
+    assert agent_client.check_results([m], module="smesh")["results"][m] == {"status": "ok"}
+
+
+def _in_study(client, name):
+    r = client.run(f"print(len(salome.myStudy.FindObjectByName({name!r}, 'SMESH')) + "
+                   f"len(salome.myStudy.FindObjectByName({name!r}, 'SHAPERSTUDY')))", 30)
+    return int(r["stdout"].strip())
+
+
+def test_discard_mesh_and_group(agent_client):
+    b = shaper_box(agent_client)
+    top_face_group(agent_client, b, name="gone")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    before = _in_study(agent_client, m)
+    assert _in_study(agent_client, "gone") == 1
+    removed = agent_client.forget([m, "gone"])["removed"]
+    assert set(removed) >= {m, "gone"}
+    assert _in_study(agent_client, m) == before - 1
+    assert _in_study(agent_client, "gone") == 0
+
+
+def test_export_med(agent_client, tmp_path):
+    b = shaper_box(agent_client)
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    _ok(agent_client, "smesh", "compute", mesh=m)
+    r = _ok(agent_client, "smesh", "export_mesh", mesh=m, format="med")
+    import os
+    try:
+        assert os.path.getsize(r["path"]) > 0
+    finally:
+        os.remove(r["path"])

@@ -225,3 +225,25 @@ def test_a_long_tool_waits_past_the_read_timeout(monkeypatch):
         c.call_tool("create_mesh", {"shape": "box_1"}, module="smesh")
     c.close()
     t.join()
+
+
+def test_run_dir_goes_in_the_hello():
+    seen = []
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        conn, _ = srv.accept()
+        f = conn.makefile("rwb")
+        seen.append(json.loads(f.readline()))
+        f.write((json.dumps({"ready": True, "proto": 1, "mode": "headless"}) + "\n").encode())
+        f.flush()
+        conn.close()
+        srv.close()
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    ExecutorClient("127.0.0.1", srv.getsockname()[1], "tok", "run1", run_dir="/w/run1").close()
+    t.join()
+    assert seen[0]["run_dir"] == "/w/run1"

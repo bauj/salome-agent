@@ -527,6 +527,7 @@ _CHECK_LINES = {
     "invalid": "{name} is not a valid shape: {detail}",
     "empty": "{name} is empty: {detail}",
     "editing": "{name} is still being edited: call close_sketch on it",
+    "not_meshed": "{name} is not a finished mesh: {detail}",
 }
 
 

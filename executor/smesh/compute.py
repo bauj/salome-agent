@@ -115,6 +115,28 @@ def measure_mesh(executor, name: str) -> dict:
     return out
 
 
+def mesh_status(info: dict, dim) -> dict:
+    def bad(detail):
+        return {"status": "not_meshed", "detail": detail}
+    if info["nodes"] == 0:
+        return bad("it is not computed: call compute")
+    if info["errors"]:
+        return bad("it has meshing errors: " + "; ".join(info["errors"]))
+    if dim == 3 and info["volumes"] == 0:
+        return bad("it has no volume elements")
+    if dim == 2 and info["faces"] == 0:
+        return bad("it has no face elements")
+    empty = [g for g, n in info["groups"].items() if n == 0]
+    if empty:
+        return bad(", ".join(f"{g} is empty" for g in empty))
+    if dim == 3:
+        off = volume_off(info["volume"], info["shape_volume"])
+        if off is not None and off > 0.01:
+            return bad(f"its volume {info['volume']} is {off:.2%} off the shape's "
+                       f"{info['shape_volume']}")
+    return {"status": "ok"}
+
+
 _MESH = {"type": "object", "properties": {"mesh": {"type": "string"}}, "required": ["mesh"]}
 
 
