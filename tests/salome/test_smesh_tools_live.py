@@ -120,3 +120,31 @@ def test_compute_refuses_above_cap(agent_client):
     _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=0.5)
     r = _call(agent_client, "smesh", "compute", mesh=m)
     assert r["ok"] is False and "limit" in r["error"]
+
+
+@pytest.mark.skip(reason="needs Task 6")
+def test_local_size_and_edge_segments(agent_client):
+    b = shaper_box(agent_client)
+    top_face_group(agent_client, b, name="lid")
+    edges = _ok(agent_client, "smesh", "get_subshapes", shape=b, sub_type="edge",
+                where={"by_size": "longest", "count": 1})["subshapes"]
+    _ok(agent_client, "smesh", "name_subshapes", shape=b, ids=[edges[0]["id"]], name="long")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    _ok(agent_client, "smesh", "local_size", mesh=m, on=["lid"], size=1)
+    _ok(agent_client, "smesh", "edge_segments", mesh=m, on=["long"], count=40)
+    _ok(agent_client, "smesh", "group_on_geometry", mesh=m, group="long")
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["computed"] and r["groups"]["long"] == 40
+
+
+def test_viscous_layers_on_tetra(agent_client):
+    b = shaper_box(agent_client, dx=20, dy=20, dz=20)
+    top_face_group(agent_client, b, name="outlet")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=4)
+    _ok(agent_client, "smesh", "viscous_layers", mesh=m, thickness=1, layers=3,
+        stretch=1.2, faces=["outlet"], faces_are="without_layers")
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["computed"] and r["errors"] == [] and r["prism"] > 0
+    assert r["volume"] == pytest.approx(8000, rel=1e-3)

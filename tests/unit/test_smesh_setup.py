@@ -1,5 +1,6 @@
 import pytest
 
+from executor.smesh import local as lo
 from executor.smesh import setup as su
 
 
@@ -58,3 +59,30 @@ def test_hypothesis_dimension():
     assert su.HYPOTHESES["local_length"][0] == 1
     assert su.HYPOTHESES["max_element_area"][0] == 2
     assert su.HYPOTHESES["max_element_volume"][0] == 3
+
+
+def test_local_size_netgen_and_segment():
+    assert (lo.local_size_code("m_netgen", "m", "bolt", '_shaper_shape("bolt")', 1)
+            == 'm_netgen.SetLocalSizeOnShape(_shaper_shape("bolt"), 1)')
+    assert (lo.local_size_code(None, "m", "bolt", "bolt", 1)
+            == "m_a1_bolt = m.Segment(geom=bolt)\nm_a1_bolt.LocalLength(1)")
+
+
+def test_edge_segments_code():
+    code = lo.edge_segments_code("m_a1_e", "m", "e", {"count": 40, "propagate": True})
+    assert code == "m_a1_e = m.Segment(geom=e)\nm_a1_e.NumberOfSegments(40)\nm_a1_e.Propagation()"
+    assert "NumberOfSegments(10, 4)" in lo.edge_segments_code("v", "m", "e", {"count": 10, "ratio": 4})
+    assert "LocalLength(2)" in lo.edge_segments_code("v", "m", "e", {"length": 2})
+    with pytest.raises(ValueError):
+        lo.edge_segments_code("v", "m", "e", {})
+
+
+def test_viscous_code_3d_and_2d():
+    code = lo.viscous_code("m_a3", 3, {"thickness": 1, "layers": 3, "stretch": 1.2,
+                                       "faces_are": "without_layers"},
+                           ['_shaper_shape("inlet")'])
+    assert code == ('m_a3.ViscousLayers(1, 3, 1.2, '
+                    '_ids(_shaper_shape("inlet")), True)')
+    code2 = lo.viscous_code("m_a2", 2, {"thickness": 1, "layers": 3, "stretch": 1.2,
+                                        "faces_are": "with_layers"}, ["w1", "w2"])
+    assert code2 == "m_a2.ViscousLayers2D(1, 3, 1.2, _ids(w1) + _ids(w2), False)"
