@@ -152,6 +152,11 @@ def hypothesis_code(algo_var: str, kind: str, params: dict) -> str:
     return f"{algo_var}.{method}({', '.join(vals)})"
 
 
+# preset -> dimensions of the algorithms it sets on the whole mesh, {m}_a<d>
+_PRESET_DIMS = {"mesh_tetra": (3,), "mesh_surface": (2,), "mesh_hexa": (1, 2, 3),
+                "mesh_body_fitted": (3,), "mesh_prism": (1, 3)}
+
+
 def _preset(executor, args: dict, setup: str, dim: int, build) -> dict:
     m = args.get("mesh")
     info = mesh_of(executor, m)
@@ -167,7 +172,7 @@ def _preset(executor, args: dict, setup: str, dim: int, build) -> dict:
     st = state(executor)
     run(st, code)
     info.setup, info.dim, info.netgen, info.local_sizes = setup, dim, netgen, dict(kept)
-    info.algos = {(d, None): f"{m}_a{d}" for d in (1, 2, 3) if f"{m}_a{d}" in code}
+    info.algos = {(d, None): f"{m}_a{d}" for d in _PRESET_DIMS[setup]}
     r = {"ok": True, "records": [record(setup, code, recv=m, refs=list(kept))], "mesh": m,
          "setup": setup}
     if dropped:
@@ -333,5 +338,7 @@ def tool_mesh_prism(executor, args: dict):
     r = _preset(executor, args, "mesh_prism", 3, lambda m, a: prism_code(m, gexpr, a))
     info = mesh_of(executor, args["mesh"])
     info.submeshes[end] = f"{args['mesh']}_a1_end"
+    info.algos[(1, end)] = f"{args['mesh']}_a1_end"
+    info.algos[(2, end)] = f"{args['mesh']}_a2_end"
     r["records"][0]["args"] = [{"kind": "expr", "value": "", "refs": [end]}]
     return r
