@@ -183,3 +183,11 @@ def test_shaper_calls_run_through_backend_run_tool(monkeypatch):
     core.handle({"id": 3, "cmd": "clear_study"})
     assert shaper.calls and shaper.forgot and shaper.resets == 1
     assert shaper.off_main == []
+
+
+def test_hello_keeps_the_run_dir_for_the_tools():
+    b = FakeBackend()
+    Core(b).handle({"id": 1, "cmd": "hello", "run_id": "r1", "run_dir": "/w/r1"})
+    assert b.run_dir == "/w/r1"
+    Core(b).handle({"id": 2, "cmd": "hello", "run_id": "r2"})
+    assert b.run_dir is None

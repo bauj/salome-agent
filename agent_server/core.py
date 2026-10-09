@@ -37,6 +37,8 @@ class Core:
 
         if cmd == "hello":
             b.begin_session(req.get("run_id"))
+            # where the tools write files (export_mesh)
+            b.run_dir = req.get("run_dir")
             _reset_side_modules(b)
             return {"id": rid, "ready": True, "proto": handshake.PROTO,
                     "mode": b.mode, "name_prefix": b.name_prefix,

@@ -80,9 +80,10 @@ def test_connect_passes_hold(monkeypatch):
                         lambda: {"host": "h", "port": 1, "token": "t"})
 
     class FakeClient:
-        def __init__(self, host, port, token, run_id, record_path=None, hold=False):
-            got["hold"] = hold
+        def __init__(self, host, port, token, run_id, record_path=None, hold=False,
+                     run_dir=None):
+            got["hold"], got["run_dir"] = hold, run_dir
 
     monkeypatch.setattr(server_conn, "ExecutorClient", FakeClient)
-    server_conn.connect("r1", hold=True)
-    assert got["hold"] is True
+    server_conn.connect("r1", hold=True, run_dir="/w/r1")
+    assert got["hold"] is True and got["run_dir"] == "/w/r1"

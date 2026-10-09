@@ -1,7 +1,8 @@
 """The SMESH tool package. Importing it registers every tool."""
 from executor.geom.helpers import _pinned
 from executor.smesh.state import COMPUTE_TIMEOUT_S, registry, reset  # noqa: F401
-from executor.smesh import naming, setup, compute, local, groups  # noqa: F401 — registers the tools
+from executor.smesh import naming, setup, compute, local, groups, editing  # noqa: F401 — registers the tools
+from executor.smesh.editing import clear, forget  # noqa: F401
 
 TOOLS = registry.handlers()
 _LONG = {"compute": COMPUTE_TIMEOUT_S}
@@ -29,12 +30,12 @@ def call_tool(executor, name: str, args: dict, pin: list | None = None) -> dict:
 
 
 def check_results(executor, names: list) -> dict:
-    return {n: {"status": "skip"} for n in names}
-
-
-def clear(executor) -> None:
-    reset(executor)
-
-
-def forget(executor, names: list) -> list:
-    return []
+    from executor.smesh.compute import measure_mesh, mesh_status
+    st = executor.__dict__.get("smesh_state")
+    out = {}
+    for name in names:
+        if st is None or name not in st.meshes:
+            out[name] = {"status": "skip"} if st and name in st.geo_groups else {"status": "missing"}
+        else:
+            out[name] = mesh_status(measure_mesh(executor, name), st.meshes[name].dim)
+    return out

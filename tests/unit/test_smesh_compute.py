@@ -38,3 +38,33 @@ def test_element_type_from_sub_type():
     assert gr.element_for("face", "node") == "NODE"
     with pytest.raises(ValueError):
         gr.element_for("face", "cells")
+
+
+def _m(**kw):
+    base = {"nodes": 10, "edges": 0, "faces": 20, "volumes": 30, "volume": 6000.0,
+            "shape_volume": 6000.0, "area": 2200.0, "shape_area": 2200.0, "errors": [],
+            "groups": {"inlet": 12}}
+    base.update(kw)
+    return base
+
+
+def test_mesh_status_ok():
+    assert c.mesh_status(_m(), 3) == {"status": "ok"}
+
+
+@pytest.mark.parametrize("kw,dim,word", [
+    ({"nodes": 0, "faces": 0, "volumes": 0}, 3, "not computed"),
+    ({"errors": ["Quadrangle_2D failed ..."]}, 3, "meshing errors"),
+    ({"volumes": 0}, 3, "no volume elements"),
+    ({"faces": 0}, 2, "no face elements"),
+    ({"groups": {"inlet": 0}}, 3, "inlet is empty"),
+    ({"volume": 5900.0}, 3, "1.67%"),
+])
+def test_mesh_status_refusals(kw, dim, word):
+    r = c.mesh_status(_m(**kw), dim)
+    assert r["status"] == "not_meshed" and word in r["detail"]
+
+
+def test_check_line_exists():
+    from salome_agent.specialists.tool_specialist import _CHECK_LINES
+    assert "{detail}" in _CHECK_LINES["not_meshed"]

@@ -25,7 +25,8 @@ class ServerOutdated(Exception):
 
 class ExecutorClient:
     def __init__(self, host: str, port: int, token: str, run_id: str,
-                 record_path: str | None = None, hold: bool = False):
+                 record_path: str | None = None, hold: bool = False,
+                 run_dir: str | None = None):
         self.record_path = record_path
         self._sock = socket.create_connection((host, port), timeout=READ_TIMEOUT)
         self._f = self._sock.makefile("rwb")
@@ -33,6 +34,8 @@ class ExecutorClient:
         hello = {"id": 0, "cmd": "hello", "token": token, "run_id": run_id}
         if hold:
             hello["hold"] = True
+        if run_dir is not None:
+            hello["run_dir"] = run_dir
         self._f.write((json.dumps(hello) + "\n").encode())
         self._f.flush()
         ready = self._recv()
