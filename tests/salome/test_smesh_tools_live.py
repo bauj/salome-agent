@@ -122,7 +122,6 @@ def test_compute_refuses_above_cap(agent_client):
     assert r["ok"] is False and "limit" in r["error"]
 
 
-@pytest.mark.skip(reason="needs Task 6")
 def test_local_size_and_edge_segments(agent_client):
     b = shaper_box(agent_client)
     top_face_group(agent_client, b, name="lid")
@@ -148,3 +147,16 @@ def test_viscous_layers_on_tetra(agent_client):
     r = _ok(agent_client, "smesh", "compute", mesh=m)
     assert r["computed"] and r["errors"] == [] and r["prism"] > 0
     assert r["volume"] == pytest.approx(8000, rel=1e-3)
+
+
+def test_group_on_late_shaper_group_and_from_geometry(agent_client):
+    b = shaper_box(agent_client)
+    _ok(agent_client, "shaper", "make_group", shape=b, ids=["F1"], name="side")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    top_face_group(agent_client, b, name="inlet")
+    g = _ok(agent_client, "smesh", "groups_from_geometry", mesh=m)
+    assert set(g["groups"]) == {"side", "inlet"}
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["groups"]["inlet"] > 0 and r["groups"]["side"] > 0
+    assert _call(agent_client, "smesh", "group_on_geometry", mesh=m, group="inlet")["ok"] is False
