@@ -34,7 +34,7 @@ class ModuleSpec:
     no_tool_nudge: str
     # call_log, last_error -> the result when the iteration cap runs out.
     on_exhausted: Callable[[list, dict | None], dict]
-    # Its tools run in SALOME: with no server (--no-session) the stage ends
+    # Its tools run in SALOME: with no server the stage ends
     # fatal instead of starting.
     needs_session: bool = False
 

@@ -167,8 +167,7 @@ class ToolSpecialist:
             tool_selection="hints", verify_cadence="final", retry=None,
             seed_call_log=None, seed_calls=None, cancel=None, upstream=()) -> dict:
         if client is None and self.spec.needs_session:
-            return {"fatal": f"a {self.spec.name} stage needs a SALOME agent server; "
-                             f"--no-session only runs smesh stages"}
+            return {"fatal": f"a {self.spec.name} stage needs a SALOME agent server"}
         try:
             return self._run(stage_plan, llm, client, iteration_cap, blocks,
                              tool_selection, verify_cadence, retry, seed_call_log, seed_calls,

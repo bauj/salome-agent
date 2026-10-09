@@ -97,9 +97,6 @@ class ExecutorClient:
     def list_study(self):
         return self._call("list_study")
 
-    def sanity(self, module, expectations):
-        return self._call("sanity", module=module, expectations=expectations)
-
     def list_tools(self, module=None):
         if module is None:
             return self._call("list_tools")
