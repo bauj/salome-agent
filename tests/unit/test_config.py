@@ -10,8 +10,7 @@ def test_loads_valid_config(tmp_path):
     cfg_path.write_text(json.dumps({
         "llm": {"base_url": "http://x", "api_key": "k", "model": "m", "temperature": 0},
         "salome": {"root": "/opt/salome"},
-        "policy": {"static_retries": 3, "exec_retries": 2, "exec_timeout_s": 120,
-                   "tool_iteration_cap": 12, "on_stage_failure": "abort"},
+        "policy": {"tool_iteration_cap": 12, "on_stage_failure": "abort"},
         "work_dir": "~/.local/share/salome-agent/runs",
     }))
     config = load_config(str(cfg_path))

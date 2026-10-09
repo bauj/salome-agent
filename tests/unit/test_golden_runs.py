@@ -52,9 +52,8 @@ def _replay_run(request, cassette, work_dir, run_id="replay"):
     state = {
         "run_id": run_id, "user_request": request,
         "config": {"batch": True, "work_dir": work_dir,
-                   "policy": {"tool_iteration_cap": 40, "static_retries": 1,
-                              "exec_retries": 1, "exec_timeout_s": 120,
-                              "tool_selection": "hints", "verify_cadence": "final",
+                   "policy": {"tool_iteration_cap": 40, "tool_selection": "hints",
+                              "verify_cadence": "final",
                               "plan_detail": "balanced"}},
         "plan": [], "plan_approved": True, "stage_idx": 0, "plan_timing": None,
         "session": {"mode": "none", "pid": None, "salome_port": None, "name_prefix": ""},

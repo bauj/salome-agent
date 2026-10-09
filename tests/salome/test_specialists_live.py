@@ -29,62 +29,10 @@ def config() -> dict:
     return json.loads(CONFIG_PATH.read_text())
 
 
-@pytest.fixture(scope="module")
-def live_llm(config):
-    from salome_agent.llm import LLMClient
-
-    c = config["llm"]
-    return LLMClient(base_url=c["base_url"], api_key=c.get("api_key", ""),
-                     model=c["model"], ssl_cert_file=c.get("ssl_cert_file", ""),
-                     temperature=c.get("temperature", 0))
-
-
-@pytest.fixture
-def client():
-    """Own throwaway server per test (check_exec here can poison the backend).
-
-    Uses conftest's _start_server / _kill_tree so the SALOME tree is spawned in
-    its own process group and reaped -- a bare proc.terminate(); proc.kill()
-    with no follow-up wait() left the launcher <defunct> under pytest (issue #5).
-    """
-    from salome_agent.executor_client import ExecutorClient
-
-    from .conftest import _HS, SALOME_ROOT, _kill_tree, _repo_root, _start_server
-
-    if SALOME_ROOT is None:
-        pytest.skip("set SALOME_ROOT or salome.root in config.json")
-    proc = _start_server(_repo_root())
-    data = json.loads(open(_HS).read())
-    conn = ExecutorClient(data["host"], data["port"], data["token"], "")  # "" = unprefixed names
-    try:
-        yield conn
-    finally:
-        try:
-            conn._sock.close()
-        except Exception:
-            pass
-        _kill_tree(proc)
-
-
-def _assert_tool_turns_well_formed(messages):
-    """Every {role: tool} message must be preceded by an assistant message
-    carrying a tool_calls[] entry with the matching id (the OpenAI contract
-    that bug 20 violated)."""
-    seen_call_ids = set()
-    for m in messages:
-        if m.get("role") == "assistant" and m.get("tool_calls"):
-            for tc in m["tool_calls"]:
-                seen_call_ids.add(tc["id"])
-        if m.get("role") == "tool":
-            assert m["tool_call_id"] in seen_call_ids, \
-                f"tool message {m['tool_call_id']} has no preceding assistant tool_call"
-
-
 def test_geom_to_smesh_multistage_live(config, tmp_path, running_server):
-    """Full graph, real LLM: geom stage publishes a box, smesh stage must
-    find_object() it by the ACTUAL published name (not the planner's guess)
-    and mesh it. Exercises the cross-stage handoff + verify routing + the
-    assembled result.py."""
+    """Full graph, real LLM: geom stage publishes a box, the smesh stage must
+    mesh it by the ACTUAL published name (not the planner's guess). Exercises
+    the cross-stage handoff, the SMESH tool loop and the assembled result.py."""
     import ast
 
     from salome_agent.cli import main

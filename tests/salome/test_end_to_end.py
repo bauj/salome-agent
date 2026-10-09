@@ -23,8 +23,7 @@ def test_cube_and_mesh_produces_runnable_result(tmp_path, running_server):
     config_path.write_text(json.dumps({
         "llm": {"base_url": "http://unused", "api_key": "", "model": "unused", "temperature": 0},
         "salome": {"root": SALOME_ROOT},
-        "policy": {"static_retries": 3, "exec_retries": 2, "exec_timeout_s": 120,
-                   "tool_iteration_cap": 12, "on_stage_failure": "abort"},
+        "policy": {"tool_iteration_cap": 12, "on_stage_failure": "abort"},
         "work_dir": str(tmp_path),
     }))
 

@@ -142,7 +142,7 @@ what it does not build -- later stages build the rest."""
 def blank_stages(stage_plans: list[dict]) -> dict:
     return {
         i: {"module": p["module"], "status": "pending", "script": None,
-            "call_log": None, "static_retries": 0, "exec_retries": 0}
+            "call_log": None}
         for i, p in enumerate(stage_plans)
     }
 
