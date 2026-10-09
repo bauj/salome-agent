@@ -15,6 +15,28 @@ def test_refusal_text_names_the_count_and_cap():
     assert "2 500 000" in msg and "1 000 000" in msg and "evaluate" not in msg
 
 
+def test_count_trusts_evaluate_when_it_counts_the_mesh_dimension():
+    assert c.count({"Edge": 340, "Quadrangle": 4000, "Hexa": 12500}, 3, None, None) == 16840
+    assert c.count({"Edge": 10, "Triangle": 50}, 2, None, None) == 60
+
+
+def test_count_is_none_when_evaluate_misses_the_mesh_dimension():
+    assert c.count({"Edge": 340}, 2, None, None) is None
+    assert c.count({"Edge": 12, "Quadrangle": 6}, 3, None, None) is None
+    assert c.count({}, 3, None, None) is None
+
+
+def test_count_grid_rule_counts_cells_of_the_bounding_box():
+    bbox = [0.0, 100.0, 0.0, 50.0, 0.0, 20.0]
+    assert c.count({}, 3, ("grid", 2.0), bbox) == 12500
+    assert c.count({}, 3, ("grid", 3.0), bbox) == 34 * 17 * 7
+    assert c.count({}, 3, ("grid", 2.0), [0.0, 10.0, 0.0, 10.0, 5.0, 5.0]) == 25
+
+
+def test_count_layers_rule_sweeps_the_end_face():
+    assert c.count({"Edge": 72, "Triangle": 188}, 3, ("layers", 20), None) == 260 + 188 * 20
+
+
 def test_failure_line():
     f = {"algorithm": "Quadrangle_2D", "reason": "Face must have 4 sides but not 1",
          "type": "face", "centre": [0.0, 0.0, 10.0], "size": 78.54}

@@ -58,6 +58,8 @@ class MeshInfo:
         self.groups: dict = {}
         # group -> local size set on the NETGEN parameters (local_size)
         self.local_sizes: dict = {}
+        # how to count a preset SMESH's Evaluate() cannot: ("grid", step) or ("layers", n)
+        self.count_rule: tuple | None = None
 
 
 class SmeshState:

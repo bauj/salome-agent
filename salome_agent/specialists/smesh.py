@@ -43,7 +43,8 @@ type, centre and size. A failure says what to change -- a face that is not
 four-sided under mesh_hexa, a size too large for a thin wall. Change the setup
 and compute again; only what the change touched is re-meshed. evaluate
 predicts the counts without meshing; compute refuses a mesh predicted above
-{max_elements} elements.
+{max_elements} elements. Some hand-built setups cannot be predicted: their reply
+says so, and compute builds them without that limit.
 
 When done, call finish_stage(result_names) with the meshes that matter. It is
 refused while a named mesh is not computed, has meshing errors, has no
@@ -97,7 +98,7 @@ PLANNER_TOOL_LINES = {
     "set_submesh_order": "which local setup wins where two meet",
     "group_on_geometry": "mesh group on a named group, for a solver",
     "groups_from_geometry": "mesh groups for every named group of the shape",
-    "evaluate": "predicted counts without meshing",
+    "evaluate": "predicted element count without meshing",
     "compute": "build the mesh; counts, volume, quality, failed parts",
     "mesh_info": "counts of a mesh and its groups",
     "check_quality": "min/max of a quality criterion, count past a threshold",

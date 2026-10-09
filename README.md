@@ -455,6 +455,14 @@ docs/superpowers/   design specs + implementation plans
 - Some OCC operations crash the SALOME process (segfault) instead of failing.
   `fillet_edges` (SHAPER) refuses a radius at which fillets on two edges of one
   face would meet; GEOM fillet/chamfer has no such guard yet.
+- SMESH `compute` refuses a mesh predicted above 1 000 000 elements, but SMESH's
+  `Evaluate()` cannot predict every setup. `mesh_body_fitted` and `mesh_prism`
+  are counted by their own rule (grid cells, layers × end-face elements).
+  Hand-built `set_algorithm` setups that `Evaluate()` leaves uncounted (Prism,
+  quadrangle_medial_axis, ...) compute without the limit, with a note in the
+  reply; `polyhedron_per_solid` is predicted far too low and slips through.
+  NETGEN is predicted 2–6× too high, so a NETGEN mesh can be refused well below
+  the limit.
 - `reset_and_replay` (rollback) is wired only for the headless backend and has no
   graph-level caller yet — retries re-run the full stage script.
 - RAG / documentation retrieval was cut from v1.
