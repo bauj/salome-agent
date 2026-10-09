@@ -114,3 +114,35 @@ def test_a_new_netgen_preset_keeps_the_local_sizes(monkeypatch):
     r = su.tool_mesh_hexa(ex, {"mesh": "m", "segments": 4})
     assert r["dropped_local_sizes"] == ["bolt"]
     assert st.meshes["m"].local_sizes == {}
+
+
+def _fake_mesh(monkeypatch):
+    from executor.smesh import state as sm
+    monkeypatch.setattr(su, "run", lambda st, code: None)
+    ex = type("Ex", (), {})()
+    st = ex.__dict__["smesh_state"] = sm.SmeshState({})
+    st.meshes["m"] = sm.MeshInfo("plate_1", "shaper")
+    st.geo_groups["base"] = sm.GeoGroup("plate_1", "shaper", "face")
+    return ex, st.meshes["m"]
+
+
+@pytest.mark.parametrize("tool,args,algos", [
+    ("tool_mesh_tetra", {"max_size": 5}, {(3, None): "m_a3"}),
+    ("tool_mesh_surface", {"max_size": 5}, {(2, None): "m_a2"}),
+    ("tool_mesh_hexa", {"segments": 4}, {(1, None): "m_a1", (2, None): "m_a2", (3, None): "m_a3"}),
+    ("tool_mesh_body_fitted", {"size": 3}, {(3, None): "m_a3"}),
+    ("tool_mesh_prism", {"end_face": "base", "layers": 5, "face_size": 2},
+     {(1, None): "m_a1", (3, None): "m_a3", (1, "base"): "m_a1_end", (2, "base"): "m_a2_end"}),
+])
+def test_each_preset_records_exactly_its_algorithms(monkeypatch, tool, args, algos):
+    ex, info = _fake_mesh(monkeypatch)
+    getattr(su, tool)(ex, {"mesh": "m", **args})
+    assert info.algos == algos
+
+
+def test_a_face_rule_on_a_prism_mesh_asks_for_a_face_algorithm(monkeypatch):
+    ex, _ = _fake_mesh(monkeypatch)
+    su.tool_mesh_prism(ex, {"mesh": "m", "end_face": "base", "layers": 5, "face_size": 2})
+    with pytest.raises(ValueError, match="set_algorithm"):
+        su.tool_set_hypothesis(ex, {"mesh": "m", "kind": "max_element_area",
+                                    "params": {"area": 4}})
