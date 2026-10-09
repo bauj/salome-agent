@@ -261,3 +261,10 @@ def test_the_pin_comes_from_the_users_own_text_not_the_earlier_requests():
     plan(request, llm, pin_from="add a rib in SHAPER")
     system = llm.chat.call_args.kwargs["messages"][0]["content"]
     assert 'every CAD geometry stage uses module "shaper".' in system
+
+
+def test_smesh_catalogue_is_the_planner_text():
+    from salome_agent.modules import spec_for
+    from salome_agent.nodes.planner import PLANNER_SYSTEM_PROMPT
+    assert spec_for("smesh").catalogue in PLANNER_SYSTEM_PROMPT
+    assert "meshing a geometry (algorithms, hypotheses, compute)" not in PLANNER_SYSTEM_PROMPT

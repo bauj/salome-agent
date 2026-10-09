@@ -297,3 +297,29 @@ def test_a_shaper_only_result_has_no_bridge():
     out = assemble({"stages": {0: _ext_stage()}, "run_id": "x", "user_request": "r",
                     "plan": []})
     assert out.count("publishToShaperStudy") == 1
+
+
+def _render_shaper_then_smesh():
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.nodes.assembler import render_script
+    ext = _ext_stage()["calls"][0]
+    mesh = {"fn": "Mesh", "emit": "stmt",
+            "code": "mesh_1 = smesh.Mesh(_shaper_shape('ext_1'), 'mesh_1')",
+            "out_vars": ["mesh_1"], "args": [{"kind": "expr", "value": "", "refs": ["ext_1"]}],
+            "publish": None}
+    g = BuildGraph()
+    b1 = g.add_block(0, "stage 1/2: shaper", "shaper", ["ext_1"])
+    g.append(b1, ext["tool"], ext["tool_args"], ext["records"], 0, module="shaper")
+    b2 = g.add_block(0, "stage 2/2: smesh", "smesh", ["mesh_1"])
+    g.append(b2, "create_mesh", {"shape": "ext_1"}, [mesh], 0, module="smesh")
+    return render_script(g, "r1")
+
+
+def test_smesh_tool_block_after_shaper_gets_the_shaper_results_published():
+    text = _render_shaper_then_smesh()
+    shaper_end = text.index("# stage 2/2: smesh")
+    assert text[shaper_end:].split("\n")[1:4] == ["model.end()",
+                                                  "model.publishToShaperStudy()",
+                                                  "model.begin()"]
+    assert text.count("smesh = smeshBuilder.New()") == 1
+    assert "from salome.kernel import SMESH, StdMeshers" in text
