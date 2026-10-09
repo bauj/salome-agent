@@ -1,7 +1,7 @@
 """The SMESH tool package. Importing it registers every tool."""
 from executor.geom.helpers import _pinned
 from executor.smesh.state import COMPUTE_TIMEOUT_S, registry, reset  # noqa: F401
-from executor.smesh import naming, setup, compute  # noqa: F401 — registers the tools
+from executor.smesh import naming, setup, compute, local  # noqa: F401 — registers the tools
 
 TOOLS = registry.handlers()
 _LONG = {"compute": COMPUTE_TIMEOUT_S}
