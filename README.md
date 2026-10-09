@@ -3,7 +3,7 @@
 Turn a natural-language request into a **verified, reproducible SALOME Python script**.
 
 You describe what you want ("make a 10 mm cube, then tetrahedral-mesh it"). The agent
-plans the stages, drives per-module specialist agents (geom / smesh) against a
+plans the stages, drives per-module specialist agents (SHAPER / GEOM / SMESH) against a
 live SALOME session, verifies each stage actually runs, and assembles a standalone
 `result.py` that reproduces the whole thing with no agent or executor involved.
 
@@ -19,14 +19,15 @@ Two processes:
 | Process   | Runs where | Does |
 |-----------|-----------|------|
 | **agent**    | your Python venv | planning, LLM calls, static verification, script assembly (LangGraph `StateGraph`) |
-| **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes stage scripts, geom tool calls, introspection, sanity checks, timeout kills |
+| **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes stage scripts, SHAPER / GEOM tool calls, introspection, sanity checks, timeout kills |
 
 The agent connects to the server over loopback TCP (token-authenticated,
 line-delimited JSON); it discovers a running server via `~/.salome_agent/server.json`.
 
 Flow: `request → plan → [per stage: specialist → verify static → verify exec → advance] → assemble result.py → report`
 
-- **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log.
+- **shaper** stages — the default CAD module — run as tool calls (`create_sketch`, `sketch_add`, `extrude`, `fillet_edges`, ...) against the server. Each call executes the same source line that goes into `result.py`, so the live document and the script cannot drift.
+- **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log. The planner picks GEOM only when the request names it ("using GEOM").
 - **smesh** stages are raw scripts, statically checked (top-level API existence) then executed under a timeout with per-module sanity checks.
 - Stage retry re-runs the full stage script (no MED checkpoints — GEOM can't export MED). GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
 
@@ -126,8 +127,8 @@ Any OpenAI-compatible `/chat/completions` endpoint. Requests are streamed (SSE).
 | `carry_reasoning` | `true` | Specialist (tool-calling) calls only: each turn's reasoning (`reasoning_content`) stays in the stage's history, so after a tool result (a `calc`, say) the model resumes its own thinking instead of starting over. Costs input tokens for the rest of the stage. Set `false` for a provider that rejects `reasoning_content` in requests. |
 | `extra_headers` | `{}` | Extra HTTP headers sent verbatim on every request. In a string value `{run_id}` is replaced with the run's id — for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`. |
 | `extra_body` | `{}` | Extra top-level fields merged into every request's JSON body, next to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider body params such as `{"reasoning_effort": "high"}`; whether the provider honours a field is up to the provider. |
-| `module_extra_body` | `{}` | `{"planner" \| "geom" \| "smesh": {...}}` — a body sent *instead of* `extra_body` (full replacement, not a merge) on that module's calls. Lets an expensive knob sit on the planner only, e.g. `{"planner": {"reasoning_effort": "high"}}`, while the many specialist calls run without it. |
-| `modules` | `{}` | `{"vision" \| "planner" \| "geom" \| "smesh": {...}}` — sends that module's calls to their own endpoint and/or model. Each entry may set `base_url`, `api_key`, `model`, `ssl_cert_file`, `temperature`, `timeout`, `extra_headers`, `extra_body`; a key left out keeps the shared `llm` value — except with a `base_url` of its own, which never inherits the shared `api_key`, `ssl_cert_file`, `extra_headers` or `extra_body` (another host gets no credentials meant for the main one). Its `extra_body`, when set, wins over `module_extra_body`. E.g. a stronger drawing reader for images only: `{"vision": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "api_key": "...", "model": "gemini-3-pro-preview"}}`. |
+| `module_extra_body` | `{}` | `{"planner" \| "shaper" \| "geom" \| "smesh": {...}}` — a body sent *instead of* `extra_body` (full replacement, not a merge) on that module's calls. Lets an expensive knob sit on the planner only, e.g. `{"planner": {"reasoning_effort": "high"}}`, while the many specialist calls run without it. |
+| `modules` | `{}` | `{"vision" \| "planner" \| "shaper" \| "geom" \| "smesh": {...}}` — sends that module's calls to their own endpoint and/or model. Each entry may set `base_url`, `api_key`, `model`, `ssl_cert_file`, `temperature`, `timeout`, `extra_headers`, `extra_body`; a key left out keeps the shared `llm` value — except with a `base_url` of its own, which never inherits the shared `api_key`, `ssl_cert_file`, `extra_headers` or `extra_body` (another host gets no credentials meant for the main one). Its `extra_body`, when set, wins over `module_extra_body`. E.g. a stronger drawing reader for images only: `{"vision": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "api_key": "...", "model": "gemini-3-pro-preview"}}`. |
 
 #### `policy` — how a run behaves
 
@@ -141,8 +142,8 @@ The first five keys have no built-in default — keep them in your config.
 | `tool_iteration_cap` | — | Maximum LLM turns (each turn may carry several tool calls) a tool-calling specialist gets for one stage. |
 | `on_stage_failure` | — | `abort` \| `continue`. What `--batch` does when a stage still fails after its retries: stop the run, or skip the stage and go on. Interactive runs ask instead. `--on-failure` overrides it. |
 | `plan_detail` | `balanced` | `coarse` \| `balanced` \| `fine`. How finely the planner splits a request into stages — `coarse` favours fewer, bigger stages; `fine` favours splitting a part or assembly into more stages. |
-| `tool_selection` | `hints` | `hints` \| `all`. `hints`: the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: the full geom registry on every call. `--tools` overrides it. |
-| `verify_cadence` | `final` | How hard the geom specialist is pushed to `measure`-check where its shapes landed — see below. |
+| `tool_selection` | `hints` | `hints` \| `all`. `hints`: the SHAPER / GEOM specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: the module's full registry on every call. `--tools` overrides it. |
+| `verify_cadence` | `final` | How hard the SHAPER / GEOM specialist is pushed to `measure`-check where its shapes landed — see below. |
 
 `policy.verify_cadence`:
 - `none` — no self-check.
@@ -201,13 +202,13 @@ Each image is base64-encoded (PNG/JPEG/WEBP/GIF/BMP, recognised by content; at m
 images and 20 MB in all; needs a vision-capable LLM behind `llm.base_url`) and first handed to a dedicated **vision agent**. It extracts what is
 visible — the parts and their shapes, dimensions written on the drawing, proportions,
 symmetry, and what is ambiguous — as a structured description, which is logged and passed
-to the **planner** and to the **geom specialist** in place of the raw pictures — neither
+to the **planner** and to the **SHAPER / GEOM specialist** in place of the raw pictures — neither
 sees the images themselves. The planner uses it to shape the stage breakdown, the
 specialist for proportions and placement. Multiple
 images are treated as different views/plans of the *same* part, reconciled into one 3D
 description — not as separate parts. Explicit numeric dimensions in the text request
 win, then dimensions read from the image; values the vision agent had to estimate are
-marked `~`. smesh stages don't see the images — it only feeds CAD construction.
+marked `~`. SMESH stages don't see the images — it only feeds CAD construction.
 
 The vision call is tagged `module="vision"`, so `llm.modules.vision` can send it to a
 different model or endpoint (one that reads drawings better) and `llm.module_extra_body` can
@@ -243,13 +244,13 @@ Run the result on its own, with no agent involved:
 
 | Flag | Meaning |
 |------|---------|
-| `--images PATH,PATH,...` | Comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) the generated CAD should match — e.g. several views/plans of the same part; described by a vision agent whose text description feeds the planner and the geom specialist (they never see the images). |
+| `--images PATH,PATH,...` | Comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) the generated CAD should match — e.g. several views/plans of the same part; described by a vision agent whose text description feeds the planner and the SHAPER / GEOM specialist (they never see the images). |
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
-| `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. smesh only (geom needs a session). |
+| `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. SMESH only (SHAPER and GEOM need a session). |
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
-| `--tools {hints,all}` | Geom tool retrieval. `hints` (default): the geom specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the full geom registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
+| `--tools {hints,all}` | SHAPER / GEOM tool retrieval. `hints` (default): the specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the module's full registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
 | `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`, and stream each call's reasoning to `<run_id>/llm_live.txt`. |
 | `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch` or `--no-session`. |
@@ -345,11 +346,32 @@ pytest tests/unit -n auto
 # live tests — require a working SALOME install, ~15-20s startup each;
 # keep these serial (no -n): they share one SALOME server
 pytest -m salome
+
+# tests that call a real LLM (spend tokens) — deselected by default
+pytest -m llm
 ```
 
 Tests marked `salome` are skipped unless a real SALOME install is present.
 They locate it via `$SALOME_ROOT`, else `salome.root` in `config.json`; with
-neither set the `salome` tests skip.
+neither set the `salome` tests skip. Tests marked `llm` call the endpoint in
+`config.json`; `pytest.ini` deselects them (`addopts = -m "not llm"`) unless
+you pass `-m llm`.
+
+Test layout:
+
+- `tests/unit/` — no SALOME, no network.
+- `tests/salome/` — live tests against a headless agent server the fixture
+  starts (it refuses to run if another server owns `~/.salome_agent/server.json`).
+- `tests/replay.py` + `tests/fixtures/cassettes/` — a recorded run (LLM replies
+  and server responses) replayed strictly in order, no network or SALOME;
+  `test_golden_runs.py` checks the replay still produces
+  `tests/fixtures/golden/<name>.py`. Record a new cassette from a run directory
+  with `scripts/make-cassette.py <run_dir> <name>`.
+- `tests/fixtures/golden/planner_prompt.txt`, `list_tools.json` — snapshots of
+  the planner prompt and the GEOM tool order; a change shows up as a diff.
+- `tests/fixtures/repetition/*.txt` — real reasoning streamed by models
+  (`loop_*` repeat themselves, `ok_*` do not), test data for the loop detector
+  in `salome_agent/repetition.py`.
 
 ### Static-check API map (`--no-session`)
 
@@ -380,15 +402,25 @@ drifted from a live introspect.
 salome_agent/
   cli.py            entry point
   graph.py          the LangGraph StateGraph (all nodes + routing)
+  runner.py         runs one request through the graph, maps its events
   config.py         config loading + validation
   llm.py            minimal OpenAI-compatible tool-calling client (+ with_images() for multimodal messages)
+  repetition.py     catches a model repeating itself while it streams
+  calc.py           the calc tool (arithmetic in a locked-down subprocess)
+  modules.py        ModuleSpec registry (shaper, geom, smesh)
   state.py          RunState / stage TypedDicts
-  nodes/            planner, gates (plan/retry), advance, assembler, report
-  specialists/      geom (tool-calling), smesh (raw script)
+  interactive.py    plan approval / stage-failure prompts
+  chat.py, conversation.py  --chat REPL and the multi-turn conversation
+  build_graph.py    the object graph a conversation edits
+  replay.py         replays part of the build graph after an edit or /undo
+  logs.py           logging setup (-v / -vv)
+  nodes/            planner, vision, gates (plan/retry), advance, assembler, report
+  specialists/      tool_specialist (shared tool loop), shaper + geom (tool-calling),
+                    smesh (raw script), amend (chat edits), tool_selection
   verify/           static (top-level API check), exec_check, introspect
   server_conn.py    finds + connects to the SALOME agent server
   executor_client.py  TCP client for the server (hello handshake, framing)
-  codegen.py        geom call-log -> Python source
+  codegen.py        call log -> Python source
 agent_server/       the server that runs inside SALOME
   core.py           command dispatch + poison gate
   backend.py        Backend protocol + HeadlessBackend
@@ -400,8 +432,10 @@ agent_server/       the server that runs inside SALOME
   __main__.py       headless entry (`python -m agent_server`)
 executor/
   registry.py       ToolRegistry — tool decorator, schemas, arg-type coercion
+  shaper/           SHAPER tool implementations (sketch, features, primitives, ...)
   geom/             geom tool implementations + per-tool JSON schemas
-scripts/            start-headless-server.sh, regen-toplevel-api.py, dump-view.sh
+scripts/            start-headless-server.sh, regen-toplevel-api.py, make-cassette.py,
+                    dump-view.sh (+ dump_view.py, run inside the SALOME GUI)
 docs/superpowers/   design specs + implementation plans
 ```
 
@@ -417,8 +451,10 @@ docs/superpowers/   design specs + implementation plans
 - `--no-session` mode only does a coarse "does this name exist" static check
   against a snapshot API map and no exec verification — see *Static-check API map*
   under Development. A real run always verifies against the live session.
-- geom tool registry (~45 tools: primitives, sketch, swept, booleans, transforms,
-  fillet/chamfer, display, query, subshape selection). `align` does relative
+- Tool registries: SHAPER 54 tools, GEOM 52 (primitives, sketch, swept,
+  booleans, transforms, fillet/chamfer, display, query, subshape selection).
+  The SHAPER stage prompt lists every SHAPER tool in one line each; a call to
+  one not loaded yet is refused and the tool loaded. `align` does relative
   placement (move a part so a chosen face/centre meets another's) so the model
   states the spatial relationship instead of computing the translation itself.
   Subshape ids come from
@@ -427,7 +463,11 @@ docs/superpowers/   design specs + implementation plans
   list. Add a tool with `@tool(name, category=..., description=..., schema=...,
   arg_types=...)` in `executor/geom/<category>.py` (see an existing tool);
   registration order = import order in `executor/geom/__init__.py` and is
-  pinned by `tests/fixtures/golden/list_tools.json`.
+  pinned by `tests/fixtures/golden/list_tools.json`. SHAPER tools live in
+  `executor/shaper/<category>.py` the same way.
+- Some OCC operations crash the SALOME process (segfault) instead of failing.
+  `fillet_edges` (SHAPER) refuses a radius at which fillets on two edges of one
+  face would meet; GEOM fillet/chamfer has no such guard yet.
 - `reset_and_replay` (rollback) is wired only for the headless backend and has no
   graph-level caller yet — retries re-run the full stage script.
 - RAG / documentation retrieval was cut from v1.
