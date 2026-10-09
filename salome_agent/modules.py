@@ -34,7 +34,7 @@ class ModuleSpec:
     no_tool_nudge: str
     # call_log, last_error -> the result when the iteration cap runs out.
     on_exhausted: Callable[[list, dict | None], dict]
-    # Its tools run in SALOME: with no server (--no-session) the stage ends
+    # Its tools run in SALOME: with no server the stage ends
     # fatal instead of starting.
     needs_session: bool = False
 
@@ -99,7 +99,7 @@ def _ensure_specialists_registered() -> None:
     # Import in order to trigger registration via @register decorator.
     # Must be done here, not at module level, to avoid import cycles.
     import salome_agent.specialists.geom  # noqa: F401 — trigger registration
-    import salome_agent.specialists.script_modules  # noqa: F401 — trigger registration
+    import salome_agent.specialists.smesh  # noqa: F401 — trigger registration
     import salome_agent.specialists.shaper  # noqa: F401 — trigger registration
     _SPECIALISTS_IMPORTED = True
 

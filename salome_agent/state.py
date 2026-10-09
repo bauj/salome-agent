@@ -33,8 +33,6 @@ class StageRecord(TypedDict, total=False):
     # Task 5's per-call trace: [{tool, tool_args, records}] — what a build
     # node is made from. None for script modules.
     calls: Optional[list[dict]]
-    static_retries: int
-    exec_retries: int
     # {wall, llm_s, core_s, exec_s, turns, in_tok, out_tok} — accumulated
     # across retry re-entries. Written by graph nodes, read by report.py.
     timing: dict

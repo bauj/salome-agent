@@ -6,17 +6,28 @@ from salome_agent.cli import (check_image_uris, load_reference_image, load_refer
                               parse_args, parse_image_paths)
 
 
-def test_parses_batch_and_no_session():
-    args = parse_args(["make a box", "--batch", "--no-session"])
+def test_parses_batch():
+    args = parse_args(["make a box", "--batch"])
     assert args.request == "make a box"
     assert args.batch is True
-    assert args.no_session is True
 
 
-def test_defaults_are_interactive_with_session():
-    args = parse_args(["make a box"])
-    assert args.batch is False
-    assert args.no_session is False
+def test_defaults_are_interactive():
+    assert parse_args(["make a box"]).batch is False
+
+
+def test_no_session_is_gone():
+    with pytest.raises(SystemExit):
+        parse_args(["make a box", "--no-session"])
+
+
+class _FakeClient:
+    mode = "headless"
+
+
+def _fake_connect(monkeypatch):
+    monkeypatch.setattr("salome_agent.server_conn.connect",
+                        lambda run_id, **kw: _FakeClient())
 
 
 def test_verbose_counts():
@@ -176,7 +187,7 @@ def test_main_rejects_an_empty_images_flag(tmp_path, monkeypatch):
     assert cli.main(["make a box", "--images", ","]) == 1
 
 
-def test_main_no_session_delegates_to_run_request(tmp_path, monkeypatch, capsys):
+def test_main_delegates_to_run_request(tmp_path, monkeypatch, capsys):
     import json
 
     from salome_agent import cli
@@ -195,11 +206,12 @@ def test_main_no_session_delegates_to_run_request(tmp_path, monkeypatch, capsys)
                          final_state={"report": "REPORT-TEXT"}, exit_code=0)
 
     monkeypatch.setattr("salome_agent.runner.run_request", fake_run)
-    rc = cli.main(["make a box", "--no-session", "--batch", "--config", str(cfg),
+    _fake_connect(monkeypatch)
+    rc = cli.main(["make a box", "--batch", "--config", str(cfg),
                    "--on-failure", "continue"])
     assert rc == 0
     assert seen["request"] == "make a box"
-    assert seen["client"] is None and seen["batch"] is True
+    assert isinstance(seen["client"], _FakeClient) and seen["batch"] is True
     assert seen["config"]["policy"]["on_stage_failure"] == "continue"
     assert "REPORT-TEXT" in capsys.readouterr().out
 
@@ -216,14 +228,11 @@ def test_main_returns_1_on_abort(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "salome_agent.runner.run_request",
         lambda request, config, **kw: RunResult(kw["run_id"], "/x", {"aborted": True}, 1))
-    assert cli.main(["x", "--no-session", "--config", str(cfg)]) == 1
+    _fake_connect(monkeypatch)
+    assert cli.main(["x", "--batch", "--config", str(cfg)]) == 1
 
 
 def test_chat_with_batch_is_an_error(capsys):
     from salome_agent.cli import main
     assert main(["a box", "--chat", "--batch"]) == 2
 
-
-def test_chat_with_no_session_is_an_error(capsys):
-    from salome_agent.cli import main
-    assert main(["a box", "--chat", "--no-session"]) == 2

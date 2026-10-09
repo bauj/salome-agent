@@ -63,15 +63,12 @@ class EventMapper:
             p = self.plan[self.idx]
             out.append(self.event("stage_start", index=self.idx,
                                   module=p.get("module", "?"), intent=p.get("intent", "")))
-        if node in ("run_stage", "verify_static", "verify_exec"):
+        if node == "run_stage":
             err = update.get("last_error")
             if err:
                 out.append(self.event("stage_attempt", index=self.idx,
                                       phase=err.get("phase") or node, ok=False,
                                       error=err.get("message")))
-            elif node != "run_stage":
-                out.append(self.event("stage_attempt", index=self.idx,
-                                      phase=node.split("_", 1)[1], ok=True, error=None))
         if node == "advance":
             stage = (update.get("stages") or {}).get(self.idx) or {}
             out.append(self.event("stage_done", index=self.idx,

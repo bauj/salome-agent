@@ -201,20 +201,8 @@ def _amend_node(state: dict, config: "RunnableConfig"):
 
 
 def route_after_run_stage(state: dict) -> str:
-    from salome_agent.modules import spec_for
-
     stage = state["stages"][state["stage_idx"]]
-    if spec_for(stage["module"]).call_prefix:
-        if stage["status"] == "ok":
-            return "advance"
-        return "retry_gate"
-    return "verify_static"
-
-
-def route_after_verify_exec(state: dict, session_died: bool = False) -> str:
-    if session_died:
-        return "assemble"
-    return "advance"
+    return "advance" if stage["status"] == "ok" else "retry_gate"
 
 
 def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
@@ -430,7 +418,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     from salome_agent.modules import MODULES, spec_for
     from salome_agent.specialists.tool_specialist import ToolSpecialist
     import salome_agent.specialists.geom  # noqa: F401 — registers GEOM_SPEC
-    import salome_agent.specialists.script_modules  # noqa: F401 — registers the script specs
+    import salome_agent.specialists.smesh  # noqa: F401 — registers SMESH_SPEC
     import salome_agent.specialists.shaper  # noqa: F401 — registers SHAPER_SPEC
 
     if module not in MODULES:
@@ -516,70 +504,6 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     return Command(update=update, goto=goto)
 
 
-def _verify_static_node(state: dict, config: "RunnableConfig"):
-    from langgraph.types import Command
-    from salome_agent.verify.introspect import build_api_map
-    from salome_agent.verify.static import check_static
-
-    idx = state["stage_idx"]
-    stage = state["stages"][idx]
-    client = config["configurable"].get("executor_client")
-    api_map = build_api_map(client)
-    err = check_static(stage["script"], api_map)
-    if err is None:
-        log.info("  static check: ok")
-        return Command(goto="verify_exec")
-
-    stages = dict(state["stages"])
-    stage = dict(stage)
-    stage["static_retries"] += 1
-    stages[idx] = stage
-    cap = state["config"]["policy"]["static_retries"]
-    goto = "run_stage" if stage["static_retries"] <= cap else "retry_gate"
-    log.warning("  static check failed (retry %d/%d): %s", stage["static_retries"], cap,
-                err.get("message"))
-    return Command(update={"stages": stages, "last_error": err}, goto=goto)
-
-
-def _verify_exec_node(state: dict, config: "RunnableConfig"):
-    from langgraph.types import Command
-    from salome_agent.verify.exec_check import check_exec
-
-    idx = state["stage_idx"]
-    stage = state["stages"][idx]
-    client = config["configurable"]["executor_client"]
-    timeout = state["config"]["policy"]["exec_timeout_s"]
-    log.info("  exec check: running stage script under SALOME (timeout %ss)...", timeout)
-    t0 = time.monotonic()
-    result = check_exec(stage["script"], stage["module"], client, timeout)
-    exec_wall = time.monotonic() - t0
-
-    if result == "session_died":
-        log.error("  SALOME session died during exec - assembling what we have")
-        return Command(goto="assemble")
-    if result == "session_poisoned":
-        log.error("  SALOME agent server poisoned by a timeout - aborting run")
-        return Command(update={"fatal": "SALOME agent server poisoned by a stage timeout"},
-                       goto="assemble")
-
-    stages = dict(state["stages"])
-    stage = dict(stage)
-    stage["timing"] = _accum_timing(stage.get("timing"), {"exec_s": exec_wall})
-    stages[idx] = stage
-
-    if result is None:
-        log.info("  exec check: ok")
-        return Command(update={"stages": stages}, goto=route_after_verify_exec(state))
-
-    stage["exec_retries"] += 1
-    stages[idx] = stage
-    cap = state["config"]["policy"]["exec_retries"]
-    goto = "run_stage" if stage["exec_retries"] <= cap else "retry_gate"
-    log.warning("  exec check failed (retry %d/%d): %s", stage["exec_retries"], cap,
-                result.get("message"))
-    return Command(update={"stages": stages, "last_error": result}, goto=goto)
-
-
 def _advance_node(state: dict):
     from langgraph.types import Command
     from salome_agent.nodes.advance import advance
@@ -655,8 +579,6 @@ def build_graph(batch: bool):
     g.add_node("amend", _amend_node)
     g.add_node("plan_gate", plan_gate)
     g.add_node("run_stage", _run_stage_node)
-    g.add_node("verify_static", _verify_static_node)
-    g.add_node("verify_exec", _verify_exec_node)
     g.add_node("retry_gate", retry_gate)
     g.add_node("advance", _advance_node)
     g.add_node("skip", _skip_node)

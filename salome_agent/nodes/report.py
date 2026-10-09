@@ -113,11 +113,10 @@ def write_report(state: dict, usage: dict | None = None) -> str:
     total = len(state["stages"])
     for idx in sorted(state["stages"]):
         stage = state["stages"][idx]
-        retries = stage.get("static_retries", 0) + stage.get("exec_retries", 0)
         suffix = ""
         tm = stage.get("timing")
         if tm:
             suffix = _stage_timing_suffix(tm)
         lines.append(f"- stage {idx + 1}/{total} ({stage['module']}): "
-                     f"{stage['status']}, retries={retries}{suffix}")
+                     f"{stage['status']}{suffix}")
     return "\n".join(lines)

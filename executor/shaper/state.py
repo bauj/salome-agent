@@ -98,6 +98,8 @@ class ShaperState:
         self.sketches: dict[str, Sketch] = {}
         # published feature name -> kind ("face", "solid", ...)
         self.objects: dict[str, str] = {}
+        # group name -> the shape its sub-shapes belong to (make_group)
+        self.groups: dict[str, str] = {}
         # the sketch being edited (executor/shaper/editing.py), or None
         self.editing: str | None = None
 
@@ -172,6 +174,7 @@ def forget(executor, names: list) -> list:
                     st.ns.pop(var)
             elif name in st.objects:
                 st.objects.pop(name)
+                st.groups.pop(name, None)
                 feats = [st.ns[name].feature()]
                 for var in [v for v in st.ns if v.startswith(f"{name}_")]:
                     feats.append(st.ns.pop(var).feature())   # make_face's region helper
@@ -503,6 +506,20 @@ def results_of(executor, name: str) -> list:
     """The published feature's result objects that hold a shape."""
     feat = state(executor).ns[name].feature()
     return [r for r in feat.results() if r.shape() is not None]
+
+
+def shape_type(executor, name: str) -> str:
+    feat = state(executor).ns[name].feature()
+    if feat.getKind() == "Group":
+        return feat.selectionList("group_list").selectionType().lower()
+    shapes = [r.shape() for r in results_of(executor, name)]
+    return shapes[0].shapeTypeStr().lower() if len(shapes) == 1 else "compound"
+
+
+def consumed(executor, name: str) -> bool:
+    """True once a later feature used the result up (a boolean's operand): it is
+    no longer in the study."""
+    return all(r.isConcealed() for r in results_of(executor, name))
 
 
 def _real(s) -> bool:

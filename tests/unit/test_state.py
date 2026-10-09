@@ -10,7 +10,7 @@ def test_repeated_module_stages_do_not_collide():
     stages: dict[int, StageRecord] = {
         i: {
             "module": p["module"], "status": "pending", "script": None,
-            "call_log": None, "static_retries": 0, "exec_retries": 0,
+            "call_log": None,
         }
         for i, p in enumerate(plan)
     }

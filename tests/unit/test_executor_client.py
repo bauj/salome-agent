@@ -185,3 +185,69 @@ def test_list_tools_without_module_accepts_any_server():
     client = _connect(box)
     assert client.list_tools()["tools"] == [{"name": "make_box"}]
     t.join()
+
+
+def _slow_server(port_box, delay):
+    import time
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port_box.append(srv.getsockname()[1])
+    conn, _ = srv.accept()
+    f = conn.makefile("rwb")
+    f.readline()
+    f.write((json.dumps({"ready": True, "proto": 1, "mode": "headless"}) + "\n").encode())
+    f.flush()
+    for _ in range(2):
+        line = f.readline()
+        if not line:
+            break
+        time.sleep(delay)
+        try:
+            f.write((json.dumps({"id": 1, "ok": True}) + "\n").encode())
+            f.flush()
+        except OSError:
+            break
+    conn.close()
+    srv.close()
+
+
+def test_a_long_tool_waits_past_the_read_timeout(monkeypatch):
+    import salome_agent.executor_client as ec
+    monkeypatch.setattr(ec, "READ_TIMEOUT", 0.2)
+    monkeypatch.setattr("executor.smesh.timeout_for", lambda n: 5 if n == "compute" else None)
+    box = []
+    t = threading.Thread(target=_slow_server, args=(box, 0.5))
+    t.start()
+    c = _connect(box)
+    assert c.call_tool("compute", {"mesh": "mesh_1"}, module="smesh")["ok"] is True
+    with pytest.raises(SessionDied):
+        c.call_tool("create_mesh", {"shape": "box_1"}, module="smesh")
+    c.close()
+    t.join()
+
+
+def test_run_dir_goes_in_the_hello():
+    seen = []
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        conn, _ = srv.accept()
+        f = conn.makefile("rwb")
+        seen.append(json.loads(f.readline()))
+        f.write((json.dumps({"ready": True, "proto": 1, "mode": "headless"}) + "\n").encode())
+        f.flush()
+        conn.close()
+        srv.close()
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    ExecutorClient("127.0.0.1", srv.getsockname()[1], "tok", "run1", run_dir="/w/run1").close()
+    t.join()
+    assert seen[0]["run_dir"] == "/w/run1"
+
+
+def test_the_script_sanity_command_is_gone():
+    assert not hasattr(ExecutorClient, "sanity")

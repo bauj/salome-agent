@@ -23,14 +23,15 @@ def read_handshake() -> dict | None:
     return data
 
 
-def connect(run_id: str, record_path: str | None = None, hold: bool = False) -> ExecutorClient:
+def connect(run_id: str, record_path: str | None = None, hold: bool = False,
+            run_dir: str | None = None) -> ExecutorClient:
     for attempt in (1, 2):
         hs = read_handshake()
         if hs is None:
             raise ServerUnavailable(f"No SALOME agent server running. {_HELP}")
         try:
             return ExecutorClient(hs["host"], hs["port"], hs["token"], run_id,
-                                  record_path=record_path, hold=hold)
+                                  record_path=record_path, hold=hold, run_dir=run_dir)
         except ServerBusy as e:
             raise ServerUnavailable(f"{e}. {_HELP}") from e
         except SessionPoisoned as e:
