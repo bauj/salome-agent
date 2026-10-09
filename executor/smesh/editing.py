@@ -73,7 +73,8 @@ def tool_export_mesh(executor, args: dict):
     run(state(executor), f"{m}.{_FORMATS[fmt].format(path=path)}")
     rel = f"{m}.{fmt}"
     code = f"{m}.{_FORMATS[fmt].format(path=rel)}"
-    return {"ok": True, "records": [record("Export", code, recv=m)], "mesh": m, "path": path}
+    return {"ok": True, "records": [record("Export", code, recv=m)], "mesh": m, "path": path,
+            "note": f"written to {path}; result.py writes {rel} in the folder it runs from"}
 
 
 def forget(executor, names: list) -> list:
@@ -86,6 +87,10 @@ def forget(executor, names: list) -> list:
         if name in st.meshes:
             smesh.RemoveMesh(st.ns[name])
             st.meshes.pop(name)
+            # its algorithms, parameters and mesh groups: <mesh>_...
+            for var in [v for v in st.ns if v.startswith(f"{name}_")
+                        and v not in st.meshes and v not in st.geo_groups]:
+                st.ns.pop(var)
         elif name in st.geo_groups:
             g = st.geo_groups.pop(name)
             for m, info in st.meshes.items():

@@ -96,3 +96,38 @@ def test_shape_props_of_a_shaper_shape_measure_it_in_shaper(monkeypatch):
     ex.__dict__["shaper_state"] = types.SimpleNamespace(objects={"box_1": "solid"}, groups={})
     assert c.shape_props(ex, "box_1") == {"type": "solid", "area": 2200.0,
                                           "volume": 6000.0, "faces": 6}
+
+
+def _fake_smesh_executor():
+    import types
+    from executor.smesh import state as sm
+    ex = types.SimpleNamespace()
+    removed = []
+    ns = {"smesh": types.SimpleNamespace(RemoveMesh=removed.append),
+          "salome": types.SimpleNamespace(myStudy=None),
+          "mesh_1": "mesh", "mesh_1_a3": "algo", "mesh_1_netgen": "params",
+          "mesh_1_lid": "group", "mesh_10": "other mesh", "mesh_1_keep": "geo group"}
+    st = ex.__dict__["smesh_state"] = sm.SmeshState(ns)
+    st.meshes["mesh_1"] = sm.MeshInfo("box_1", "geom")
+    st.meshes["mesh_10"] = sm.MeshInfo("box_1", "geom")
+    st.geo_groups["mesh_1_keep"] = sm.GeoGroup("box_1", "geom", "face")
+    return ex, st, removed
+
+
+def test_forget_a_mesh_drops_its_variables():
+    from executor.smesh.editing import forget
+    ex, st, removed = _fake_smesh_executor()
+    assert forget(ex, ["mesh_1"]) == ["mesh_1"]
+    assert removed == ["mesh"]
+    assert set(st.ns) == {"smesh", "salome", "mesh_10", "mesh_1_keep"}
+
+
+def test_export_reply_says_where_result_py_writes(monkeypatch, tmp_path):
+    from executor.smesh import editing
+    ex, st, _ = _fake_smesh_executor()
+    ex.run_dir = str(tmp_path)
+    monkeypatch.setattr(editing, "run", lambda st, code: None)
+    r = editing.tool_export_mesh(ex, {"mesh": "mesh_1", "format": "med"})
+    assert r["path"] == str(tmp_path / "mesh_1.med")
+    assert r["records"][0]["code"] == "mesh_1.ExportMED('mesh_1.med')"
+    assert "result.py" in r["note"] and "mesh_1.med" in r["note"]
