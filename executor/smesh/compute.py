@@ -1,4 +1,4 @@
-from executor.smesh.state import MAX_ELEMENTS, mesh_of, record, state, tool
+from executor.smesh.state import MAX_ELEMENTS, mesh_of, record, shape_ref, state, tool
 
 
 def geom_copy(st, obj):
@@ -15,6 +15,25 @@ def geom_copy(st, obj):
         subs = [geompy.GetSubShape(main, [i]) for i in obj.GetSubShapeIndices()]
         return subs[0] if len(subs) == 1 else geompy.MakeCompound(subs)
     return geompy.RestoreShape(obj.GetShapeStream())
+
+
+def shape_props(executor, name: str) -> dict:
+    """Type, area, volume and face count of a published shape or group, measured
+    in the module that owns it: a SHAPER shape is never copied to GEOM."""
+    expr, owner = shape_ref(executor, name)
+    if owner == "shaper":
+        from executor.shaper import state as shaper
+        if shaper.consumed(executor, name):
+            raise LookupError(f"{name} was used up by a later step")
+        m = shaper.measure(executor, name)
+        return {"type": shaper.shape_type(executor, name), "area": m["area"],
+                "volume": m["volume"], "faces": m["faces"]}
+    st = state(executor)
+    geompy = st.ns["geompy"]
+    obj = eval(expr, st.ns)
+    p = geompy.BasicProperties(obj)
+    return {"type": str(obj.GetShapeType()).lower(), "area": round(p[1], 4),
+            "volume": round(p[2], 4), "faces": geompy.NumberOfFaces(obj)}
 
 
 # criterion -> (SMESH functor, element type it applies to: 3D first, else 2D)
@@ -72,13 +91,16 @@ def predicted(st, m) -> int:
 
 def failures(st, info, m) -> list:
     geompy = st.ns["geompy"]
-    shape = geom_copy(st, m.GetShape())
+    shape = None
     out = []
     for e in m.GetComputeErrors():
         if e.subShapeID <= 0:
             out.append({"algorithm": e.algoName, "reason": e.comment or str(e.code),
                         "type": "shape", "centre": [], "size": 0})
             continue
+        # Only GEOM resolves SMESH's sub-shape numbering: copied for a failure only.
+        if shape is None:
+            shape = geom_copy(st, m.GetShape())
         sub = geompy.GetSubShape(shape, [e.subShapeID])
         t = str(sub.GetShapeType()).lower()
         props = geompy.BasicProperties(sub)
@@ -103,10 +125,10 @@ def measure_mesh(executor, name: str) -> dict:
     st = state(executor)
     info = mesh_of(executor, name)
     m = _mesh(st, name)
-    smesh, geompy = st.ns["smesh"], st.ns["geompy"]
+    smesh = st.ns["smesh"]
     out = counts(st, m)
-    props = geompy.BasicProperties(geom_copy(st, m.GetShape()))
-    out["shape_area"], out["shape_volume"] = round(props[1], 4), round(props[2], 4)
+    props = shape_props(executor, info.shape)
+    out["shape_area"], out["shape_volume"] = props["area"], props["volume"]
     out["volume"] = round(smesh.GetVolume(m), 4) if out["volumes"] else 0.0
     out["area"] = round(smesh.GetArea(m), 4) if out["faces"] else 0.0
     out["quality"] = {k: q for k in _REPLY_QUALITY if (q := quality(st, m, k))}

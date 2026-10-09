@@ -94,20 +94,11 @@ def tool_name_subshapes(executor, args: dict):
       schema={"type": "object", "properties": {
           "names": {"type": "array", "items": {"type": "string"}}}, "required": ["names"]})
 def tool_shape_info(executor, args: dict):
-    from executor.smesh.compute import geom_copy
-    st = state(executor)
-    geompy = st.ns["geompy"]
+    from executor.smesh.compute import shape_props
     out = {}
     for name in args.get("names") or []:
-        expr, _ = shape_ref(executor, name)
         try:
-            shape = geom_copy(st, eval(expr, st.ns))
+            out[name] = shape_props(executor, name)
         except LookupError as e:
             out[name] = {"error": str(e)}
-            continue
-        props = geompy.BasicProperties(shape)
-        out[name] = {"type": str(shape.GetShapeType()).lower(),
-                     "length": round(props[0], 4), "area": round(props[1], 4),
-                     "volume": round(props[2], 4),
-                     "faces": geompy.NumberOfFaces(shape)}
     return {"ok": True, "records": [], "shapes": out}
