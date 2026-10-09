@@ -245,3 +245,17 @@ def test_forget_a_group_drops_its_mesh_groups(agent_client):
     assert "cap" not in r["groups"]
     g = _call(agent_client, "smesh", "groups_from_geometry", mesh=m)
     assert g["ok"] is False
+
+
+def test_a_mesh_on_a_shaper_group_measures_the_group(agent_client):
+    b = shaper_box(agent_client)
+    top_face_group(agent_client, b, name="roof")
+    m = _ok(agent_client, "smesh", "create_mesh", shape="roof")["name"]
+    _ok(agent_client, "smesh", "mesh_surface", mesh=m, max_size=2)
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["shape_area"] == pytest.approx(200) and r["shape_volume"] == 0
+    assert r["area"] == pytest.approx(200, rel=1e-6)
+    info = _ok(agent_client, "smesh", "shape_info", names=[b, "roof"])["shapes"]
+    assert info[b] == {"type": "solid", "area": pytest.approx(2200),
+                       "volume": pytest.approx(6000), "faces": 6}
+    assert info["roof"]["type"] == "face" and info["roof"]["area"] == pytest.approx(200)

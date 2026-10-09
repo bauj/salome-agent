@@ -508,6 +508,20 @@ def results_of(executor, name: str) -> list:
     return [r for r in feat.results() if r.shape() is not None]
 
 
+def shape_type(executor, name: str) -> str:
+    feat = state(executor).ns[name].feature()
+    if feat.getKind() == "Group":
+        return feat.selectionList("group_list").selectionType().lower()
+    shapes = [r.shape() for r in results_of(executor, name)]
+    return shapes[0].shapeTypeStr().lower() if len(shapes) == 1 else "compound"
+
+
+def consumed(executor, name: str) -> bool:
+    """True once a later feature used the result up (a boolean's operand): it is
+    no longer in the study."""
+    return all(r.isConcealed() for r in results_of(executor, name))
+
+
 def _real(s) -> bool:
     """False for a degenerated edge: the zero-length edge OCC puts where a
     revolved profile touches its axis. SHAPER cannot name or select it."""

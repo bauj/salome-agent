@@ -68,3 +68,31 @@ def test_mesh_status_refusals(kw, dim, word):
 def test_check_line_exists():
     from salome_agent.specialists.tool_specialist import _CHECK_LINES
     assert "{detail}" in _CHECK_LINES["not_meshed"]
+
+
+def _no_copy(*a):
+    raise AssertionError("geom_copy called")
+
+
+def test_failures_make_no_copy_when_nothing_failed(monkeypatch):
+    import types
+    monkeypatch.setattr(c, "geom_copy", _no_copy)
+    st = types.SimpleNamespace(ns={"geompy": None})
+    m = types.SimpleNamespace(GetComputeErrors=lambda: [], GetShape=lambda: "shaperstudy object")
+    assert c.failures(st, None, m) == []
+
+
+def test_shape_props_of_a_shaper_shape_measure_it_in_shaper(monkeypatch):
+    import types
+    from executor.smesh import state as sm
+    import executor.shaper.state as shs
+    monkeypatch.setattr(c, "geom_copy", _no_copy)
+    monkeypatch.setattr(shs, "measure", lambda ex, name: {
+        "area": 2200.0, "volume": 6000.0, "faces": 6, "edges": 12, "bbox": []})
+    monkeypatch.setattr(shs, "shape_type", lambda ex, name: "solid")
+    monkeypatch.setattr(shs, "consumed", lambda ex, name: False)
+    ex = types.SimpleNamespace(geom_bindings={})
+    ex.__dict__["smesh_state"] = sm.SmeshState({})
+    ex.__dict__["shaper_state"] = types.SimpleNamespace(objects={"box_1": "solid"}, groups={})
+    assert c.shape_props(ex, "box_1") == {"type": "solid", "area": 2200.0,
+                                          "volume": 6000.0, "faces": 6}
