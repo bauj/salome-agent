@@ -86,3 +86,14 @@ def test_viscous_code_3d_and_2d():
     code2 = lo.viscous_code("m_a2", 2, {"thickness": 1, "layers": 3, "stretch": 1.2,
                                         "faces_are": "with_layers"}, ["w1", "w2"])
     assert code2 == "m_a2.ViscousLayers2D(1, 3, 1.2, _ids(w1) + _ids(w2), False)"
+
+
+def test_prism_code():
+    code = su.prism_code("m", '_shaper_shape("base")', {"layers": 10, "face_size": 2})
+    assert code.splitlines() == [
+        "m_a1 = m.Segment().NumberOfSegments(10)",
+        "m_a3 = m.Prism()",
+        'm_a1_end = m.Segment(geom=_shaper_shape("base"))',
+        "m_a1_end.LocalLength(2)",
+        'm_a2_end = m.Triangle(algo=smeshBuilder.NETGEN_2D, geom=_shaper_shape("base"))',
+    ]

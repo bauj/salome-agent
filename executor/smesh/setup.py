@@ -297,3 +297,33 @@ def tool_set_hypothesis(executor, args: dict):
         raise ValueError(f"the dimension-{dim} algorithm there does not take {kind}") from None
     return {"ok": True, "records": [record("set_hypothesis", code, recv=m, refs=refs)],
             "mesh": m}
+
+
+def prism_code(m: str, end_expr: str, args: dict) -> str:
+    n = args.get("layers")
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        raise ValueError(f"layers must be a whole number >= 1, got {n!r}")
+    size = _pos(args, "face_size")
+    return "\n".join([f"{m}_a1 = {m}.Segment().NumberOfSegments({n})",
+                      f"{m}_a3 = {m}.Prism()",
+                      f"{m}_a1_end = {m}.Segment(geom={end_expr})",
+                      f"{m}_a1_end.LocalLength({size!r})",
+                      f"{m}_a2_end = {m}.Triangle(algo=smeshBuilder.NETGEN_2D, geom={end_expr})"])
+
+
+@tool("mesh_prism", category="setup",
+      description=("Sweep a triangle mesh of one end face of an extruded solid through it "
+                   "into prisms, in `layers` layers; `end_face` is a named group of that "
+                   "face, `face_size` the element size on it. The end faces must match."),
+      schema={"type": "object", "properties": {
+          **_MESH, "end_face": {"type": "string"}, "layers": {"type": "integer"},
+          "face_size": {"type": "number"}},
+          "required": ["mesh", "end_face", "layers", "face_size"]})
+def tool_mesh_prism(executor, args: dict):
+    end = args.get("end_face")
+    gexpr = group_ref(executor, end)[0]
+    r = _preset(executor, args, "mesh_prism", 3, lambda m, a: prism_code(m, gexpr, a))
+    info = mesh_of(executor, args["mesh"])
+    info.submeshes[end] = f"{args['mesh']}_a1_end"
+    r["records"][0]["args"] = [{"kind": "expr", "value": "", "refs": [end]}]
+    return r
