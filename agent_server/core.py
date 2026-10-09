@@ -1,9 +1,9 @@
-from executor import geom, shaper  # top-level — salome_init mutates sys.path later
+from executor import geom, shaper, smesh  # top-level — salome_init mutates sys.path later
 from agent_server import handshake
 
 # Tool-calling modules: name -> (package, the SALOME module refreshed after a call).
-_TOOL_MODULES = {"geom": geom, "shaper": shaper}
-_REFRESH = {"geom": "GEOM", "shaper": "SHAPER"}
+_TOOL_MODULES = {"geom": geom, "shaper": shaper, "smesh": smesh}
+_REFRESH = {"geom": "GEOM", "shaper": "SHAPER", "smesh": "SMESH"}
 _TOOL_TIMEOUT = 120
 # Top-level APIs a script may call that are not in the server namespace: imported
 # on demand (on the GUI thread) for introspect.
@@ -77,7 +77,8 @@ class Core:
             if cmd == "list_tools":
                 return {"id": rid, "tools": pkg.list_tools(), "module": module}
             call = lambda: pkg.call_tool(b, req["name"], req["args"], pin=req.get("pin"))
-            r = call() if module == "geom" else b.run_tool(call, _TOOL_TIMEOUT)
+            limit = getattr(pkg, "timeout_for", lambda n: None)(req["name"]) or _TOOL_TIMEOUT
+            r = call() if module == "geom" else b.run_tool(call, limit)
             if r.get("ok"):
                 b.refresh(_REFRESH[module])
             return {"id": rid, **r}
