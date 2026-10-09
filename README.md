@@ -29,7 +29,7 @@ Flow: `request → plan → [per stage: specialist tool loop → finish_stage ch
 - **shaper** stages — the default CAD module — run as tool calls (`create_sketch`, `sketch_add`, `extrude`, `fillet_edges`, ...) against the server. Each call executes the same source line that goes into `result.py`, so the live document and the script cannot drift.
 - **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log. The planner picks GEOM only when the request names it ("using GEOM").
 - **smesh** stages run as tool calls (`create_mesh`, `mesh_tetra`, `name_subshapes`, `local_size`, `compute`, ...) on a shape an earlier stage built, SHAPER or GEOM. Each call executes the line it records into `result.py`; `compute` answers with element counts, the mesh volume next to the shape's, quality and every part that failed, and `finish_stage` is refused until the mesh holds up.
-- Stage retry re-runs the full stage script (no MED checkpoints — GEOM can't export MED). GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
+- A failed stage stops at the stage-failure gate (or, with `--batch`, follows `on_stage_failure`). A retry continues from what the failed attempt built and is told what that is. GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
 
 ---
 
@@ -134,7 +134,7 @@ The first two keys have no built-in default — keep them in your config.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `tool_iteration_cap` | — | Maximum LLM turns (each turn may carry several tool calls) a tool-calling specialist gets for one stage. |
-| `on_stage_failure` | — | `abort` \| `continue`. What `--batch` does when a stage still fails after its retries: stop the run, or skip the stage and go on. Interactive runs ask instead. `--on-failure` overrides it. |
+| `on_stage_failure` | — | `abort` \| `continue`. What `--batch` does when a stage fails: stop the run, or skip the stage and go on. Interactive runs ask instead. `--on-failure` overrides it. |
 | `plan_detail` | `balanced` | `coarse` \| `balanced` \| `fine`. How finely the planner splits a request into stages — `coarse` favours fewer, bigger stages; `fine` favours splitting a part or assembly into more stages. |
 | `tool_selection` | `hints` | `hints` \| `all`. `hints`: the SHAPER / GEOM specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: the module's full registry on every call. `--tools` overrides it. |
 | `verify_cadence` | `final` | How hard the SHAPER / GEOM specialist is pushed to `measure`-check where its shapes landed — see below. |
@@ -214,7 +214,7 @@ The agent will:
    running it exits with a message telling you to start one.
 2. Plan the stages, run each specialist, verify, and assemble — progress is logged to
    stderr as it goes (`planning...`, `stage 1/2 [shaper] ...`,
-   `stage 1/2 accepted`, ...). Add `-v` for per-LLM-call and per-retry detail, `-vv`
+   `stage 1/2 accepted`, ...). Add `-v` for per-LLM-call detail, `-vv`
    to also dump every LLM prompt, response and reasoning to the terminal and
    `<run_id>/llm_trace.jsonl` (a call cut off, cancelled or dropped still gets a line,
    marked `incomplete`, with what it streamed). `-vv` also writes
@@ -222,9 +222,9 @@ The agent will:
    reasoning while a call is in flight.
 3. Write output to `<work_dir>/<run_id>/`:
    - `result.py` — the standalone reproducible script
-   - `report.md` — per-stage status and retry counts (also printed at the end)
+   - `report.md` — per-stage status, timing and LLM token usage (also printed at the end)
 
-Raw SALOME/paraview noise (`vtkSocket ... Connection refused` etc.) goes to
+Raw SALOME noise goes to
 `~/.salome_agent/server.log`, not your terminal.
 
 Run the result on its own, with no agent involved:
@@ -245,7 +245,7 @@ Run the result on its own, with no agent involved:
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--tools {hints,all}` | SHAPER / GEOM tool retrieval. `hints` (default): the specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the module's full registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
 | `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
-| `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`, and stream each call's reasoning to `<run_id>/llm_live.txt`. |
+| `-v`, `--verbose` | Per-LLM-call detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`, and stream each call's reasoning to `<run_id>/llm_live.txt`. |
 | `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch`. |
 
 ### GUI plugin setup
@@ -285,7 +285,7 @@ Without `--batch`, the run pauses for you at two points:
 - **Plan approval** — after planning, the stage list is printed and you `[Y]es` /
   `[e]dit` (opens the plan as JSON in `$EDITOR`; add/drop/reorder stages, then it
   re-prompts) / `[n]o abort`.
-- **Stage failure** — if a stage exhausts its retries, you get `[h]int` (give the specialist
+- **Stage failure** — if a stage fails, you get `[h]int` (give the specialist
   a text hint and retry the stage), `[s]kip stage`, or `[a]bort run`.
 
 Everything up to the pause is preserved (LangGraph checkpointer); your decision resumes the
@@ -464,5 +464,5 @@ docs/superpowers/   design specs + implementation plans
   NETGEN is predicted 2–6× too high, so a NETGEN mesh can be refused well below
   the limit.
 - `reset_and_replay` (rollback) is wired only for the headless backend and has no
-  graph-level caller yet — retries re-run the full stage script.
+  graph-level caller: a retried stage keeps what the failed attempt built.
 - RAG / documentation retrieval was cut from v1.
