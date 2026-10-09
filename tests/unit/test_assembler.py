@@ -124,7 +124,8 @@ def test_the_two_copies_of_each_preamble_cannot_drift():
     from salome_agent.nodes.assembler import _GEOM_INIT, _SMESH_INIT
 
     assert spec_for("geom").preamble == _GEOM_INIT
-    assert spec_for("smesh").preamble == _SMESH_INIT
+    # the SMESH tool preamble extends the script one (imports, helpers)
+    assert spec_for("smesh").preamble.startswith(_SMESH_INIT)
 
 
 def test_geom_smesh_preamble_is_exactly_as_before():

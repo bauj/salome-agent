@@ -430,7 +430,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     from salome_agent.modules import MODULES, spec_for
     from salome_agent.specialists.tool_specialist import ToolSpecialist
     import salome_agent.specialists.geom  # noqa: F401 — registers GEOM_SPEC
-    import salome_agent.specialists.script_modules  # noqa: F401 — registers the script specs
+    import salome_agent.specialists.smesh  # noqa: F401 — registers SMESH_SPEC
     import salome_agent.specialists.shaper  # noqa: F401 — registers SHAPER_SPEC
 
     if module not in MODULES:

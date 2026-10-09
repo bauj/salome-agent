@@ -99,7 +99,7 @@ def _ensure_specialists_registered() -> None:
     # Import in order to trigger registration via @register decorator.
     # Must be done here, not at module level, to avoid import cycles.
     import salome_agent.specialists.geom  # noqa: F401 — trigger registration
-    import salome_agent.specialists.script_modules  # noqa: F401 — trigger registration
+    import salome_agent.specialists.smesh  # noqa: F401 — trigger registration
     import salome_agent.specialists.shaper  # noqa: F401 — trigger registration
     _SPECIALISTS_IMPORTED = True
 

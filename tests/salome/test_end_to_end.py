@@ -31,6 +31,7 @@ def test_cube_and_mesh_produces_runnable_result(tmp_path, running_server):
     # Headless names are per-run (sa_<run_id>_); pin the run id so the
     # scripted model can name its box.
     box = "sa_e2e000000000_box_1"
+    mesh = "sa_e2e000000000_mesh_1"
     fake_llm = MagicMock()
     fake_llm.usage = None  # real LLMClient exposes a usage dict; report.py reads it
     fake_llm.chat.side_effect = [
@@ -40,16 +41,10 @@ def test_cube_and_mesh_produces_runnable_result(tmp_path, running_server):
         ]},
         {"tool_calls": [{"name": "make_box", "args": {"dx": 20, "dy": 20, "dz": 20}}]},
         {"tool_calls": [{"name": "finish_stage", "args": {"result_names": [box]}}]},
-        {"tool_calls": [{"name": "emit_script", "args": {"code": (
-            # smesh.NETGEN_1D2D3D does not exist — the constant lives on
-            # the smeshBuilder *module*, not the smeshBuilder.New() instance
-            # bound to "smesh" (confirmed live).
-            "from salome.smesh import smeshBuilder\n"
-            f"shape = find_object('{box}')\n"
-            "m = smesh.Mesh(shape)\n"
-            "m.Tetrahedron(algo=smeshBuilder.NETGEN_1D2D3D).SetMaxSize(5)\n"
-            "m.Compute()\n"
-        )}}]},
+        {"tool_calls": [{"name": "create_mesh", "args": {"shape": box}}]},
+        {"tool_calls": [{"name": "mesh_tetra", "args": {"mesh": mesh, "max_size": 5}}]},
+        {"tool_calls": [{"name": "compute", "args": {"mesh": mesh}}]},
+        {"tool_calls": [{"name": "finish_stage", "args": {"result_names": [mesh]}}]},
     ]
     with patch("salome_agent.cli.build_llm", return_value=fake_llm), \
             patch("uuid.uuid4", return_value=SimpleNamespace(hex="e2e000000000" * 3)):

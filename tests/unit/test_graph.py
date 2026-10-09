@@ -101,9 +101,11 @@ def test_geom_loop_exhausted_routes_to_retry_gate():
     assert route_after_run_stage(state) == "retry_gate"
 
 
-def test_smesh_ok_routes_to_verify_static():
-    state = {"stage_idx": 0, "stages": {0: {"module": "smesh", "status": "pending"}}}
-    assert route_after_run_stage(state) == "verify_static"
+def test_smesh_routes_like_a_tool_module():
+    state = {"stage_idx": 0, "stages": {0: {"module": "smesh", "status": "ok"}}}
+    assert route_after_run_stage(state) == "advance"
+    state["stages"][0]["status"] = "failed"
+    assert route_after_run_stage(state) == "retry_gate"
 
 
 def test_verify_exec_session_died_routes_to_assemble():
