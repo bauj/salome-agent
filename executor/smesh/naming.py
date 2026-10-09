@@ -100,7 +100,11 @@ def tool_shape_info(executor, args: dict):
     out = {}
     for name in args.get("names") or []:
         expr, _ = shape_ref(executor, name)
-        shape = geom_copy(st, eval(expr, st.ns))
+        try:
+            shape = geom_copy(st, eval(expr, st.ns))
+        except LookupError as e:
+            out[name] = {"error": str(e)}
+            continue
         props = geompy.BasicProperties(shape)
         out[name] = {"type": str(shape.GetShapeType()).lower(),
                      "length": round(props[0], 4), "area": round(props[1], 4),

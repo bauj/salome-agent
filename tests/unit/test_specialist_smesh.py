@@ -27,3 +27,17 @@ def test_core_tools_are_registered_tools():
 def test_categories_cover_the_registry():
     from executor.smesh import registry
     assert set(registry.categories().values()) <= set(spec_for("smesh").categories)
+
+
+def test_upstream_lists_a_consumed_shape_without_failing_the_rest():
+    from salome_agent.specialists.smesh import _upstream
+
+    class Client:
+        def call_tool(self, name, args, module=None):
+            return {"ok": True, "shapes": {
+                "box_1": {"error": "no SHAPER result 'box_1' in the study"},
+                "cut_1": {"type": "solid", "volume": 10.0, "area": 5.0, "faces": 7}}}
+
+    text = _upstream(Client(), ["box_1", "cut_1"])
+    assert "  box_1 — no longer in the study (used up by a later step)" in text
+    assert "  cut_1 — solid, volume 10.0, area 5.0, 7 faces" in text

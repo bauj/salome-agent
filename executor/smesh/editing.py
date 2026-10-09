@@ -88,6 +88,10 @@ def forget(executor, names: list) -> list:
             st.meshes.pop(name)
         elif name in st.geo_groups:
             g = st.geo_groups.pop(name)
+            for m, info in st.meshes.items():
+                if name in info.groups:
+                    info.groups.pop(name)
+                    st.ns[m].RemoveGroup(st.ns.pop(f"{m}_{name}"))
             if g.owner == "geom":
                 st.ns["geompy"].RemoveObject(st.ns[name])
             else:

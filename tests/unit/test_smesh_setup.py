@@ -97,3 +97,20 @@ def test_prism_code():
         "m_a1_end.LocalLength(2)",
         'm_a2_end = m.Triangle(algo=smeshBuilder.NETGEN_2D, geom=_shaper_shape("base"))',
     ]
+
+
+def test_a_new_netgen_preset_keeps_the_local_sizes(monkeypatch):
+    from executor.smesh import state as sm
+    monkeypatch.setattr(su, "run", lambda st, code: None)
+    monkeypatch.setattr(lo, "run", lambda st, code: None)
+    ex = type("Ex", (), {})()
+    st = ex.__dict__["smesh_state"] = sm.SmeshState({})
+    st.meshes["m"] = sm.MeshInfo("plate_1", "shaper")
+    st.geo_groups["bolt"] = sm.GeoGroup("plate_1", "shaper", "face")
+    su.tool_mesh_tetra(ex, {"mesh": "m", "max_size": 5})
+    lo.tool_local_size(ex, {"mesh": "m", "on": ["bolt"], "size": 1})
+    r = su.tool_mesh_tetra(ex, {"mesh": "m", "max_size": 8})
+    assert r["records"][0]["code"].endswith('m_netgen.SetLocalSizeOnShape(_shaper_shape("bolt"), 1)')
+    r = su.tool_mesh_hexa(ex, {"mesh": "m", "segments": 4})
+    assert r["dropped_local_sizes"] == ["bolt"]
+    assert st.meshes["m"].local_sizes == {}

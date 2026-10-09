@@ -54,7 +54,9 @@ def tool_local_size(executor, args: dict):
     lines, refs = [], []
     for g in _on(executor, args.get("on")):
         lines.append(local_size_code(info.netgen, m, g, group_ref(executor, g)[0], size))
-        if not info.netgen:
+        if info.netgen:
+            info.local_sizes[g] = size
+        else:
             info.submeshes[g] = f"{m}_a1_{g}"
             info.algos[(1, g)] = f"{m}_a1_{g}"
         refs.append(g)
