@@ -7,8 +7,8 @@ from salome_agent import conversation as conv_mod
 from salome_agent.conversation import Conversation
 
 CONFIG = {"work_dir": None, "llm": {}, "policy": {
-    "tool_iteration_cap": 5, "static_retries": 1, "exec_retries": 1, "exec_timeout_s": 120,
-    "tool_selection": "hints", "verify_cadence": "none", "plan_detail": "balanced",
+    "tool_iteration_cap": 5, "tool_selection": "hints", "verify_cadence": "none",
+    "plan_detail": "balanced",
     "on_stage_failure": "abort"}}
 
 

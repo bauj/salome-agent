@@ -69,7 +69,11 @@ Module scope:
   stage builds the whole part on its own, a flat face included (make_face):
   never add a GEOM stage to finish a SHAPER part.
 - geom (GEOM): the same CAD geometry, used only when the request names GEOM.
-- smesh: meshing a geometry (algorithms, hypotheses, compute).
+- smesh (SMESH): meshing a shape an earlier stage built -- tetrahedra,
+  hexahedra, surface or other meshes, local sizes on chosen faces or edges,
+  viscous layers, mesh groups for a solver's boundary conditions, quality
+  checks, export to a file. A SMESH stage names the faces and edges it needs
+  itself: the CAD stage does not prepare them.
 
 A module the request names ("in SHAPER", "using GEOM", "with SMESH")
 always wins over these rules.
@@ -84,9 +88,8 @@ not separate parts. Explicit numeric dimensions in the text request still win:
 put those in params. Mention listed uncertainties or conflicts in a stage's
 params rather than inventing detail."""
 
-# The smesh one-liner stays in _PLANNER_BASE (not restructured); it also
-# appears in its spec.catalogue string so routable() includes it.
-# Do NOT move that line out — the prompt's byte-identity depends on it.
+# The SMESH lines live in _PLANNER_BASE, inside the module scope list, and
+# must stay identical to SMESH_SPEC.catalogue (routable() includes it by it).
 PLANNER_SYSTEM_PROMPT = (_PLANNER_BASE + "\n\n" + spec_for("geom").catalogue
                          + "\n\n" + spec_for("shaper").catalogue)
 
@@ -139,7 +142,7 @@ what it does not build -- later stages build the rest."""
 def blank_stages(stage_plans: list[dict]) -> dict:
     return {
         i: {"module": p["module"], "status": "pending", "script": None,
-            "call_log": None, "static_retries": 0, "exec_retries": 0}
+            "call_log": None}
         for i, p in enumerate(stage_plans)
     }
 

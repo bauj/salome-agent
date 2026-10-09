@@ -19,16 +19,16 @@ Two processes:
 | Process   | Runs where | Does |
 |-----------|-----------|------|
 | **agent**    | your Python venv | planning, LLM calls, static verification, script assembly (LangGraph `StateGraph`) |
-| **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes stage scripts, SHAPER / GEOM tool calls, introspection, sanity checks, timeout kills |
+| **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes SHAPER / GEOM / SMESH tool calls, introspection, timeout kills |
 
 The agent connects to the server over loopback TCP (token-authenticated,
 line-delimited JSON); it discovers a running server via `~/.salome_agent/server.json`.
 
-Flow: `request → plan → [per stage: specialist → verify static → verify exec → advance] → assemble result.py → report`
+Flow: `request → plan → [per stage: specialist tool loop → finish_stage check → advance] → assemble result.py → report`
 
 - **shaper** stages — the default CAD module — run as tool calls (`create_sketch`, `sketch_add`, `extrude`, `fillet_edges`, ...) against the server. Each call executes the same source line that goes into `result.py`, so the live document and the script cannot drift.
 - **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log. The planner picks GEOM only when the request names it ("using GEOM").
-- **smesh** stages are raw scripts, statically checked (top-level API existence) then executed under a timeout with per-module sanity checks.
+- **smesh** stages run as tool calls (`create_mesh`, `mesh_tetra`, `name_subshapes`, `local_size`, `compute`, ...) on a shape an earlier stage built, SHAPER or GEOM. Each call executes the line it records into `result.py`; `compute` answers with element counts, the mesh volume next to the shape's, quality and every part that failed, and `finish_stage` is refused until the mesh holds up.
 - Stage retry re-runs the full stage script (no MED checkpoints — GEOM can't export MED). GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
 
 ---
@@ -92,9 +92,6 @@ cp config.example.json config.json
     "root": "/path/to/your/SALOME"
   },
   "policy": {
-    "static_retries": 3,
-    "exec_retries": 2,
-    "exec_timeout_s": 120,
     "tool_iteration_cap": 12,
     "plan_detail": "balanced",
     "tool_selection": "hints",
@@ -132,13 +129,10 @@ Any OpenAI-compatible `/chat/completions` endpoint. Requests are streamed (SSE).
 
 #### `policy` — how a run behaves
 
-The first five keys have no built-in default — keep them in your config.
+The first two keys have no built-in default — keep them in your config.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `static_retries` | — | Per stage: how many times a script that fails the static check is sent back to its specialist before the stage counts as failed. |
-| `exec_retries` | — | Per stage: how many times a script that fails when run under SALOME is sent back to its specialist. |
-| `exec_timeout_s` | — | Seconds allowed for one stage's script to run under SALOME in the exec check. |
 | `tool_iteration_cap` | — | Maximum LLM turns (each turn may carry several tool calls) a tool-calling specialist gets for one stage. |
 | `on_stage_failure` | — | `abort` \| `continue`. What `--batch` does when a stage still fails after its retries: stop the run, or skip the stage and go on. Interactive runs ask instead. `--on-failure` overrides it. |
 | `plan_detail` | `balanced` | `coarse` \| `balanced` \| `fine`. How finely the planner splits a request into stages — `coarse` favours fewer, bigger stages; `fine` favours splitting a part or assembly into more stages. |
@@ -219,8 +213,8 @@ The agent will:
 1. Connect to the running server via `~/.salome_agent/server.json`. If none is
    running it exits with a message telling you to start one.
 2. Plan the stages, run each specialist, verify, and assemble — progress is logged to
-   stderr as it goes (`planning...`, `stage 1/2 [geom] ...`, `static check: ok`,
-   `exec check: ok`, ...). Add `-v` for per-LLM-call and per-retry detail, `-vv`
+   stderr as it goes (`planning...`, `stage 1/2 [shaper] ...`,
+   `stage 1/2 accepted`, ...). Add `-v` for per-LLM-call and per-retry detail, `-vv`
    to also dump every LLM prompt, response and reasoning to the terminal and
    `<run_id>/llm_trace.jsonl` (a call cut off, cancelled or dropped still gets a line,
    marked `incomplete`, with what it streamed). `-vv` also writes
@@ -246,14 +240,13 @@ Run the result on its own, with no agent involved:
 |------|---------|
 | `--images PATH,PATH,...` | Comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) the generated CAD should match — e.g. several views/plans of the same part; described by a vision agent whose text description feeds the planner and the SHAPER / GEOM specialist (they never see the images). |
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
-| `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. SMESH only (SHAPER and GEOM need a session). |
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--tools {hints,all}` | SHAPER / GEOM tool retrieval. `hints` (default): the specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the module's full registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
 | `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`, and stream each call's reasoning to `<run_id>/llm_live.txt`. |
-| `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch` or `--no-session`. |
+| `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch`. |
 
 ### GUI plugin setup
 
@@ -332,8 +325,7 @@ replays only the affected object and everything downstream of it, reusing the sa
 object names, rather than starting the study over. `/undo` reverts the last turn;
 `/rebuild` forgets every name and replays the whole graph from scratch, for when a
 rollback itself fails. Ctrl-C cancels the turn in progress and returns to `chat>`.
-`--chat` is interactive and needs a live session, so it cannot be combined with
-`--batch` or `--no-session`.
+`--chat` is interactive, so it cannot be combined with `--batch`.
 
 ---
 
@@ -373,14 +365,11 @@ Test layout:
   (`loop_*` repeat themselves, `ok_*` do not), test data for the loop detector
   in `salome_agent/repetition.py`.
 
-### Static-check API map (`--no-session`)
+### SALOME API map
 
-A normal run verifies each stage script against the **live** SALOME session
-(`introspect()` on the running modules — authoritative). `--no-session` has no
-session, so its static check falls back to `salome_agent/verify/toplevel_api.json`
-— a snapshot of the valid `geompy` / `smesh` top-level members. It
-only catches calls to names that do not exist on the module; it is a coarse
-check, and `--no-session` skips exec verification entirely.
+`salome_agent/verify/toplevel_api.json` is a snapshot of the top-level members
+of `geompy`, `smesh` and SHAPER's `model`: a reference for what the installed
+SALOME offers.
 
 That fixture has no source but a live session, so regenerate it whenever the
 SALOME build changes:
@@ -416,8 +405,8 @@ salome_agent/
   logs.py           logging setup (-v / -vv)
   nodes/            planner, vision, gates (plan/retry), advance, assembler, report
   specialists/      tool_specialist (shared tool loop), shaper + geom (tool-calling),
-                    smesh (raw script), amend (chat edits), tool_selection
-  verify/           static (top-level API check), exec_check, introspect
+                    smesh (tool-calling), amend (chat edits), tool_selection
+  verify/           toplevel_api.json (SALOME API snapshot) and its module list
   server_conn.py    finds + connects to the SALOME agent server
   executor_client.py  TCP client for the server (hello handshake, framing)
   codegen.py        call log -> Python source
@@ -448,11 +437,9 @@ docs/superpowers/   design specs + implementation plans
   debris in the study. A stage timeout poisons the server (run aborts, exit 1);
   recovery may need killing the GUI. Save your work first. Headless mode is the
   unattended path.
-- `--no-session` mode only does a coarse "does this name exist" static check
-  against a snapshot API map and no exec verification — see *Static-check API map*
-  under Development. A real run always verifies against the live session.
-- Tool registries: SHAPER 54 tools, GEOM 52 (primitives, sketch, swept,
-  booleans, transforms, fillet/chamfer, display, query, subshape selection).
+- Tool registries: SHAPER 55 tools, GEOM 52 (primitives, sketch, swept,
+  booleans, transforms, fillet/chamfer, display, query, subshape selection),
+  SMESH 25 (setup, naming, local sizes, groups, compute and checks, export).
   The SHAPER stage prompt lists every SHAPER tool in one line each; a call to
   one not loaded yet is refused and the tool loaded. `align` does relative
   placement (move a part so a chosen face/centre meets another's) so the model
@@ -468,6 +455,14 @@ docs/superpowers/   design specs + implementation plans
 - Some OCC operations crash the SALOME process (segfault) instead of failing.
   `fillet_edges` (SHAPER) refuses a radius at which fillets on two edges of one
   face would meet; GEOM fillet/chamfer has no such guard yet.
+- SMESH `compute` refuses a mesh predicted above 1 000 000 elements, but SMESH's
+  `Evaluate()` cannot predict every setup. `mesh_body_fitted` and `mesh_prism`
+  are counted by their own rule (grid cells, layers × end-face elements).
+  Hand-built `set_algorithm` setups that `Evaluate()` leaves uncounted (Prism,
+  quadrangle_medial_axis, ...) compute without the limit, with a note in the
+  reply; `polyhedron_per_solid` is predicted far too low and slips through.
+  NETGEN is predicted 2–6× too high, so a NETGEN mesh can be refused well below
+  the limit.
 - `reset_and_replay` (rollback) is wired only for the headless backend and has no
   graph-level caller yet — retries re-run the full stage script.
 - RAG / documentation retrieval was cut from v1.

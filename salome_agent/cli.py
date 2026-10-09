@@ -13,9 +13,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                              "description (not the images) goes to the planner and "
                              "the CAD stages (GEOM or SHAPER)")
     parser.add_argument("--batch", action="store_true")
-    parser.add_argument("--no-session", action="store_true",
-                        help="planner + specialists + static checks only; "
-                             "no connection to a SALOME agent server")
     parser.add_argument("--work-dir", default=None)
     parser.add_argument("--config", default=None)
     parser.add_argument("--on-failure", choices=["abort", "continue"], default=None)
@@ -179,9 +176,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.chat and args.batch:
         log.error("--chat is interactive; it cannot be combined with --batch")
         return 2
-    if args.chat and args.no_session:
-        log.error("--chat needs a SALOME session; drop --no-session")
-        return 2
 
     config = load_config(args.config or "config.json")
     if args.on_failure:
@@ -215,23 +209,20 @@ def main(argv: list[str] | None = None) -> int:
         log.info("interactive mode: you will be prompted to approve the plan "
                  "and to handle stage failures (pass --batch to disable)")
 
-    if args.no_session:
-        log.info("session: --no-session (planner + specialists + static checks only)")
-        client = None
-    else:
-        try:
-            # same condition as runner.py's llm_trace.jsonl: a recorded run
-            # always has both trace halves, or neither.
-            record_path = (os.path.join(run_dir, "exec_trace.jsonl")
-                           if args.verbose >= 2 else None)
-            client = server_conn.connect(run_id, record_path=record_path, hold=args.chat)
-        except server_conn.ServerUnavailable as e:
-            log.error("%s", e)
-            return 1
-        log.info("session: connected to the %s agent server", client.mode)
-        if not args.batch:
-            from salome_agent.interactive import offer_fresh_study
-            offer_fresh_study(client)
+    try:
+        # same condition as runner.py's llm_trace.jsonl: a recorded run
+        # always has both trace halves, or neither.
+        record_path = (os.path.join(run_dir, "exec_trace.jsonl")
+                       if args.verbose >= 2 else None)
+        client = server_conn.connect(run_id, record_path=record_path, hold=args.chat,
+                                     run_dir=os.path.abspath(run_dir))
+    except server_conn.ServerUnavailable as e:
+        log.error("%s", e)
+        return 1
+    log.info("session: connected to the %s agent server", client.mode)
+    if not args.batch:
+        from salome_agent.interactive import offer_fresh_study
+        offer_fresh_study(client)
 
     if args.chat:
         from salome_agent import chat

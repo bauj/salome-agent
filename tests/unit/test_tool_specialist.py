@@ -136,13 +136,13 @@ def test_a_session_module_with_no_server_ends_fatal_before_any_llm_call():
     llm.chat.assert_not_called()
 
 
-def test_geom_needs_a_session_and_script_modules_do_not():
+def test_geom_and_smesh_need_a_session():
     from salome_agent.modules import spec_for
     import salome_agent.specialists.geom  # noqa: F401
-    import salome_agent.specialists.script_modules  # noqa: F401
+    import salome_agent.specialists.smesh  # noqa: F401
 
     assert spec_for("geom").needs_session
-    assert not spec_for("smesh").needs_session
+    assert spec_for("smesh").needs_session
 
 
 def test_calls_trace_pairs_tool_and_args_with_records():
