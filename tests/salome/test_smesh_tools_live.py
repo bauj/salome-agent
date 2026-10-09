@@ -122,6 +122,38 @@ def test_compute_refuses_above_cap(agent_client):
     assert r["ok"] is False and "limit" in r["error"]
 
 
+def test_body_fitted_and_prism_are_predicted(agent_client):
+    b = shaper_box(agent_client, dx=100, dy=50, dz=20)
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_body_fitted", mesh=m, size=2)
+    assert _ok(agent_client, "smesh", "evaluate", mesh=m)["predicted_elements"] == 12500
+    _ok(agent_client, "smesh", "mesh_body_fitted", mesh=m, size=0.1)
+    r = _call(agent_client, "smesh", "compute", mesh=m)
+    assert r["ok"] is False and "limit" in r["error"]
+    base = _ok(agent_client, "smesh", "get_subshapes", shape=b, sub_type="face",
+               where={"sorted_by": "z", "take": "min", "count": 1})["subshapes"]
+    _ok(agent_client, "smesh", "name_subshapes", shape=b, ids=[base[0]["id"]], name="floor")
+    p = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_prism", mesh=p, end_face="floor", layers=10, face_size=5)
+    n = _ok(agent_client, "smesh", "evaluate", mesh=p)["predicted_elements"]
+    r = _ok(agent_client, "smesh", "compute", mesh=p)
+    assert r["prism"] * 0.8 <= n <= (r["prism"] + r["faces"] + r["edges"]) * 1.2
+
+
+def test_unpredictable_setup_computes_with_a_note(agent_client):
+    b = shaper_box(agent_client)
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "set_algorithm", mesh=m, dimension=1, algorithm="segment")
+    _ok(agent_client, "smesh", "set_hypothesis", mesh=m, kind="local_length",
+        params={"length": 2})
+    _ok(agent_client, "smesh", "set_algorithm", mesh=m, dimension=2,
+        algorithm="quadrangle_medial_axis")
+    e = _ok(agent_client, "smesh", "evaluate", mesh=m)
+    assert e["predicted_elements"] is None and "cannot predict" in e["note"]
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["computed"] and r["faces"] > 0 and "without the" in r["note"]
+
+
 def test_local_size_and_edge_segments(agent_client):
     b = shaper_box(agent_client)
     top_face_group(agent_client, b, name="lid")

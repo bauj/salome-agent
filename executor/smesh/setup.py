@@ -172,6 +172,7 @@ def _preset(executor, args: dict, setup: str, dim: int, build) -> dict:
     st = state(executor)
     run(st, code)
     info.setup, info.dim, info.netgen, info.local_sizes = setup, dim, netgen, dict(kept)
+    info.count_rule = None
     info.algos = {(d, None): f"{m}_a{d}" for d in _PRESET_DIMS[setup]}
     r = {"ok": True, "records": [record(setup, code, recv=m, refs=list(kept))], "mesh": m,
          "setup": setup}
@@ -226,7 +227,9 @@ def tool_mesh_hexa(executor, args: dict):
       schema={"type": "object", "properties": {**_MESH, "size": {"type": "number"}},
               "required": ["mesh", "size"]})
 def tool_mesh_body_fitted(executor, args: dict):
-    return _preset(executor, args, "mesh_body_fitted", 3, body_fitted_code)
+    r = _preset(executor, args, "mesh_body_fitted", 3, body_fitted_code)
+    mesh_of(executor, args["mesh"]).count_rule = ("grid", float(args["size"]))
+    return r
 
 
 def _on(executor, on) -> list:
@@ -269,6 +272,7 @@ def tool_set_algorithm(executor, args: dict):
     code = "\n".join(lines)
     run(st, code)
     info.setup = info.setup or "custom"
+    info.count_rule = None
     info.dim = max(info.dim or 0, dim) if args.get("on") is None else info.dim
     return {"ok": True, "records": [record("set_algorithm", code, recv=m, refs=refs)],
             "mesh": m}
@@ -308,6 +312,7 @@ def tool_set_hypothesis(executor, args: dict):
         run(state(executor), code)
     except AttributeError:
         raise ValueError(f"the dimension-{dim} algorithm there does not take {kind}") from None
+    info.count_rule = None
     return {"ok": True, "records": [record("set_hypothesis", code, recv=m, refs=refs)],
             "mesh": m}
 
@@ -340,5 +345,6 @@ def tool_mesh_prism(executor, args: dict):
     info.submeshes[end] = f"{args['mesh']}_a1_end"
     info.algos[(1, end)] = f"{args['mesh']}_a1_end"
     info.algos[(2, end)] = f"{args['mesh']}_a2_end"
+    info.count_rule = ("layers", args["layers"])
     r["records"][0]["args"] = [{"kind": "expr", "value": "", "refs": [end]}]
     return r

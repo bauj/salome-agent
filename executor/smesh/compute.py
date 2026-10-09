@@ -1,3 +1,5 @@
+import math
+
 from executor.smesh.state import MAX_ELEMENTS, mesh_of, record, shape_ref, state, tool
 
 
@@ -82,11 +84,56 @@ def counts(st, m) -> dict:
             "polyhedra": m.NbPolyhedrons()}
 
 
-def predicted(st, m) -> int:
-    smesh, SMESH = st.ns["smesh"], st.ns["SMESH"]
-    ev = m.Evaluate()
-    node = smesh.EnumToLong(SMESH.Entity_Node)
-    return sum(n for i, n in enumerate(ev) if i != node)
+_FACE_KINDS = ("Triangle", "Quadrangle", "Polygon")
+_VOLUME_KINDS = ("Tetra", "Pyramid", "Hexa", "Penta", "Prism", "Polyhedra")
+
+
+def evaluated(st, m) -> dict:
+    """Element counts per entity type that SMESH's Evaluate() predicts, nodes left out."""
+    items = st.ns["SMESH"].EntityType._items
+    return {str(items[i]).removeprefix("Entity_"): n
+            for i, n in enumerate(m.Evaluate()) if n and str(items[i]) != "Entity_Node"}
+
+
+def count(counts: dict, dim, rule, bbox) -> "int | None":
+    """Elements the mesh will have, or None when nothing can say. Evaluate() counts
+    nothing for body fitting and only the end face for Prism: their presets count
+    by their own rule. Any other setup that leaves its own dimension uncounted is
+    unpredictable."""
+    if rule and rule[0] == "grid":
+        step = rule[1]
+        cells = 1
+        for lo, hi in zip(bbox[::2], bbox[1::2]):
+            cells *= max(1, math.ceil((hi - lo) / step))
+        return cells
+    faces = sum(n for k, n in counts.items() if k.endswith(_FACE_KINDS))
+    total = sum(counts.values())
+    if rule and rule[0] == "layers":
+        return total + faces * rule[1]
+    volumes = sum(n for k, n in counts.items() if k.endswith(_VOLUME_KINDS))
+    if (dim == 3 and not volumes) or (dim == 2 and not faces):
+        return None
+    return total
+
+
+def shape_bbox(executor, name: str) -> list:
+    expr, owner = shape_ref(executor, name)
+    if owner == "shaper":
+        from executor.shaper import state as shaper
+        return shaper.measure(executor, name)["bbox"]
+    st = state(executor)
+    return list(st.ns["geompy"].BoundingBox(eval(expr, st.ns)))
+
+
+def predicted(executor, name: str) -> "int | None":
+    st = state(executor)
+    info = mesh_of(executor, name)
+    rule = info.count_rule
+    bbox = shape_bbox(executor, info.shape) if rule and rule[0] == "grid" else None
+    return count(evaluated(st, _mesh(st, name)), info.dim, rule, bbox)
+
+
+UNPREDICTED = "SMESH cannot predict the element count of this setup before meshing"
 
 
 def failures(st, info, m) -> list:
@@ -163,13 +210,16 @@ _MESH = {"type": "object", "properties": {"mesh": {"type": "string"}}, "required
 
 
 @tool("evaluate", category="compute",
-      description="The node and element counts `mesh` would have, without meshing.",
+      description=("The number of elements `mesh` would have, without meshing; null when "
+                   "SMESH cannot predict its setup."),
       schema=_MESH)
 def tool_evaluate(executor, args: dict):
-    st = state(executor)
     mesh_of(executor, args.get("mesh"))
-    return {"ok": True, "records": [], "mesh": args["mesh"],
-            "predicted_elements": predicted(st, _mesh(st, args["mesh"]))}
+    n = predicted(executor, args["mesh"])
+    out = {"ok": True, "records": [], "mesh": args["mesh"], "predicted_elements": n}
+    if n is None:
+        out["note"] = UNPREDICTED
+    return out
 
 
 @tool("compute", category="compute",
@@ -185,12 +235,15 @@ def tool_compute(executor, args: dict):
     if info.setup is None:
         raise ValueError(f"{name} has no setup yet: call mesh_tetra, mesh_hexa, ... first")
     m = _mesh(st, name)
-    n = predicted(st, m)
-    if n > MAX_ELEMENTS:
+    n = predicted(executor, name)
+    if n is not None and n > MAX_ELEMENTS:
         return {"ok": False, "error": cap_refusal(n, MAX_ELEMENTS)}
     done = bool(m.Compute())
-    return {"ok": True, "records": [record("Compute", f"{name}.Compute()", recv=name)],
-            "mesh": name, "computed": done, **measure_mesh(executor, name)}
+    out = {"ok": True, "records": [record("Compute", f"{name}.Compute()", recv=name)],
+           "mesh": name, "computed": done, **measure_mesh(executor, name)}
+    if n is None:
+        out["note"] = UNPREDICTED + f": computed without the {_spaced(MAX_ELEMENTS)} element limit"
+    return out
 
 
 @tool("mesh_info", category="query",
