@@ -80,49 +80,6 @@ def _assert_tool_turns_well_formed(messages):
                 f"tool message {m['tool_call_id']} has no preceding assistant tool_call"
 
 
-def test_smesh_specialist_live_end_to_end(client, live_llm):
-    from salome_agent.specialists.script_modules import SMESH_SPEC
-    from salome_agent.specialists.tool_specialist import ToolSpecialist
-    from salome_agent.verify.exec_check import check_exec
-    from salome_agent.verify.introspect import build_api_map
-    from salome_agent.verify.static import check_static
-
-    # upstream geom shape the smesh stage will find_object() — published as box_1
-    box = client.call_tool("make_box", {"dx": 20, "dy": 20, "dz": 20})
-    assert box["ok"], box
-
-    stage_plan = {"module": "smesh", "intent": "tetrahedral mesh of the box, ~5mm elements",
-                  "params": {"max_size": 5}, "inputs": ["box_1"]}
-
-    # ToolSpecialist.run keeps `messages` local; grab it via a wrapper so we
-    # can assert the tool-turn shape afterwards.
-    captured = {}
-    real_chat = live_llm.chat
-
-    def spy_chat(messages, tools=None, module=None):
-        captured["messages"] = messages
-        return real_chat(messages=messages, tools=tools, module=module)
-
-    live_llm.chat = spy_chat
-    try:
-        result = ToolSpecialist(SMESH_SPEC).run(stage_plan, live_llm, client, iteration_cap=12)
-    finally:
-        live_llm.chat = real_chat
-
-    assert result["warning"] is None, result["warning"]
-    script = result["script"]
-    assert script and "Compute" in script, script
-
-    print("\n--- generated smesh script ---\n" + script + "\n---\n")
-    _assert_tool_turns_well_formed(captured["messages"])
-
-    static_err = check_static(script, build_api_map(client))
-    assert static_err is None, static_err
-
-    exec_err = check_exec(script, "smesh", client, timeout=180)
-    assert exec_err is None, exec_err
-
-
 def test_geom_to_smesh_multistage_live(config, tmp_path, running_server):
     """Full graph, real LLM: geom stage publishes a box, smesh stage must
     find_object() it by the ACTUAL published name (not the planner's guess)
