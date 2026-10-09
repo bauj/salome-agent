@@ -98,6 +98,8 @@ class ShaperState:
         self.sketches: dict[str, Sketch] = {}
         # published feature name -> kind ("face", "solid", ...)
         self.objects: dict[str, str] = {}
+        # group name -> the shape its sub-shapes belong to (make_group)
+        self.groups: dict[str, str] = {}
         # the sketch being edited (executor/shaper/editing.py), or None
         self.editing: str | None = None
 

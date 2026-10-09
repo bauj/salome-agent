@@ -171,6 +171,7 @@ SHAPER tools available to a single SHAPER stage:
   get_subshapes -- ids of a shape's edges, faces, vertices or solids, filtered by position, size or plane
   get_subshape -- new shape copied from some faces or edges of a shape
   explode -- every edge, face, ... of a shape as its own shape
+  make_group -- named group of some faces, edges or solids of a shape
   fillet_edges -- round edges of a solid
   chamfer_edges -- bevel edges of a solid
   make_thick_solid -- hollow a solid into a wall, open at chosen faces
