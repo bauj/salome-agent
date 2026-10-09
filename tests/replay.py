@@ -95,8 +95,6 @@ class ReplayExecutorClient:
     def run(self, code, timeout, module=None):
         return self._next("run", {"code": code, "timeout": timeout, "module": module})
 
-    def sanity(self, module, expectations):
-        return self._next("sanity", {"module": module, "expectations": expectations})
 
     def reset_and_replay(self, scripts):
         return self._next("reset_and_replay", {"scripts": scripts})

@@ -69,8 +69,6 @@ class Core:
                 objs.append({"name": it.Value().GetName(), "type": ""})
                 it.Next()
             return {"id": rid, "objects": objs}
-        if cmd == "sanity":
-            return {"id": rid, "ok": True, "warnings": [], "failures": []}
         if cmd in ("list_tools", "call_tool"):
             module = req.get("module") or "geom"
             pkg = _TOOL_MODULES.get(module)

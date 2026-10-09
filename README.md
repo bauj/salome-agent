@@ -19,7 +19,7 @@ Two processes:
 | Process   | Runs where | Does |
 |-----------|-----------|------|
 | **agent**    | your Python venv | planning, LLM calls, static verification, script assembly (LangGraph `StateGraph`) |
-| **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes stage scripts, SHAPER / GEOM tool calls, introspection, sanity checks, timeout kills |
+| **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes SHAPER / GEOM / SMESH tool calls, introspection, timeout kills |
 
 The agent connects to the server over loopback TCP (token-authenticated,
 line-delimited JSON); it discovers a running server via `~/.salome_agent/server.json`.
@@ -240,14 +240,13 @@ Run the result on its own, with no agent involved:
 |------|---------|
 | `--images PATH,PATH,...` | Comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) the generated CAD should match — e.g. several views/plans of the same part; described by a vision agent whose text description feeds the planner and the SHAPER / GEOM specialist (they never see the images). |
 | `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
-| `--no-session` | Planner + specialists + static checks only. No connection to a SALOME agent server, no exec verification. SMESH only (SHAPER and GEOM need a session). |
 | `--work-dir DIR` | Override `config.work_dir`. |
 | `--config PATH` | Use a different config file (default: `./config.json`). |
 | `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
 | `--tools {hints,all}` | SHAPER / GEOM tool retrieval. `hints` (default): the specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the module's full registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
 | `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
 | `-v`, `--verbose` | Per-LLM-call and per-retry detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`, and stream each call's reasoning to `<run_id>/llm_live.txt`. |
-| `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch` or `--no-session`. |
+| `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch`. |
 
 ### GUI plugin setup
 
@@ -326,8 +325,7 @@ replays only the affected object and everything downstream of it, reusing the sa
 object names, rather than starting the study over. `/undo` reverts the last turn;
 `/rebuild` forgets every name and replays the whole graph from scratch, for when a
 rollback itself fails. Ctrl-C cancels the turn in progress and returns to `chat>`.
-`--chat` is interactive and needs a live session, so it cannot be combined with
-`--batch` or `--no-session`.
+`--chat` is interactive, so it cannot be combined with `--batch`.
 
 ---
 
@@ -439,11 +437,9 @@ docs/superpowers/   design specs + implementation plans
   debris in the study. A stage timeout poisons the server (run aborts, exit 1);
   recovery may need killing the GUI. Save your work first. Headless mode is the
   unattended path.
-- `--no-session` mode only does a coarse "does this name exist" static check
-  against a snapshot API map and no exec verification — see *Static-check API map*
-  under Development. A real run always verifies against the live session.
-- Tool registries: SHAPER 54 tools, GEOM 52 (primitives, sketch, swept,
-  booleans, transforms, fillet/chamfer, display, query, subshape selection).
+- Tool registries: SHAPER 55 tools, GEOM 52 (primitives, sketch, swept,
+  booleans, transforms, fillet/chamfer, display, query, subshape selection),
+  SMESH 25 (setup, naming, local sizes, groups, compute and checks, export).
   The SHAPER stage prompt lists every SHAPER tool in one line each; a call to
   one not loaded yet is refused and the tool loaded. `align` does relative
   placement (move a part so a chosen face/centre meets another's) so the model

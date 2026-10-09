@@ -11,7 +11,7 @@ FIXTURE = Path(__file__).resolve().parent.parent.parent / "salome_agent" / "veri
 
 
 def test_fixture_matches_live_introspect(agent_client):
-    """verify/toplevel_api.json is the --no-session static-check API map and has
+    """verify/toplevel_api.json is the snapshot of SALOME's top-level APIs and has
     no source but a live session. If this drifts, regenerate it:
         python3 scripts/regen-toplevel-api.py
     """

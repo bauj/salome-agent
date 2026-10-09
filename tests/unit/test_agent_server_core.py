@@ -71,7 +71,7 @@ def test_poison_gate_refuses_every_command_including_hello():
     b = FakeBackend()
     b._poisoned = True
     core = Core(b)
-    for cmd in ("hello", "run", "list_tools", "sanity"):
+    for cmd in ("hello", "run", "list_tools"):
         resp = core.handle({"id": 9, "cmd": cmd})
         assert resp["fatal"] is True
         assert resp["ok"] is False

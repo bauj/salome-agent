@@ -247,3 +247,7 @@ def test_run_dir_goes_in_the_hello():
     ExecutorClient("127.0.0.1", srv.getsockname()[1], "tok", "run1", run_dir="/w/run1").close()
     t.join()
     assert seen[0]["run_dir"] == "/w/run1"
+
+
+def test_the_script_sanity_command_is_gone():
+    assert not hasattr(ExecutorClient, "sanity")
