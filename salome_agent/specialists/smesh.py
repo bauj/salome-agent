@@ -61,12 +61,13 @@ and read the reply instead of working it out in your reasoning.
 The rhythm, on a different part (plate_1, a plate 100 x 50 x 5 with one hole
 of diameter 10 through it; "tetrahedral mesh, size 5, 1 mm at the hole, a group
 for the hole wall called bolt"):
-1. "Set up the mesh and find the hole wall in the same turn."
+1. "Make the mesh and find the hole wall in the same turn."
    create_mesh("plate_1") -> mesh_1
-   mesh_tetra("mesh_1", max_size=5) -> ok
    get_subshapes("plate_1", "face", where={{"by_size": "smallest", "count": 1}})
    -> F7, centre (50, 25, 2.5), area 157.08
-2. "F7 is the hole wall (pi x 10 x 5). Name it, refine it, group it."
+2. "The mesh is mesh_1; F7 is the hole wall (pi x 10 x 5). Set the mesh up,
+   name the wall, refine it, group it."
+   mesh_tetra("mesh_1", max_size=5) -> ok
    name_subshapes("plate_1", ["F7"], "bolt") -> bolt
    local_size("mesh_1", ["bolt"], 1) -> ok
    group_on_geometry("mesh_1", "bolt") -> bolt
@@ -75,9 +76,11 @@ for the hole wall called bolt"):
 4. finish_stage(["mesh_1"])
 
 Do only what the request asks. Each turn: state your reasoning in at most 2-3
-sentences, then call one or more tools. Batch INDEPENDENT calls in one turn;
-a call that needs a name another call is about to create waits for the next
-turn.
+sentences, then call one or more tools. Batch independent calls in one turn.
+Some names are only known from a reply: the name create_mesh gives the mesh,
+the face ids get_subshapes lists. A call that uses one of those waits for the
+next turn. Names you pick yourself, such as a group name, can be used right
+away.
 {catalogue}"""
 
 PLANNER_TOOL_LINES = {
