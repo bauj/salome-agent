@@ -60,3 +60,30 @@ def test_name_taken_is_refused(agent_client):
     top_face_group(agent_client, b, name="inlet")
     r = _call(agent_client, "smesh", "name_subshapes", shape=b, ids=["F1"], name="inlet")
     assert r["ok"] is False and "taken" in r["error"]
+
+
+def test_every_algorithm_constant_resolves(agent_client):
+    from executor.smesh.setup import ALGORITHMS
+    b = shaper_box(agent_client)
+    for algorithm, (dim, _, _) in ALGORITHMS.items():
+        m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+        _ok(agent_client, "smesh", "set_algorithm", mesh=m, dimension=dim, algorithm=algorithm)
+
+
+def test_preset_replaces_preset(agent_client):
+    b = shaper_box(agent_client)
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_hexa", mesh=m, segments=4)
+    r = _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    assert "RemoveHypothesis" in r["records"][0]["code"]
+
+
+def test_hypothesis_needs_its_algorithm(agent_client):
+    b = shaper_box(agent_client)
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    r = _call(agent_client, "smesh", "set_hypothesis", mesh=m, kind="local_length",
+              params={"length": 2})
+    assert r["ok"] is False and "set_algorithm(dimension=1" in r["error"]
+    _ok(agent_client, "smesh", "set_algorithm", mesh=m, dimension=1, algorithm="segment")
+    _ok(agent_client, "smesh", "set_hypothesis", mesh=m, kind="local_length",
+        params={"length": 2})
