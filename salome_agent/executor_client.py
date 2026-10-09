@@ -1,5 +1,10 @@
+import importlib
 import json
 import socket
+
+READ_TIMEOUT = 10
+# Slack over a tool's own server-side limit (executor.<module>.timeout_for).
+_LONG_MARGIN = 30
 
 
 class SessionDied(Exception):
@@ -22,7 +27,7 @@ class ExecutorClient:
     def __init__(self, host: str, port: int, token: str, run_id: str,
                  record_path: str | None = None, hold: bool = False):
         self.record_path = record_path
-        self._sock = socket.create_connection((host, port), timeout=10)
+        self._sock = socket.create_connection((host, port), timeout=READ_TIMEOUT)
         self._f = self._sock.makefile("rwb")
         self._next_id = 1
         hello = {"id": 0, "cmd": "hello", "token": token, "run_id": run_id}
@@ -111,7 +116,14 @@ class ExecutorClient:
             extra["pin"] = pin
         if module is not None:
             extra["module"] = module
-        return self._call("call_tool", name=name, args=args, **extra)
+        limit = _tool_timeout(module, name)
+        if limit is None:
+            return self._call("call_tool", name=name, args=args, **extra)
+        self._sock.settimeout(limit + _LONG_MARGIN)
+        try:
+            return self._call("call_tool", name=name, args=args, **extra)
+        finally:
+            self._sock.settimeout(READ_TIMEOUT)
 
     def forget(self, names):
         return self._call("forget", names=names)
@@ -144,3 +156,13 @@ class ExecutorClient:
             self._sock.close()
         except OSError:
             pass
+
+
+def _tool_timeout(module, name):
+    if module is None:
+        return None
+    try:
+        pkg = importlib.import_module(f"executor.{module}")
+    except ImportError:
+        return None
+    return getattr(pkg, "timeout_for", lambda n: None)(name)
