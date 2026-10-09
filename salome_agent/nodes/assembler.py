@@ -120,7 +120,7 @@ def render_script(graph, run_id: str) -> str:
     for b in graph.blocks:
         text = b.script if b.script is not None else geom_bodies.get(b.id)
         if text:
-            if b.script is not None and unpublished:
+            if unpublished and (b.script is not None or b.module == "smesh"):
                 text = _SHAPER_PUBLISH + text
                 unpublished = False
             bodies.append(f"# {b.label}\n{text}")

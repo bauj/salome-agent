@@ -59,7 +59,11 @@ Module scope:
   stage builds the whole part on its own, a flat face included (make_face):
   never add a GEOM stage to finish a SHAPER part.
 - geom (GEOM): the same CAD geometry, used only when the request names GEOM.
-- smesh: meshing a geometry (algorithms, hypotheses, compute).
+- smesh (SMESH): meshing a shape an earlier stage built -- tetrahedra,
+  hexahedra, surface or other meshes, local sizes on chosen faces or edges,
+  viscous layers, mesh groups for a solver's boundary conditions, quality
+  checks, export to a file. A SMESH stage names the faces and edges it needs
+  itself: the CAD stage does not prepare them.
 
 A module the request names ("in SHAPER", "using GEOM", "with SMESH")
 always wins over these rules.
