@@ -1,4 +1,7 @@
+import pytest
+
 from executor.smesh import compute as c
+from executor.smesh import groups as gr
 
 
 def test_volume_check():
@@ -22,3 +25,16 @@ def test_failure_line():
 def test_quality_criteria_cover_the_tool_enum():
     assert set(c.QUALITY) == {"aspect_ratio", "minimum_angle", "scaled_jacobian", "skew",
                               "warping", "volume", "area"}
+
+
+def test_group_code():
+    assert (gr.group_code("m_inlet", "m", '_shaper_shape("inlet")', "inlet", "FACE")
+            == 'm_inlet = m.GroupOnGeom(_shaper_shape("inlet"), \'inlet\', SMESH.FACE)')
+
+
+def test_element_type_from_sub_type():
+    assert gr.ELEMENT_TYPES["solid"] == "VOLUME"
+    assert gr.element_for("face", None) == "FACE"
+    assert gr.element_for("face", "node") == "NODE"
+    with pytest.raises(ValueError):
+        gr.element_for("face", "cells")
