@@ -8,13 +8,16 @@ import time
 class Server:
     PRE_HELLO_TIMEOUT = 5.0
     BUSY_IDLE_S = 30.0
+    # A client that just closed may not be seen as gone yet: a hello waits this
+    # long for the active connection to end before it is answered busy.
+    CLAIM_WAIT_S = 1.0
 
     def __init__(self, core, token: str):
         self.core = core
         self.token = token
         self._srv: socket.socket | None = None
         self._stop = threading.Event()
-        self._conn_lock = threading.Lock()
+        self._conn_lock = threading.Condition()
         self._active = False
         self._held = False
         self._last_activity = 0.0
@@ -72,9 +75,11 @@ class Server:
                 pass
 
     def _claim(self, hold: bool) -> bool:
+        def taken():
+            return self._active and (self._held or
+                                     (time.monotonic() - self._last_activity) < self.BUSY_IDLE_S)
         with self._conn_lock:
-            if self._active and (self._held or
-                                 (time.monotonic() - self._last_activity) < self.BUSY_IDLE_S):
+            if not self._conn_lock.wait_for(lambda: not taken(), self.CLAIM_WAIT_S):
                 return False
             self._active = True
             self._held = hold
@@ -115,6 +120,7 @@ class Server:
                 with self._conn_lock:
                     self._active = False
                     self._held = False
+                    self._conn_lock.notify_all()
             try:
                 conn.close()
             except OSError:
