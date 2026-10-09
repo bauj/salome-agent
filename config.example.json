@@ -4,9 +4,6 @@
     "root": "/path/to/your/SALOME"
   },
   "policy": {
-    "static_retries": 3,
-    "exec_retries": 2,
-    "exec_timeout_s": 120,
     "tool_iteration_cap": 12,
     "plan_detail": "balanced",
     "tool_selection": "hints",

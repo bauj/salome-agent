@@ -69,21 +69,14 @@ def test_first_run_stage_emits_stage_start_once():
     assert again == []
 
 
-def test_failed_verify_emits_failed_attempt():
+def test_failed_run_stage_emits_failed_attempt():
     m = EventMapper("r1", "/w/r1")
     m.events("plan", {"plan": PLAN})
     m.events("run_stage", {})
-    err = {"phase": "exec", "message": "boom", "offending_line": 3, "traceback": None}
-    evs = m.events("verify_exec", {"stages": {}, "last_error": err})
+    err = {"phase": "tool", "message": "boom"}
+    evs = m.events("run_stage", {"stages": {}, "last_error": err})
     assert evs == [{"kind": "stage_attempt", "run_id": "r1",
-                    "data": {"index": 0, "phase": "exec", "ok": False, "error": "boom"}}]
-
-
-def test_passing_verify_static_with_no_update_emits_ok_attempt():
-    m = EventMapper("r1", "/w/r1")
-    m.events("plan", {"plan": PLAN})
-    evs = m.events("verify_static", None)
-    assert evs[0]["data"] == {"index": 0, "phase": "static", "ok": True, "error": None}
+                    "data": {"index": 0, "phase": "tool", "ok": False, "error": "boom"}}]
 
 
 def test_advance_emits_stage_done_and_moves_index():

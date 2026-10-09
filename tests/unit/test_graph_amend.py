@@ -5,8 +5,7 @@ import uuid
 from salome_agent.build_graph import BuildGraph
 from salome_agent.graph import build_graph, route_start
 
-POLICY = {"tool_iteration_cap": 5, "static_retries": 1, "exec_retries": 1,
-          "exec_timeout_s": 120, "tool_selection": "hints", "verify_cadence": "none",
+POLICY = {"tool_iteration_cap": 5, "tool_selection": "hints", "verify_cadence": "none",
           "plan_detail": "balanced", "on_stage_failure": "abort"}
 
 
