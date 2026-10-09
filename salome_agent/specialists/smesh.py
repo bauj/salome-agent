@@ -146,6 +146,9 @@ def _upstream(client, names: list[str]) -> "str | None":
     lines = []
     for n in names:
         i = info.get(n)
+        if i and "error" in i:
+            lines.append(f"  {n} — no longer in the study (used up by a later step)")
+            continue
         lines.append(f"  {n}" if not i else
                      f"  {n} — {i['type']}, volume {i['volume']}, area {i['area']}, "
                      f"{i['faces']} faces")

@@ -56,6 +56,8 @@ class MeshInfo:
         self.submeshes: dict = {}
         # mesh group name -> geometry group name
         self.groups: dict = {}
+        # group -> local size set on the NETGEN parameters (local_size)
+        self.local_sizes: dict = {}
 
 
 class SmeshState:

@@ -158,13 +158,21 @@ def _preset(executor, args: dict, setup: str, dim: int, build) -> dict:
     code = build(m, args)
     if info.setup is not None:
         code = RESET_CODE.format(m=m) + "\n" + code
+    netgen = f"{m}_netgen" if setup in ("mesh_tetra", "mesh_surface") else None
+    # The reset removes the NETGEN local sizes with the rest: a NETGEN preset
+    # sets them again, any other drops them and says so.
+    kept, dropped = (info.local_sizes, []) if netgen else ({}, list(info.local_sizes))
+    for g, size in kept.items():
+        code += "\n" + f"{netgen}.SetLocalSizeOnShape({group_ref(executor, g)[0]}, {size!r})"
     st = state(executor)
     run(st, code)
-    info.setup, info.dim = setup, dim
-    info.netgen = f"{m}_netgen" if setup in ("mesh_tetra", "mesh_surface") else None
+    info.setup, info.dim, info.netgen, info.local_sizes = setup, dim, netgen, dict(kept)
     info.algos = {(d, None): f"{m}_a{d}" for d in (1, 2, 3) if f"{m}_a{d}" in code}
-    return {"ok": True, "records": [record(setup, code, recv=m)], "mesh": m,
-            "setup": setup}
+    r = {"ok": True, "records": [record(setup, code, recv=m, refs=list(kept))], "mesh": m,
+         "setup": setup}
+    if dropped:
+        r["dropped_local_sizes"] = dropped
+    return r
 
 
 _MESH = {"mesh": {"type": "string"}}

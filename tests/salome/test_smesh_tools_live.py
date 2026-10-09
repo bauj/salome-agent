@@ -212,3 +212,36 @@ def test_prism_on_extruded_plate(agent_client):
     _ok(agent_client, "smesh", "mesh_prism", mesh=m, end_face="base", layers=5, face_size=4)
     r = _ok(agent_client, "smesh", "compute", mesh=m)
     assert r["computed"] and r["prism"] > 0 and r["volume"] == pytest.approx(8000, rel=1e-6)
+
+
+def test_shape_info_reports_a_consumed_shape_per_name(agent_client):
+    # A run prefix keeps the earlier tests' box_1 (still in the study) out of it.
+    import json
+    from salome_agent.executor_client import ExecutorClient
+    from .conftest import _HS
+    agent_client.close()
+    hs = json.loads(open(_HS).read())
+    client = ExecutorClient(hs["host"], hs["port"], hs["token"], "consumed0001")
+    try:
+        b = shaper_box(client)
+        cyl = _ok(client, "shaper", "make_cylinder", radius=2, height=30,
+                  origin=[5, 10, 0])["name"]
+        cut = _ok(client, "shaper", "cut", objects=[b], tools=[cyl])["name"]
+        info = _ok(client, "smesh", "shape_info", names=[b, cut])["shapes"]
+        assert "error" in info[b]
+        assert info[cut]["volume"] == pytest.approx(6000 - 3.14159265 * 4 * 30, rel=1e-4)
+    finally:
+        client.close()
+
+
+def test_forget_a_group_drops_its_mesh_groups(agent_client):
+    b = shaper_box(agent_client)
+    top_face_group(agent_client, b, name="cap")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    _ok(agent_client, "smesh", "group_on_geometry", mesh=m, group="cap")
+    assert "cap" in agent_client.forget(["cap"])["removed"]
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert "cap" not in r["groups"]
+    g = _call(agent_client, "smesh", "groups_from_geometry", mesh=m)
+    assert g["ok"] is False
