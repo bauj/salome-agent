@@ -24,7 +24,7 @@ _HELPERS = '''def _shaper_shape(name):
     sos = salome.myStudy.FindObjectByName(name, "SHAPERSTUDY")
     if not sos:
         raise LookupError(f"no SHAPER result {name!r} in the study")
-    return sos[0].GetObject()
+    return sos[-1].GetObject()
 
 
 def _ids(group):

@@ -87,3 +87,36 @@ def test_hypothesis_needs_its_algorithm(agent_client):
     _ok(agent_client, "smesh", "set_algorithm", mesh=m, dimension=1, algorithm="segment")
     _ok(agent_client, "smesh", "set_hypothesis", mesh=m, kind="local_length",
         params={"length": 2})
+
+
+def test_tetra_compute_measures(agent_client):
+    b = shaper_box(agent_client)
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    assert _ok(agent_client, "smesh", "evaluate", mesh=m)["predicted_elements"] > 0
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["computed"] is True and r["errors"] == []
+    assert r["tetra"] > 0 and r["volume"] == pytest.approx(6000, rel=1e-6)
+    assert r["shape_volume"] == pytest.approx(6000)
+    assert 1.0 <= r["quality"]["aspect_ratio"]["min"] <= r["quality"]["aspect_ratio"]["max"]
+    q = _ok(agent_client, "smesh", "check_quality", mesh=m, criterion="aspect_ratio",
+            threshold=2.0)
+    assert q["above_threshold"] >= 0
+
+
+def test_hexa_on_cylinder_names_the_failed_faces(agent_client):
+    cyl = _ok(agent_client, "shaper", "make_cylinder", radius=5, height=10,
+              origin=[0, 0, 0])["name"]
+    m = _ok(agent_client, "smesh", "create_mesh", shape=cyl)["name"]
+    _ok(agent_client, "smesh", "mesh_hexa", mesh=m, segments=4)
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["computed"] is False
+    assert any("a face at (0.0, 0.0, 10.0)" in e and "4 sides" in e for e in r["errors"])
+
+
+def test_compute_refuses_above_cap(agent_client):
+    b = shaper_box(agent_client, dx=100, dy=100, dz=100)
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=0.5)
+    r = _call(agent_client, "smesh", "compute", mesh=m)
+    assert r["ok"] is False and "limit" in r["error"]
