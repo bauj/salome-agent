@@ -1,5 +1,7 @@
 """Named groups of sub-shapes: SHAPER's own make_group tool, and the code the
 SMESH tools reuse to name faces and edges of a SHAPER shape."""
+import builtins
+import keyword
 import re
 
 from executor.shaper.features import _build
@@ -7,6 +9,13 @@ from executor.shaper.state import SUB_TYPES, state, tool
 from executor.shaper.subshapes import _pick, _sels, _shape_name
 
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*$")
+# Names result.py binds at module level, Python keywords and built-ins: a group
+# named like one would replace it in the live namespace and in result.py.
+RESERVED = frozenset({
+    "salome", "SALOMEDS", "KernelBasis", "geomBuilder", "geompy", "gg",
+    "model", "shaper_doc", "SketchAPI", "SketchAPI_Point",
+    "smesh", "smeshBuilder", "SMESH", "StdMeshers",
+    *keyword.kwlist, *keyword.softkwlist, *dir(builtins)})
 
 
 def group_sub_type(ids) -> str:
@@ -23,6 +32,9 @@ def check_group_name(name, taken) -> None:
     if not isinstance(name, str) or not _NAME.fullmatch(name):
         raise ValueError(f"name {name!r} must start with a letter and use only "
                          "letters, digits and _")
+    if name in RESERVED:
+        raise ValueError(f"the name {name!r} is reserved (a SALOME or Python name); "
+                         "pick another")
     if name in taken:
         raise ValueError(f"the name {name!r} is taken; pick another")
 
