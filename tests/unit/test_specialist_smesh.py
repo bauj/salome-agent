@@ -21,8 +21,7 @@ def test_core_tools_are_registered_tools():
     from executor.smesh import registry
     from salome_agent.specialists.smesh import CORE_TOOLS, PLANNER_TOOL_LINES
     assert CORE_TOOLS <= set(registry.names)
-    assert set(registry.names) <= set(PLANNER_TOOL_LINES)
-    assert set(PLANNER_TOOL_LINES) - set(registry.names) <= {"mesh_prism"}
+    assert set(PLANNER_TOOL_LINES) == set(registry.names)
 
 
 def test_categories_cover_the_registry():

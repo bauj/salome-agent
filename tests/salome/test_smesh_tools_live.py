@@ -201,3 +201,14 @@ def test_export_med(agent_client, tmp_path):
         assert os.path.getsize(r["path"]) > 0
     finally:
         os.remove(r["path"])
+
+
+def test_prism_on_extruded_plate(agent_client):
+    b = shaper_box(agent_client, dx=40, dy=20, dz=10)
+    bottom = _ok(agent_client, "smesh", "get_subshapes", shape=b, sub_type="face",
+                 where={"sorted_by": "z", "take": "min", "count": 1})["subshapes"]
+    _ok(agent_client, "smesh", "name_subshapes", shape=b, ids=[bottom[0]["id"]], name="base")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_prism", mesh=m, end_face="base", layers=5, face_size=4)
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["computed"] and r["prism"] > 0 and r["volume"] == pytest.approx(8000, rel=1e-6)
