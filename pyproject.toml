@@ -23,7 +23,3 @@ packages = ["salome_agent", "salome_agent.nodes", "salome_agent.specialists",
             "salome_agent.verify", "agent_server", "executor", "executor.geom",
             "executor.shaper"]
 package-data = {"salome_agent.verify" = ["toplevel_api.json"]}
-
-[tool.pytest.ini_options]
-markers = ["salome: requires a live SALOME install (skipped in CI)",
-           "llm: calls a real LLM endpoint and spends tokens; deselected by default, run with -m llm"]
