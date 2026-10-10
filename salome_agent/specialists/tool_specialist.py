@@ -466,8 +466,8 @@ class ToolSpecialist:
                     parts = []
                     if (spec.measure_tools and verify_cadence in ("final", "strict")
                             and risky_since_measure > 0):
-                        log.info("  verify_cadence=%s: nudging a measure before finish_stage",
-                                 verify_cadence)
+                        log.info("  verify_cadence=%s: nudging a measure before %s",
+                                 verify_cadence, spec.terminator.name)
                         parts.append(
                             "You have moved or combined shapes since your last measure. "
                             "Call `measure` on your result shape(s) and confirm their "
