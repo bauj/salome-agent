@@ -328,7 +328,7 @@ def test_a_delete_that_takes_a_mesh_with_it_says_so():
                          "SMESH tools unless the user asked to remove them.")
     session = AmendSession(_meshed_graph(), client, 1, "shaper")
     r = session.execute(client, "delete_node", {"node": "n3"})
-    assert r == {"ok": True, "deleted": ["n3"]}
+    assert r == {"ok": True, "changed": True, "deleted": ["n3"]}
 
 
 def test_a_compute_of_an_untouched_mesh_stays_out_of_the_graph():
@@ -356,3 +356,29 @@ def test_the_measure_nudge_names_the_amend_terminator():
                if m["role"] == "tool"]
     assert any("then call finish_turn again" in c for c in replies)
     assert not any("finish_stage" in c for c in replies)
+
+
+def test_an_edit_that_failed_runs_again_after_a_delete():
+    class FailTranslateOnce(FakeClient):
+        failed = False
+
+        def call_tool(self, name, args, pin=None):
+            if name == "translate" and not self.failed:
+                self.failed = True
+                self.calls.append((name, args, pin))
+                return {"ok": False, "error": "no face F10"}
+            return super().call_tool(name, args, pin)
+
+    g = _graph()
+    g.append(g.blocks[0].id, "translate", {"shape": "box_1", "dx": 1},
+             [{"fn": "F", "args": [{"kind": "ref", "value": "box_1"}],
+               "out_vars": ["translation_1"], "publish": ["translation_1"]}], 0)
+    edit = ("edit_arg", {"node": "n1", "param": "dz", "value": "3"})
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(edit), _resp(("delete_node", {"node": "n2"})), _resp(edit),
+                            _resp(("finish_turn", {"summary": "taller"}))]
+    client = FailTranslateOnce()
+    session, _ = run_amend("make it taller", g, llm, client, 1, POLICY)
+    tall = [c for c in client.calls if c[0] == "make_box" and c[1]["dz"] == 3]
+    assert len(tall) == 2
+    assert session.graph.nodes["n1"].tool_args["dz"] == 3
