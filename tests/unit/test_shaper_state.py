@@ -9,6 +9,7 @@ from executor.shaper.sketch import exec_records
 class FakeModel:
     def __init__(self):
         self.begins = self.ends = 0
+        self.flushes = []
 
     def begin(self):
         self.begins += 1
@@ -20,12 +21,25 @@ class FakeModel:
         pass
 
 
+class FakeResult:
+    def __init__(self, log):
+        self.log = log
+
+    def setDisplayed(self, shown):
+        self.log.append(("displayed", shown))
+
+
 class FakeFeature:
-    def __init__(self, name):
+    def __init__(self, name, log=None, subs=()):
         self._name = name
+        self.log = log if log is not None else []
+        self.subs = list(subs)
 
     def name(self):
         return self._name
+
+    def results(self):
+        return [FakeResult(self.log)]
 
 
 class FakeDoc:
@@ -37,6 +51,7 @@ class FakeDoc:
         return list(self.features)
 
     def removeFeature(self, feat):
+        feat.log.append(("removed", feat.name()))
         if self.fail_remove:
             raise RuntimeError("remove failed")
         self.features.remove(feat)
@@ -46,6 +61,8 @@ class FakeDoc:
 def fake_model(monkeypatch):
     m = FakeModel()
     monkeypatch.setattr(state_mod, "model", lambda: m)
+    monkeypatch.setattr(state_mod, "_subs", lambda feat: feat.subs)
+    monkeypatch.setattr(state_mod, "_flush_redisplay", lambda: m.flushes.append(1))
     return m
 
 
@@ -137,3 +154,21 @@ def test_forget_takes_both_when_the_longer_name_comes_second(fake_model, monkeyp
     ex.shaper_state.objects.update({"base": "group", "base_f": "group"})
     assert state_mod.forget(ex, ["base", "base_f"]) == ["base", "base_f"]
     assert doc.features == []
+
+
+def test_forget_hides_the_results_and_sketch_entities_before_removing(fake_model, monkeypatch):
+    # With the SHAPER module active, a feature removed while still displayed
+    # stayed drawn in the viewer.
+    monkeypatch.setattr(state_mod, "_remove_study_objects", lambda ex, names: None)
+    log = []
+    monkeypatch.setattr(state_mod, "_flush_redisplay", lambda: log.append(("flush",)))
+    doc = FakeDoc()
+    ex = _executor(doc)
+    entity = FakeFeature("SketchCircle_1", log)
+    sketch = FakeFeature("sketch_1", log, subs=[entity])
+    doc.features.append(sketch)
+    ex.shaper_state.sketches["sketch_1"] = SimpleNamespace(
+        api=SimpleNamespace(feature=lambda: sketch))
+    assert state_mod.forget(ex, ["sketch_1"]) == ["sketch_1"]
+    assert log == [("displayed", False), ("displayed", False), ("flush",),
+                   ("removed", "sketch_1")]
