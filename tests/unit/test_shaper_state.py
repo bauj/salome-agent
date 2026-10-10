@@ -172,3 +172,15 @@ def test_forget_hides_the_results_and_sketch_entities_before_removing(fake_model
     assert state_mod.forget(ex, ["sketch_1"]) == ["sketch_1"]
     assert log == [("displayed", False), ("displayed", False), ("flush",),
                    ("removed", "sketch_1")]
+
+
+def test_show_sets_the_displayed_flag_of_known_results_and_flushes(fake_model):
+    log = []
+    doc = FakeDoc()
+    ex = _executor(doc)
+    feat = FakeFeature("ext", log)
+    ex.shaper_state.objects["ext_1"] = "solid"
+    ex.shaper_state.ns["ext_1"] = SimpleNamespace(feature=lambda: feat)
+    assert state_mod.show(ex, ["ext_1", "box_9"], True) == ["ext_1"]
+    assert log == [("displayed", True)]
+    assert fake_model.flushes == [1] and fake_model.begins == 0
