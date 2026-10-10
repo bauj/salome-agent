@@ -103,13 +103,13 @@ class Server:
                 return
             claimed = True
             conn.settimeout(None)
-            f.write((json.dumps(self.core.handle(req)) + "\n").encode())
+            f.write((json.dumps(self.core.handle(req), default=str) + "\n").encode())
             f.flush()
             for line in f:
                 with self._conn_lock:
                     self._last_activity = time.monotonic()
                 parsed = json.loads(line)
-                f.write((json.dumps(self.core.handle(parsed)) + "\n").encode())
+                f.write((json.dumps(self.core.handle(parsed), default=str) + "\n").encode())
                 f.flush()
                 if parsed.get("cmd") == "shutdown":
                     break

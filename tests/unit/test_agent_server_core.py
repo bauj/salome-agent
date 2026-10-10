@@ -191,3 +191,26 @@ def test_hello_keeps_the_run_dir_for_the_tools():
     assert b.run_dir == "/w/r1"
     Core(b).handle({"id": 2, "cmd": "hello", "run_id": "r2"})
     assert b.run_dir is None
+
+
+def test_a_command_that_raises_answers_with_an_error(monkeypatch):
+    b = FakeBackend()
+
+    def boom(names):
+        raise KeyError("base_f")
+    monkeypatch.setattr(b, "forget", boom)
+    r = Core(b).handle({"id": 4, "cmd": "forget", "names": ["base"]})
+    assert r == {"id": 4, "ok": False,
+                 "error": "forget failed on the server: KeyError: 'base_f'"}
+    assert Core(b).handle({"id": 5, "cmd": "list_study"})["id"] == 5
+
+
+def test_a_timeout_that_poisoned_the_backend_still_answers_fatal(monkeypatch):
+    b = FakeBackend()
+
+    def stuck(names):
+        b._poisoned = True
+        raise TimeoutError("main-thread call exceeded 30s")
+    monkeypatch.setattr(b, "forget", stuck)
+    r = Core(b).handle({"id": 6, "cmd": "forget", "names": ["x"]})
+    assert r["fatal"] is True and r["id"] == 6

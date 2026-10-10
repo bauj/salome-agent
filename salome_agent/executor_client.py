@@ -46,7 +46,8 @@ class ExecutorClient:
             raise SessionPoisoned(ready.get("error", "poisoned"))
         if ready.get("error") == "busy":
             raise ServerBusy("another agent run is in progress")
-        assert ready.get("ready") is True
+        if ready.get("ready") is not True:
+            raise SessionDied(ready.get("error") or "the server did not accept the hello")
         self.mode = ready.get("mode")
         self.name_prefix = ready.get("name_prefix", "")
         self.leftovers = ready.get("leftovers", 0)
