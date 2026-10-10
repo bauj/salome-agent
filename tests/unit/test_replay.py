@@ -133,3 +133,101 @@ def test_replay_sends_a_non_geom_node_to_its_module():
                      "out_vars": ["sketch_1"], "publish": ["sketch_1"]}], 0, module="shaper")
     replay(Client(), g, [nid])
     assert seen == [("create_sketch", "shaper")]
+
+
+class SketchClient:
+    """A sketch whose entities stay until the sketch itself is forgotten, and
+    which refuses an id it already has, as SHAPER does."""
+
+    def __init__(self):
+        self.sketches = {}
+        self.log = []
+
+    def forget(self, names):
+        self.log.append(("forget", sorted(names)))
+        for n in names:
+            self.sketches.pop(n, None)
+        return {"ok": True, "removed": []}
+
+    def call_tool(self, name, args, pin=None, module=None):
+        self.log.append(("call", name))
+        if name == "create_sketch":
+            self.sketches[pin[0]] = []
+            return {"ok": True, "records": [{"fn": name, "args": [], "recv": pin[0],
+                                             "out_vars": [pin[0]], "publish": [pin[0]]}]}
+        sk = self.sketches[args["sketch"]]
+        if name == "close_sketch":
+            return {"ok": True, "records": [{"fn": name, "args": [], "recv": args["sketch"],
+                                             "out_vars": []}]}
+        ids = [e["id"] for e in args["entities"]]
+        if set(ids) & set(sk):
+            return {"ok": False, "error": "id already used in this sketch"}
+        sk += ids
+        return {"ok": True, "records": [{"fn": name, "args": [], "recv": args["sketch"],
+                                         "out_vars": [f"{args['sketch']}_{i}" for i in ids]}]}
+
+
+def _sketch_graph(client):
+    g = BuildGraph()
+    b = g.add_block(0, "stage 1/1: shaper", "shaper", ["sketch_1"])
+    for name, args in [("create_sketch", {"plane": "XOY"}),
+                       ("sketch_add", {"sketch": "sketch_1", "entities": [{"id": "H1"}, {"id": "H2"}]}),
+                       ("sketch_add", {"sketch": "sketch_1", "entities": [{"id": "L1"}]}),
+                       ("close_sketch", {"sketch": "sketch_1"})]:
+        r = client.call_tool(name, args, pin=["sketch_1"] if name == "create_sketch" else [])
+        g.append(b, name, args, r["records"], 0, module="shaper")
+    client.log.clear()
+    return g
+
+
+def test_apply_edit_of_a_sketch_entity_rebuilds_the_sketch():
+    c = SketchClient()
+    g = _sketch_graph(c)
+    new, ids = apply_edit(c, g, "n2", "entities", [{"id": "H1"}])
+    assert ids == ["n1", "n2", "n3", "n4"]
+    assert c.log[0] == ("forget", ["sketch_1", "sketch_1_H1", "sketch_1_H2", "sketch_1_L1"])
+    assert c.sketches["sketch_1"] == ["H1", "L1"]
+
+
+def test_apply_delete_of_a_sketch_entity_rebuilds_the_sketch_without_it():
+    c = SketchClient()
+    g = _sketch_graph(c)
+    new, removed = apply_delete(c, g, "n2")
+    assert removed == ["n2"]
+    assert list(new.nodes) == ["n1", "n3", "n4"]
+    assert c.sketches["sketch_1"] == ["L1"]
+
+
+def test_apply_delete_failure_restores_the_sketch():
+    c = SketchClient()
+    g = _sketch_graph(c)
+    real = c.call_tool
+
+    def failing(name, args, pin=None, module=None):
+        if name == "close_sketch" and c.log.count(("call", "close_sketch")) == 0:
+            c.log.append(("call", name))
+            return {"ok": False, "error": "boom"}
+        return real(name, args, pin, module)
+
+    c.call_tool = failing
+    with pytest.raises(ReplayFailed):
+        apply_delete(c, g, "n2")
+    assert c.sketches["sketch_1"] == ["H1", "H2", "L1"]
+
+
+def test_sync_undoes_a_sketch_entity_edit():
+    c = SketchClient()
+    before = _sketch_graph(c)
+    after, _ = apply_edit(c, before, "n2", "entities", [{"id": "H3"}])
+    restored = sync(c, current=after, target=before)
+    assert c.sketches["sketch_1"] == ["H1", "H2", "L1"]
+    assert restored.to_dict() == before.to_dict()
+
+
+def test_sync_undoes_a_sketch_entity_delete():
+    c = SketchClient()
+    before = _sketch_graph(c)
+    after, _ = apply_delete(c, before, "n3")
+    assert c.sketches["sketch_1"] == ["H1", "H2"]
+    sync(c, current=after, target=before)
+    assert c.sketches["sketch_1"] == ["H1", "H2", "L1"]
