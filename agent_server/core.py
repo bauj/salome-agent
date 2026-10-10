@@ -111,9 +111,11 @@ class Core:
             b.refresh("GEOM")
             return {"id": rid, **r}
         if cmd == "display":
-            return {"id": rid, **b.display(req["names"])}
+            r = b.display(req["names"])
+            return {"id": rid, **r, "shown": r["shown"] + _show_side_modules(b, req["names"], True)}
         if cmd == "hide":
-            return {"id": rid, **b.hide(req["names"])}
+            r = b.hide(req["names"])
+            return {"id": rid, **r, "hidden": r["hidden"] + _show_side_modules(b, req["names"], False)}
         if cmd == "shutdown":
             b.end_session()
             return {"id": rid, "ok": True}
@@ -129,6 +131,14 @@ def _side_modules():
 def _reset_side_modules(b) -> None:
     for pkg in _side_modules():
         pkg.reset(b)
+
+
+# SHAPER draws its results in the OCC viewer itself; their SHAPERSTUDY entries
+# are for the other modules, and a presentation made from one has no eye in
+# any tree there.
+def _show_side_modules(b, names: list, shown: bool) -> list:
+    return [n for pkg in _side_modules() if hasattr(pkg, "show")
+            for n in b.run_tool(lambda: pkg.show(b, names, shown), TOOL_TIMEOUT)]
 
 
 def _forget_side_modules(b, names: list) -> list:

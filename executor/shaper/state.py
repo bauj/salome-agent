@@ -188,6 +188,30 @@ def _hide(feats: list) -> None:
     _flush_redisplay()
 
 
+def show(executor, names: list, shown: bool) -> list:
+    """Show or hide SHAPER results in SHAPER's own presentation, the one its
+    tree's eye controls; nothing is drawn until SHAPER's GUI is loaded."""
+    st = executor.__dict__.get("shaper_state")
+    if st is None:
+        return []
+    feats, done = [], []
+    for name in names:
+        if name in st.sketches:
+            feats.append(st.sketches[name].api.feature())
+        elif name in st.objects:
+            feats.append(st.ns[name].feature())
+        else:
+            continue
+        done.append(name)
+    # Outside an operation: SHAPER rolls back a flag-only operation at its end.
+    for feat in feats:
+        for res in feat.results():
+            res.setDisplayed(shown)
+    if feats:
+        _flush_redisplay()
+    return done
+
+
 def forget(executor, names: list) -> list:
     """Remove published shaper objects (sketches, features) and their study
     entries; names this module did not build are ignored."""
