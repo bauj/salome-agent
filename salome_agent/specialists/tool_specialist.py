@@ -471,7 +471,7 @@ class ToolSpecialist:
                         parts.append(
                             "You have moved or combined shapes since your last measure. "
                             "Call `measure` on your result shape(s) and confirm their "
-                            "placement, then call finish_stage again.")
+                            f"placement, then call {spec.terminator.name} again.")
                     if spec.audit is not None:
                         report = spec.audit(args, calls[n_seed_calls:], call_log,
                                             upstream, shape_infos)
