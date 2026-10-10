@@ -8,6 +8,7 @@ else:
     from PyQt5.QtCore import QObject, pyqtSignal as _Signal, Qt
 
 from agent_server.backend import display_names, forget_names, hide_names
+from agent_server.limits import MAIN_THREAD_TIMEOUT, REFRESH_TIMEOUT
 from executor import geom
 
 
@@ -124,7 +125,7 @@ class GuiBackend:
             import libSALOME_Swig
             libSALOME_Swig.SALOMEGUI_Swig().updateObjBrowser()
         try:
-            self._invoker.run_on_main(_do, timeout=10)
+            self._invoker.run_on_main(_do, timeout=REFRESH_TIMEOUT)
         except Exception:
             pass
 
@@ -138,7 +139,7 @@ class GuiBackend:
             except Exception:
                 pass
             return r
-        return self._invoker.run_on_main(_do, timeout=30)
+        return self._invoker.run_on_main(_do, timeout=MAIN_THREAD_TIMEOUT)
 
     def display(self, names):
         def _do():
@@ -147,7 +148,7 @@ class GuiBackend:
             r = display_names(self.namespace, names, sg.Display)
             sg.UpdateView()
             return r
-        return self._invoker.run_on_main(_do, timeout=30)
+        return self._invoker.run_on_main(_do, timeout=MAIN_THREAD_TIMEOUT)
 
     def hide(self, names):
         def _do():
@@ -156,7 +157,7 @@ class GuiBackend:
             r = hide_names(self.namespace, names, sg.Erase)
             sg.UpdateView()
             return r
-        return self._invoker.run_on_main(_do, timeout=30)
+        return self._invoker.run_on_main(_do, timeout=MAIN_THREAD_TIMEOUT)
 
     def find_object(self, name):
         def _do():
@@ -165,7 +166,7 @@ class GuiBackend:
                 return fo(self.name_prefix + name)
             except LookupError:
                 return fo(name)
-        return self._invoker.run_on_main(_do, timeout=30)
+        return self._invoker.run_on_main(_do, timeout=MAIN_THREAD_TIMEOUT)
 
     def leftovers(self):
         # the live study is the user's own; never offer to wipe it
