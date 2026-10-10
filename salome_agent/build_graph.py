@@ -128,6 +128,24 @@ class BuildGraph:
                 hit.add(nid)
         return sorted(hit, key=_num)
 
+    def receivers(self, node_id: str) -> list[str]:
+        """The nodes that made what `node_id` changes in place (the sketch it
+        adds to, the mesh it sets up, the shape it colours)."""
+        node = self._live(node_id)
+        own = set(node.out_vars)
+        owners = {self.owner(r["recv"]) for r in node.records
+                  if r.get("recv") and r["recv"] not in own}
+        owners.discard(None)
+        return sorted(owners, key=_num)
+
+    def rebuilt_by(self, node_id: str) -> list[str]:
+        """What a change to `node_id` rebuilds: from the objects it changes in
+        place, since forgetting its own outputs leaves its parts in them."""
+        hit: set[str] = set()
+        for nid in [node_id, *self.receivers(node_id)]:
+            hit |= set(self.affected(nid))
+        return sorted(hit, key=_num)
+
     def delete(self, node_id: str) -> list[BuildNode]:
         ids = self.affected(node_id)
         removed = [self.nodes.pop(nid) for nid in ids]

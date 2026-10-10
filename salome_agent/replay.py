@@ -40,29 +40,38 @@ def replay(client, graph: BuildGraph, ids) -> None:
         graph.set_records(nid, r.get("records") or [])
 
 
-def apply_edit(client, graph: BuildGraph, node_id: str, param: str, value):
-    new = graph.copy()
-    new.edit_arg(node_id, param, value)
-    ids = new.affected(node_id)
-    _forget(client, _vars(graph, ids))
+def _swap(client, graph: BuildGraph, new: BuildGraph, ids, removed=()) -> None:
+    """Forget `graph`'s nodes `ids` and `removed`, then build `ids` from `new`;
+    on failure put `graph`'s nodes back."""
+    old = sorted(set(ids) | set(removed), key=_num)
+    _forget(client, _vars(graph, old))
     try:
         replay(client, new, ids)
     except ReplayFailed:
         restored = graph.copy()
         try:
-            _forget(client, _vars(new, ids) + _vars(graph, ids))
-            replay(client, restored, ids)
+            _forget(client, _vars(new, ids) + _vars(graph, old))
+            replay(client, restored, old)
         except ReplayFailed as e2:
             raise RollbackFailed(f"could not restore after a failed edit: {e2}", new) from e2
         raise
+
+
+def apply_edit(client, graph: BuildGraph, node_id: str, param: str, value):
+    new = graph.copy()
+    new.edit_arg(node_id, param, value)
+    ids = new.rebuilt_by(node_id)
+    _swap(client, graph, new, ids)
     return new, ids
 
 
 def apply_delete(client, graph: BuildGraph, node_id: str):
+    owners = {o for nid in graph.affected(node_id) for o in graph.receivers(nid)}
     new = graph.copy()
-    removed = new.delete(node_id)
-    _forget(client, [v for n in removed for v in n.out_vars])
-    return new, [n.id for n in removed]
+    removed = [n.id for n in new.delete(node_id)]
+    ids = sorted({nid for o in owners if o in new.nodes for nid in new.affected(o)}, key=_num)
+    _swap(client, graph, new, ids, removed)
+    return new, removed
 
 
 def sync(client, current: BuildGraph, target: BuildGraph) -> BuildGraph:
@@ -71,7 +80,12 @@ def sync(client, current: BuildGraph, target: BuildGraph) -> BuildGraph:
                if nid not in cur or cur[nid].tool_args != n.tool_args]
     rebuild: set[str] = set()
     for nid in changed:
-        rebuild |= set(target.affected(nid))
+        rebuild |= set(target.rebuilt_by(nid))
+    for nid in cur:
+        if nid not in tgt:
+            for o in current.receivers(nid):
+                if o in tgt:
+                    rebuild |= set(target.affected(o))
     drop = [nid for nid in cur if nid not in tgt] + [nid for nid in rebuild if nid in cur]
     _forget(client, _vars(current, drop))
     out = target.copy()
