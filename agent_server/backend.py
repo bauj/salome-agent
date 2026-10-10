@@ -47,8 +47,8 @@ def _run_with_timeout(code: str, namespace: dict, timeout: float) -> dict:
 _SHAPE_COMPONENTS = ("GEOM", "SHAPERSTUDY")
 
 
-def _find(study, name):
-    return [sobj for comp in _SHAPE_COMPONENTS for sobj in study.FindObjectByName(name, comp)]
+def _find(study, name, components=_SHAPE_COMPONENTS):
+    return [sobj for comp in components for sobj in study.FindObjectByName(name, comp)]
 
 
 def forget_names(namespace: dict, geom_bindings: dict, names: list, erase=None) -> dict:
@@ -75,7 +75,7 @@ def display_names(namespace: dict, names: list, show) -> dict:
     study = namespace["salome"].myStudy
     shown = []
     for name in names:
-        for sobj in _find(study, name):
+        for sobj in _find(study, name, ("GEOM",)):
             show(sobj.GetID())
             shown.append(name)
     return {"ok": True, "shown": shown}
@@ -86,7 +86,7 @@ def hide_names(namespace: dict, names: list, erase) -> dict:
     study = namespace["salome"].myStudy
     hidden = []
     for name in names:
-        for sobj in _find(study, name):
+        for sobj in _find(study, name, ("GEOM",)):
             erase(sobj.GetID())
             hidden.append(name)
     return {"ok": True, "hidden": hidden}

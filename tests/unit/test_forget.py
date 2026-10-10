@@ -107,7 +107,7 @@ def test_headless_display_is_a_no_op():
 
 
 def test_core_display_command():
-    backend = SimpleNamespace(poisoned=lambda: False,
+    backend = SimpleNamespace(poisoned=lambda: False, run_tool=lambda fn, timeout: fn(),
                               display=lambda names: {"ok": True, "shown": list(names)})
     assert Core(backend).handle({"id": 5, "cmd": "display", "names": ["a"]}) == {
         "id": 5, "ok": True, "shown": ["a"]}
@@ -127,7 +127,7 @@ def test_headless_hide_is_a_no_op():
 
 
 def test_core_hide_command():
-    backend = SimpleNamespace(poisoned=lambda: False,
+    backend = SimpleNamespace(poisoned=lambda: False, run_tool=lambda fn, timeout: fn(),
                               hide=lambda names: {"ok": True, "hidden": list(names)})
     assert Core(backend).handle({"id": 6, "cmd": "hide", "names": ["a"]}) == {
         "id": 6, "ok": True, "hidden": ["a"]}
@@ -142,14 +142,30 @@ def test_client_hide_sends_the_hide_command():
     assert sent == [("hide", {"names": ["a"]})]
 
 
-def test_shaper_results_are_found_too():
+def test_shaper_results_are_left_to_shaper_in_the_viewer_but_forgotten_from_the_study():
+    # A presentation made from a SHAPERSTUDY entry has no eye in the GEOM or
+    # SHAPER tree, so it stayed in the OCC view whatever the user hid.
     study = FakeStudy(["box_1"], shaper=["extrusion_1"])
     shown, erased = [], []
-    assert display_names(_ns(study), ["extrusion_1"], shown.append)["shown"] == ["extrusion_1"]
-    assert hide_names(_ns(study), ["extrusion_1"], erased.append)["hidden"] == ["extrusion_1"]
+    assert display_names(_ns(study), ["extrusion_1"], shown.append)["shown"] == []
+    assert hide_names(_ns(study), ["extrusion_1"], erased.append)["hidden"] == []
+    assert shown == erased == []
     r = forget_names(_ns(study), {}, ["extrusion_1", "box_1"], erase=erased.append)
     assert r == {"ok": True, "removed": ["extrusion_1", "box_1"]}
-    assert shown == ["0:2:extrusion_1"] and erased[0] == "0:2:extrusion_1"
+    assert erased[0] == "0:2:extrusion_1"
+
+
+def test_core_display_shows_shaper_results_through_shaper(monkeypatch):
+    import agent_server.core as core
+    seen = []
+    pkg = SimpleNamespace(show=lambda b, names, shown: seen.append((names, shown)) or ["ext_1"])
+    monkeypatch.setattr(core, "_side_modules", lambda: [pkg])
+    backend = SimpleNamespace(poisoned=lambda: False, run_tool=lambda fn, timeout: fn(),
+                              display=lambda names: {"ok": True, "shown": []},
+                              hide=lambda names: {"ok": True, "hidden": []})
+    assert Core(backend).handle({"id": 1, "cmd": "display", "names": ["ext_1"]})["shown"] == ["ext_1"]
+    assert Core(backend).handle({"id": 2, "cmd": "hide", "names": ["ext_1"]})["hidden"] == ["ext_1"]
+    assert seen == [(["ext_1"], True), (["ext_1"], False)]
 
 
 def test_introspect_imports_shaper_model_on_the_gui_thread():
