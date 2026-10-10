@@ -7,7 +7,7 @@ name = "salome-agent"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "langgraph",
+    "langgraph>=1.2",
     "requests",
     "typing-extensions>=4.16.0",
 ]
