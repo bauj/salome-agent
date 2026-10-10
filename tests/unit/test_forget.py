@@ -137,7 +137,7 @@ def test_client_hide_sends_the_hide_command():
     from salome_agent.executor_client import ExecutorClient
     client = ExecutorClient.__new__(ExecutorClient)
     sent = []
-    client._call = lambda cmd, **kw: sent.append((cmd, kw)) or {"ok": True}
+    client._call = lambda cmd, _bound=None, **kw: sent.append((cmd, kw)) or {"ok": True}
     client.hide(["a"])
     assert sent == [("hide", {"names": ["a"]})]
 

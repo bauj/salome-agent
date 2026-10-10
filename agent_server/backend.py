@@ -4,6 +4,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from typing import Protocol
 
+from agent_server.limits import TOOL_TIMEOUT
 from executor import geom
 
 
@@ -176,7 +177,7 @@ class HeadlessBackend:
         geom.reset_counters()
         self.geom_bindings.clear()
         for idx, s in enumerate(scripts):
-            r = _run_with_timeout(s, self.namespace, 120)
+            r = _run_with_timeout(s, self.namespace, TOOL_TIMEOUT)
             if not r["ok"]:
                 return {"ok": False, "failed_index": idx}
         self.accepted_scripts = list(scripts)
