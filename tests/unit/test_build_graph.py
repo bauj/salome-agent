@@ -132,3 +132,15 @@ def test_render_is_tool_level():
     assert 'n1  box_1 = make_box(dx=200, dy=120, dz=80)' in text
     assert 'n3  fuse_1 = fuse(shapes=["box_1", "box_2"])  <- n1, n2' in text
     assert 'n4  set_color(shape="fuse_1", red=255, green=0, blue=0)  <- n3' in text
+
+
+def test_rebuilt_by_starts_at_the_object_a_node_changes_in_place():
+    g = BuildGraph()
+    b = g.add_block(0, "stage 1/1: smesh", "smesh", [])
+    g.append(b, "create_mesh", {}, [{"args": [], "recv": "mesh_1", "out_vars": ["mesh_1"]}], 0)
+    g.append(b, "mesh_tetra", {"max_size": 4}, [{"args": [], "recv": "mesh_1", "out_vars": []}], 0)
+    g.append(b, "compute", {}, [{"args": [], "recv": "mesh_1", "out_vars": []}], 0)
+    assert g.receivers("n1") == []
+    assert g.receivers("n2") == ["n1"]
+    assert g.affected("n2") == ["n2"]
+    assert g.rebuilt_by("n2") == ["n1", "n2", "n3"]
