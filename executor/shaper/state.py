@@ -163,6 +163,31 @@ def _helpers(st, name: str) -> list:
             and max((o for o in owners if v.startswith(f"{o}_")), key=len) == name]
 
 
+def _subs(feat) -> list:
+    import ModelAPI
+    comp = ModelAPI.featureToCompositeFeature(feat)
+    return [comp.subFeature(i) for i in range(comp.numberOfSubs())] if comp else []
+
+
+def _flush_redisplay() -> None:
+    import EventsAPI
+    loop = EventsAPI.Events_Loop
+    loop.loop().flush(loop.eventByName("ObjectsToRedisplay"))
+
+
+def _hide(feats: list) -> None:
+    """With the SHAPER module active its viewer draws feature results itself,
+    and a feature removed from Python stays drawn: hide them while they are
+    still valid, so the viewer erases them."""
+    todo = list(feats)
+    while todo:
+        feat = todo.pop()
+        todo += _subs(feat)
+        for res in feat.results():
+            res.setDisplayed(False)
+    _flush_redisplay()
+
+
 def forget(executor, names: list) -> list:
     """Remove published shaper objects (sketches, features) and their study
     entries; names this module did not build are ignored."""
@@ -191,6 +216,7 @@ def forget(executor, names: list) -> list:
                     feats.append(st.ns.pop(var).feature())   # make_face's region helper
             else:
                 continue
+            _hide(feats)
             for feat in feats:
                 st.ns["shaper_doc"].removeFeature(feat)
             st.ns.pop(name, None)
