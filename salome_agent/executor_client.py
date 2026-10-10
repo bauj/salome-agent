@@ -2,8 +2,11 @@ import importlib
 import json
 import socket
 
+from agent_server.limits import (MAIN_THREAD_TIMEOUT, REFRESH_TIMEOUT, SIDE_MODULES,
+                                 TOOL_TIMEOUT)
+
 READ_TIMEOUT = 10
-# Slack over a tool's own server-side limit (executor.<module>.timeout_for).
+# Slack over the server's own limit for a command.
 _LONG_MARGIN = 30
 
 
@@ -48,16 +51,30 @@ class ExecutorClient:
         self.name_prefix = ready.get("name_prefix", "")
         self.leftovers = ready.get("leftovers", 0)
 
-    def _recv(self) -> dict:
+    def _recv(self, cmd: str = "hello") -> dict:
         try:
             line = self._f.readline()
+        except TimeoutError as e:
+            raise SessionDied(
+                f"no reply to {cmd} after {self._sock.gettimeout():g} s") from e
         except (BrokenPipeError, ConnectionResetError, OSError) as e:
             raise SessionDied(f"server socket read failed: {e}") from e
         if not line:
             raise SessionDied("server socket closed")
         return json.loads(line)
 
-    def _call(self, cmd: str, **payload) -> dict:
+    def _call(self, cmd: str, _bound: float | None = None, **payload) -> dict:
+        """_bound: how long the server may take on this command; the read waits
+        that long plus a margin instead of READ_TIMEOUT."""
+        if _bound is None:
+            return self._exchange(cmd, payload)
+        self._sock.settimeout(_bound + _LONG_MARGIN)
+        try:
+            return self._exchange(cmd, payload)
+        finally:
+            self._sock.settimeout(READ_TIMEOUT)
+
+    def _exchange(self, cmd: str, payload: dict) -> dict:
         req_id = self._next_id
         self._next_id += 1
         try:
@@ -65,7 +82,7 @@ class ExecutorClient:
             self._f.flush()
         except (BrokenPipeError, ConnectionResetError, OSError) as e:
             raise SessionDied(f"server socket write failed: {e}") from e
-        resp = self._recv()
+        resp = self._recv(cmd)
         if resp.get("fatal"):
             raise SessionPoisoned(resp.get("error", "poisoned"))
         if self.record_path:
@@ -86,13 +103,15 @@ class ExecutorClient:
             pass
 
     def run(self, code, timeout, module=None):
-        return self._call("run", code=code, timeout=timeout, module=module)
+        return self._call("run", timeout + REFRESH_TIMEOUT, code=code, timeout=timeout,
+                          module=module)
 
     def reset_and_replay(self, scripts):
-        return self._call("reset_and_replay", scripts=scripts)
+        return self._call("reset_and_replay", TOOL_TIMEOUT * max(len(scripts), 1),
+                          scripts=scripts)
 
     def introspect(self, names):
-        return self._call("introspect", names=names)
+        return self._call("introspect", TOOL_TIMEOUT, names=names)
 
     def list_study(self):
         return self._call("list_study")
@@ -116,29 +135,23 @@ class ExecutorClient:
             extra["pin"] = pin
         if module is not None:
             extra["module"] = module
-        limit = _tool_timeout(module, name)
-        if limit is None:
-            return self._call("call_tool", name=name, args=args, **extra)
-        self._sock.settimeout(limit + _LONG_MARGIN)
-        try:
-            return self._call("call_tool", name=name, args=args, **extra)
-        finally:
-            self._sock.settimeout(READ_TIMEOUT)
+        limit = (_tool_timeout(module, name) or TOOL_TIMEOUT) + REFRESH_TIMEOUT
+        return self._call("call_tool", limit, name=name, args=args, **extra)
 
     def forget(self, names):
-        return self._call("forget", names=names)
+        return self._call("forget", _FORGET_BOUND, names=names)
 
     def check_results(self, names, module="geom"):
-        return self._call("check_results", names=names, module=module)
+        return self._call("check_results", TOOL_TIMEOUT, names=names, module=module)
 
     def clear_study(self):
-        return self._call("clear_study")
+        return self._call("clear_study", _FORGET_BOUND)
 
     def display(self, names):
-        return self._call("display", names=names)
+        return self._call("display", MAIN_THREAD_TIMEOUT, names=names)
 
     def hide(self, names):
-        return self._call("hide", names=names)
+        return self._call("hide", MAIN_THREAD_TIMEOUT, names=names)
 
     def shutdown(self):
         return self._call("shutdown")
@@ -156,6 +169,10 @@ class ExecutorClient:
             self._sock.close()
         except OSError:
             pass
+
+
+# forget and clear_study: the study pass, then each side module's own pass, then a refresh.
+_FORGET_BOUND = MAIN_THREAD_TIMEOUT + TOOL_TIMEOUT * len(SIDE_MODULES) + REFRESH_TIMEOUT
 
 
 def _tool_timeout(module, name):
