@@ -154,6 +154,15 @@ def clear(executor) -> None:
                 part_set.removeFeature(feat)
 
 
+def _helpers(st, name: str) -> list:
+    """The helper variables of `name`, named `<name>_...`: not those of another
+    object whose own name starts with `<name>_` (forgetting `base` must leave
+    the group `base_f` and its helpers alone)."""
+    owners = set(st.objects) | set(st.sketches)
+    return [v for v in st.ns if v.startswith(f"{name}_") and v not in owners
+            and max((o for o in owners if v.startswith(f"{o}_")), key=len) == name]
+
+
 def forget(executor, names: list) -> list:
     """Remove published shaper objects (sketches, features) and their study
     entries; names this module did not build are ignored."""
@@ -166,17 +175,19 @@ def forget(executor, names: list) -> list:
             if name in st.sketches:
                 if st.editing == name:
                     st.editing = None
+                helpers = _helpers(st, name)
                 feats = [st.sketches.pop(name).api.feature()]
                 plane = st.ns.get(f"{name}_plane")
                 if plane is not None:
                     feats.append(plane.feature())
-                for var in [v for v in st.ns if v.startswith(f"{name}_")]:
+                for var in helpers:
                     st.ns.pop(var)
             elif name in st.objects:
+                helpers = _helpers(st, name)
                 st.objects.pop(name)
                 st.groups.pop(name, None)
                 feats = [st.ns[name].feature()]
-                for var in [v for v in st.ns if v.startswith(f"{name}_")]:
+                for var in helpers:
                     feats.append(st.ns.pop(var).feature())   # make_face's region helper
             else:
                 continue

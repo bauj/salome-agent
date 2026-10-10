@@ -357,6 +357,8 @@ class ToolSpecialist:
                     obs = (f"added: {', '.join(sorted(new)) or '(nothing new)'} "
                            f"— {len(offered)} tools available")
                     obs += _unknown_names_note(names, all_defs, spec.categories)
+                    if spec.load_note is not None:
+                        obs += spec.load_note(new) or ""
                     log.info("  load_tools(names=%s, categories=%s) -> +%d, %d available",
                              args.get("names"), args.get("categories"), len(new), len(offered))
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
@@ -464,12 +466,12 @@ class ToolSpecialist:
                     parts = []
                     if (spec.measure_tools and verify_cadence in ("final", "strict")
                             and risky_since_measure > 0):
-                        log.info("  verify_cadence=%s: nudging a measure before finish_stage",
-                                 verify_cadence)
+                        log.info("  verify_cadence=%s: nudging a measure before %s",
+                                 verify_cadence, spec.terminator.name)
                         parts.append(
                             "You have moved or combined shapes since your last measure. "
                             "Call `measure` on your result shape(s) and confirm their "
-                            "placement, then call finish_stage again.")
+                            f"placement, then call {spec.terminator.name} again.")
                     if spec.audit is not None:
                         report = spec.audit(args, calls[n_seed_calls:], call_log,
                                             upstream, shape_infos)
