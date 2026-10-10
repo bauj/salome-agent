@@ -286,6 +286,36 @@ def test_a_turns_cad_block_goes_before_its_smesh_block():
     assert [b.label for b in session.graph.blocks] == [
         "stage 1/1: shaper", "stage 2/2: smesh", "turn 2: amend", "turn 2: amend (SMESH)"]
     assert [b.module for b in session.graph.blocks][2:] == ["shaper", "smesh"]
+    assert session.graph.blocks[3].result_names == ["create_mesh_new"]
+
+
+class SmeshRecords(ShaperClient):
+    """SMESH tools publish nothing, like the real ones."""
+
+    def call_tool(self, name, args, pin=None, module=None):
+        if module != "smesh":
+            return super().call_tool(name, args, pin, module)
+        self.calls.append((name, args, pin, module))
+        rec = {"fn": "Mesh", "emit": "stmt", "publish": None,
+               "args": [{"kind": "expr", "value": "", "refs": [args.get("shape", "")]}]}
+        if name == "create_mesh":
+            rec |= {"code": "mesh_9 = smesh.Mesh(x)", "out_vars": ["mesh_9"]}
+        else:
+            rec |= {"code": "mesh_9.Compute()", "out_vars": [], "recv": "mesh_9", "args": []}
+        return {"ok": True, "records": [rec]}
+
+
+def test_a_mesh_built_in_an_amend_turn_reaches_result_py():
+    from salome_agent.nodes.assembler import render_script
+    client = SmeshRecords()
+    session = AmendSession(_shaper_graph(), client, 1, "shaper")
+    session.tool_module = {"create_mesh": "smesh", "compute": "smesh"}
+    session.graph.blocks[0].result_names = ["extrusion_1"]
+    session.execute(client, "create_mesh", {"shape": "extrusion_1"})
+    session.execute(client, "compute", {"mesh": "mesh_9"})
+    script = render_script(session.graph, "r1")
+    assert "# turn 2: amend (SMESH)" in script
+    assert "mesh_9 = smesh.Mesh(x)" in script and "mesh_9.Compute()" in script
 
 
 def test_a_delete_that_takes_a_mesh_with_it_says_so():
