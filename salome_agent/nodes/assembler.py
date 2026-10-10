@@ -90,7 +90,8 @@ def _geom_bodies(graph) -> dict:
             records = [r for n in graph.block_nodes(b.id) for r in n.records]
             names = b.result_names or [p for n in graph.block_nodes(b.id) for p in n.published]
             per_block[b.id] = (records, names)
-            roots += roots_for(records, names)
+            if names:
+                roots += roots_for(records, names)
     everything = [r for records, _ in per_block.values() for r in records]
     keep = _reachable(everything, roots)
     module = {b.id: b.module for b in graph.blocks}

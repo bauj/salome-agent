@@ -323,3 +323,21 @@ def test_smesh_tool_block_after_shaper_gets_the_shaper_results_published():
                                                   "model.begin()"]
     assert text.count("smesh = smeshBuilder.New()") == 1
     assert "from salome.kernel import SMESH, StdMeshers" in text
+
+
+def test_an_amend_block_that_only_sets_up_an_earlier_mesh_renders_without_a_warning(caplog):
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.nodes.assembler import render_script
+    mesh = {"fn": "Mesh", "emit": "stmt", "code": "mesh_1 = smesh.Mesh(box_1, 'mesh_1')",
+            "out_vars": ["mesh_1"], "args": [], "publish": None}
+    compute = {"fn": "Compute", "emit": "stmt", "code": "mesh_1.Compute()",
+               "out_vars": [], "args": [], "recv": "mesh_1"}
+    g = BuildGraph()
+    b1 = g.add_block(0, "stage 1/1: smesh", "smesh", ["mesh_1"])
+    g.append(b1, "create_mesh", {"shape": "box_1"}, [mesh], 0, module="smesh")
+    b2 = g.add_block(1, "turn 2: amend", "smesh", [])
+    g.append(b2, "compute", {"mesh": "mesh_1"}, [compute], 1, module="smesh")
+    with caplog.at_level("WARNING", logger="salome_agent"):
+        text = render_script(g, "r1")
+    assert "mesh_1.Compute()" in text
+    assert "match no built shape" not in caplog.text

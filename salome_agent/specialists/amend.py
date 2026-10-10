@@ -154,14 +154,14 @@ class AmendSession:
                 self.events += [{"event": "graph_edit", "op": "edit", "node": node,
                                  "param": param, "old": old, "new": value},
                                 {"event": "replay", "nodes": ids}]
-                return {"ok": True, "edited": node, "rebuilt": ids,
+                return {"ok": True, "changed": True, "edited": node, "rebuilt": ids,
                         "measurements": self._measure(ids)}
             if name == "delete_node":
                 before = self.graph
                 self.graph, ids = apply_delete(self.client, self.graph, args["node"])
                 self.events.append({"event": "graph_edit", "op": "delete", "node": args["node"],
                                     "param": None, "old": ids, "new": None})
-                out = {"ok": True, "deleted": ids}
+                out = {"ok": True, "changed": True, "deleted": ids}
                 note = _other_module_note(before, args["node"], ids)
                 if note:
                     out["note"] = note
