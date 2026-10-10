@@ -418,6 +418,7 @@ class ToolSpecialist:
                     if result.get("records"):
                         calls.append({"tool": name, "tool_args": args,
                                       "records": list(result["records"])})
+                    if result.get("records") or result.get("changed"):
                         # The study changed, so a call that failed before may work now
                         # (make_face after close_sketch, task 350).
                         failed_calls.clear()
