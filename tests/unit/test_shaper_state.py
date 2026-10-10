@@ -106,3 +106,34 @@ def test_shape_status_reads_a_shaper_measure():
     assert state_mod.shape_status({**ok, "valid": False, "check": "bad"})["status"] == "invalid"
     assert state_mod.shape_status({**ok, "faces": 0, "edges": 0})["status"] == "empty"
     assert state_mod.shape_status({**ok, "area": 0.0})["detail"] == "its faces have zero area"
+
+
+def _with_features(doc, ex, *names):
+    for n in names:
+        feat = FakeFeature(n)
+        doc.features.append(feat)
+        ex.shaper_state.ns[n] = SimpleNamespace(feature=lambda feat=feat: feat)
+
+
+def test_forget_leaves_an_object_whose_name_starts_with_the_forgotten_one(fake_model,
+                                                                          monkeypatch):
+    monkeypatch.setattr(state_mod, "_remove_study_objects", lambda ex, names: None)
+    doc = FakeDoc()
+    ex = _executor(doc)
+    _with_features(doc, ex, "base", "base_origin", "base_f", "base_f_origin")
+    ex.shaper_state.objects.update({"base": "group", "base_f": "group"})
+    assert state_mod.forget(ex, ["base"]) == ["base"]
+    assert [f.name() for f in doc.features] == ["base_f", "base_f_origin"]
+    assert {"base_f", "base_f_origin"} <= set(ex.shaper_state.ns)
+    assert state_mod.forget(ex, ["base_f"]) == ["base_f"]
+    assert doc.features == []
+
+
+def test_forget_takes_both_when_the_longer_name_comes_second(fake_model, monkeypatch):
+    monkeypatch.setattr(state_mod, "_remove_study_objects", lambda ex, names: None)
+    doc = FakeDoc()
+    ex = _executor(doc)
+    _with_features(doc, ex, "base", "base_f")
+    ex.shaper_state.objects.update({"base": "group", "base_f": "group"})
+    assert state_mod.forget(ex, ["base", "base_f"]) == ["base", "base_f"]
+    assert doc.features == []
