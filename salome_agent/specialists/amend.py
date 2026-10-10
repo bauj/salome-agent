@@ -23,6 +23,10 @@ To add something, call the {module} tools as usual; they are added to the graph.
 Measure before you place anything relative to an existing shape. Lengths are
 millimetres; angles are degrees.
 
+Meshes are part of the model. Editing a shape rebuilds the SMESH nodes built
+on it. To mesh or remesh, use the SMESH tools; if they are not in your list,
+call load_tools with the category smesh.
+
 Never call delete_node unless the user asked to remove or replace something.
 A request for a new object ("make me a prism") is added alongside what is
 already there, not swapped in. If you cannot tell whether they want to
@@ -37,8 +41,8 @@ Each turn: state your reasoning in at most 2-3 sentences, then call one or
 more tools. When the change is done, call finish_turn(summary) with one
 sentence saying what changed.
 
-You are given only a subset of the {module} tools. If you need one that is not in
-your list, call load_tools with its name or category."""
+You are given only a subset of the {module} and SMESH tools. If you need one
+that is not in your list, call load_tools with its name or category."""
 
 _LITERAL_HELP = ('the new value as a JSON literal, e.g. 120, 7.5, [0, 0, 1] or "OZ"')
 
@@ -96,7 +100,8 @@ def _call(client, module: str, name: str, args: dict) -> dict:
 
 
 class AmendSession:
-    """`module` is the CAD module whose tools this turn adds shapes with."""
+    """`module` is the CAD module whose tools this turn adds shapes with; the
+    SMESH tools come with it."""
 
     def __init__(self, graph, client, turn: int, module: str = "geom"):
         self.graph = graph
@@ -104,13 +109,25 @@ class AmendSession:
         self.turn = turn
         self.module = module
         self.events: list[dict] = []
-        self._block = None
+        self._blocks: dict[str, str] = {}
+        # tool name -> the module that runs it (tools_for fills it).
+        self.tool_module: dict[str, str] = {}
+        self.meshed = any(n.module == "smesh" for n in graph.nodes.values())
+        # The SMESH how-to went out (system prompt, or the first SMESH load_tools).
+        self.smesh_told = self.meshed
+        self._last_module = module
 
-    def _amend_block(self) -> str:
-        if self._block is None:
-            self._block = self.graph.add_block(self.turn, f"turn {self.turn + 1}: amend",
-                                               self.module, [])
-        return self._block
+    def _amend_block(self, module: str) -> str:
+        """One block per module per turn; the CAD block goes before the SMESH
+        one, since a mesh uses the CAD shapes and never the other way round."""
+        if module not in self._blocks:
+            before = self._blocks.get("smesh") if module != "smesh" else None
+            label = f"turn {self.turn + 1}: amend"
+            if module == "smesh":
+                label += " (SMESH)"
+            self._blocks[module] = self.graph.add_block(self.turn, label, module, [],
+                                                        before=before)
+        return self._blocks[module]
 
     def _measure(self, ids) -> dict | None:
         by_module: dict[str, list] = {}
@@ -127,6 +144,7 @@ class AmendSession:
         return out or None
 
     def execute(self, client, name: str, args: dict) -> dict:
+        self._last_module = self.module
         try:
             if name == "edit_arg":
                 node, param = args["node"], args["param"]
@@ -139,25 +157,63 @@ class AmendSession:
                 return {"ok": True, "edited": node, "rebuilt": ids,
                         "measurements": self._measure(ids)}
             if name == "delete_node":
+                before = self.graph
                 self.graph, ids = apply_delete(self.client, self.graph, args["node"])
                 self.events.append({"event": "graph_edit", "op": "delete", "node": args["node"],
                                     "param": None, "old": ids, "new": None})
-                return {"ok": True, "deleted": ids}
+                out = {"ok": True, "deleted": ids}
+                note = _other_module_note(before, args["node"], ids)
+                if note:
+                    out["note"] = note
+                return out
         except GraphError as e:
             return {"ok": False, "error": str(e)}
         except ReplayFailed as e:
             return {"ok": False, "error": f"{e} — the model was restored to before this edit"}
-        r = _call(self.client, self.module, name, args)
+        module = self._last_module = self.tool_module.get(name, self.module)
+        r = _call(self.client, module, name, args)
         if r.get("ok") and r.get("records"):
-            nid = self.graph.append(self._amend_block(), name, args, r["records"], self.turn,
-                                    module=self.module)
+            nid = self.graph.append(self._amend_block(module), name, args, r["records"],
+                                    self.turn, module=module)
             self.events.append({"event": "graph_edit", "op": "append", "node": nid,
                                 "param": None, "old": None, "new": name})
             r = {**r, "node": nid}
         return r
 
 
-_AMEND_KEYS = ("node", "edited", "rebuilt", "deleted", "measurements")
+    def render(self, result: dict) -> str:
+        if self._last_module == "smesh":
+            return spec_for("smesh").render_result(result)
+        return _render(result) if self.module == "geom" else _render_shaper(result)
+
+    def load_note(self, added) -> str | None:
+        """The SMESH how-to, once, with the first load_tools that brings SMESH tools."""
+        if self.smesh_told or not any(self.tool_module.get(n) == "smesh" for n in added):
+            return None
+        self.smesh_told = True
+        return "\n\n" + _smesh_howto()
+
+
+def _other_module_note(before, node_id: str, ids) -> str | None:
+    """Says which nodes of another module a delete took with it, by their names."""
+    module = before.nodes[node_id].module
+    other = [before.nodes[i] for i in ids if before.nodes[i].module != module]
+    if not other:
+        return None
+    names = list(dict.fromkeys(p for n in other for p in n.published))
+    mods = " and ".join(dict.fromkeys(n.module.upper() for n in other))
+    named = f" ({', '.join(names)})" if names else ""
+    return (f"This also removed the {mods} nodes {', '.join(n.id for n in other)}{named}, "
+            f"which were built on what you deleted. Rebuild them on the new shape with "
+            f"the {mods} tools unless the user asked to remove them.")
+
+
+def _smesh_howto() -> str:
+    return ("How the SMESH tools work (in this turn finish_turn ends it, "
+            "not finish_stage):\n\n" + spec_for("smesh").prompt("final"))
+
+
+_AMEND_KEYS = ("node", "edited", "rebuilt", "deleted", "note", "measurements")
 
 
 def _render(result: dict) -> str:
@@ -202,35 +258,50 @@ def _snapshot(client, graph) -> str | None:
     return "Current study, measured now:\n" + "\n".join(lines) if lines else None
 
 
-def _prompt(module: str, cadence: str) -> str:
+def _prompt(module: str, cadence: str, meshed: bool = False) -> str:
     text = AMEND_SYSTEM_PROMPT.format(module=module)
     if module == "shaper":
         text += ("\n\nHow the SHAPER tools work (in this turn finish_turn ends it, "
                  "not finish_stage):\n\n" + spec_for("shaper").prompt(cadence))
+    if meshed:
+        text += "\n\n" + _smesh_howto()
     return text
 
 
 def _spec(session: AmendSession) -> ModuleSpec:
     base = spec_for(session.module)
+    smesh = spec_for("smesh")
 
     def tools_for(client):
         defs = dict(base.tools_for(client))
+        session.tool_module = {n: session.module for n in defs}
+        # The CAD module keeps a name both have (get_subshapes: SMESH's hands
+        # CAD shapes to the CAD module's own). Core SMESH tools load as the
+        # category "smesh", the rest by name.
+        for n, d in smesh.tools_for(client).items():
+            if n in defs:
+                continue
+            cat = "smesh" if n in smesh.core_tools else f"smesh_{d.get('category')}"
+            defs[n] = {**d, "category": cat}
+            session.tool_module[n] = "smesh"
         defs["edit_arg"] = EDIT_ARG_DEF
         defs["delete_node"] = DELETE_NODE_DEF
         return defs
 
+    core = base.core_tools | (smesh.core_tools if session.meshed else frozenset())
     return ModuleSpec(
         name="amend",
-        prompt=lambda cadence: _prompt(session.module, cadence),
+        prompt=lambda cadence: _prompt(session.module, cadence, session.meshed),
         terminator=FINISH_TURN,
         extra_terminators=(REPLAN,),
         execute=session.execute,
-        render_result=_render if session.module == "geom" else _render_shaper,
+        render_result=session.render,
         tools_for=tools_for,
+        load_note=session.load_note,
         no_tool_nudge="You did not call a tool. Call a tool now — finish_turn when done.",
         on_exhausted=lambda call_log, last_error: {"exhausted": True, "last_error": last_error},
-        core_tools=base.core_tools,
-        categories=base.categories,
+        core_tools=core,
+        categories=base.categories + ("smesh",),
         risky_categories=base.risky_categories,
         measure_tools=base.measure_tools,
     )
