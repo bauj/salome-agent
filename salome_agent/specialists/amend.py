@@ -173,8 +173,13 @@ class AmendSession:
         module = self._last_module = self.tool_module.get(name, self.module)
         r = _call(self.client, module, name, args)
         if r.get("ok") and r.get("records"):
-            nid = self.graph.append(self._amend_block(module), name, args, r["records"],
-                                    self.turn, module=module)
+            bid = self._amend_block(module)
+            nid = self.graph.append(bid, name, args, r["records"], self.turn, module=module)
+            if module == "smesh" and name == "create_mesh":
+                # SMESH publishes nothing: a mesh reaches result.py as a result name
+                # of its block, as finish_stage gives a planned SMESH stage.
+                block = next(b for b in self.graph.blocks if b.id == bid)
+                block.result_names += self.graph.nodes[nid].out_vars
             self.events.append({"event": "graph_edit", "op": "append", "node": nid,
                                 "param": None, "old": None, "new": name})
             r = {**r, "node": nid}
@@ -200,7 +205,7 @@ def _other_module_note(before, node_id: str, ids) -> str | None:
     other = [before.nodes[i] for i in ids if before.nodes[i].module != module]
     if not other:
         return None
-    names = list(dict.fromkeys(p for n in other for p in n.published))
+    names = list(dict.fromkeys(p for n in other for p in (n.published or n.out_vars)))
     mods = " and ".join(dict.fromkeys(n.module.upper() for n in other))
     named = f" ({', '.join(names)})" if names else ""
     return (f"This also removed the {mods} nodes {', '.join(n.id for n in other)}{named}, "
