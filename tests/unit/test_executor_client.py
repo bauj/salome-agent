@@ -349,3 +349,13 @@ def test_a_timeout_names_the_command_and_the_wait():
 def test_side_modules_match_the_server_tool_modules():
     from agent_server import core, limits
     assert set(limits.SIDE_MODULES) == set(core._TOOL_MODULES) - {"geom"}
+
+
+def test_a_failed_hello_raises_session_died_with_the_servers_error():
+    box = []
+    t = threading.Thread(target=_fake_server, args=(box, []), kwargs={
+        "hello": {"id": 0, "ok": False, "error": "hello failed on the server: KeyError: 'x'"}})
+    t.start()
+    with pytest.raises(SessionDied, match="hello failed on the server"):
+        _connect(box)
+    t.join()

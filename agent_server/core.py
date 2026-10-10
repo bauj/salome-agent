@@ -1,3 +1,5 @@
+import traceback
+
 from executor import geom, shaper, smesh  # top-level — salome_init mutates sys.path later
 from agent_server import handshake
 from agent_server.limits import SIDE_MODULES, TOOL_TIMEOUT
@@ -26,10 +28,15 @@ class Core:
             return {"id": rid, **_FATAL}
         try:
             return self._dispatch(req, rid)
-        except TimeoutError:
+        except Exception as e:  # noqa: BLE001
             if self.backend.poisoned():
                 return {"id": rid, **_FATAL}
-            raise
+            # An answer, not a dropped connection: the session and the study
+            # stay usable, and the caller sees what broke.
+            traceback.print_exc()
+            return {"id": rid, "ok": False,
+                    "error": f"{req.get('cmd')} failed on the server: "
+                             f"{type(e).__name__}: {e}"}
 
     def _dispatch(self, req: dict, rid) -> dict:
         cmd = req.get("cmd")
