@@ -1,6 +1,6 @@
 import json
 
-from salome_agent.build_graph import GraphError
+from salome_agent.build_graph import GraphError, _num
 from salome_agent.modules import ModuleSpec, Terminator
 from salome_agent.replay import ReplayFailed, apply_delete, apply_edit
 from salome_agent.modules import spec_for
@@ -172,7 +172,7 @@ class AmendSession:
             return {"ok": False, "error": f"{e} — the model was restored to before this edit"}
         module = self._last_module = self.tool_module.get(name, self.module)
         r = _call(self.client, module, name, args)
-        if r.get("ok") and r.get("records"):
+        if r.get("ok") and r.get("records") and not self._recompute(module, name, args):
             bid = self._amend_block(module)
             nid = self.graph.append(bid, name, args, r["records"], self.turn, module=module)
             if module == "smesh" and name == "create_mesh":
@@ -185,6 +185,16 @@ class AmendSession:
             r = {**r, "node": nid}
         return r
 
+
+    def _recompute(self, module: str, name: str, args: dict) -> bool:
+        """A compute of a mesh nothing touched since its last compute: it changes
+        nothing, so it stays out of the graph and result.py."""
+        if module != "smesh" or name != "compute":
+            return False
+        mesh = args.get("mesh")
+        touched = [n for n in self.graph.nodes.values()
+                   if mesh in n.out_vars or any(r.get("recv") == mesh for r in n.records)]
+        return bool(touched) and max(touched, key=lambda n: _num(n.id)).tool == "compute"
 
     def render(self, result: dict) -> str:
         if self._last_module == "smesh":

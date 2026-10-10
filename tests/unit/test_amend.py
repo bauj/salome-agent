@@ -329,3 +329,30 @@ def test_a_delete_that_takes_a_mesh_with_it_says_so():
     session = AmendSession(_meshed_graph(), client, 1, "shaper")
     r = session.execute(client, "delete_node", {"node": "n3"})
     assert r == {"ok": True, "deleted": ["n3"]}
+
+
+def test_a_compute_of_an_untouched_mesh_stays_out_of_the_graph():
+    client = SmeshRecords()
+    session = AmendSession(_shaper_graph(), client, 1, "shaper")
+    session.tool_module = {"create_mesh": "smesh", "compute": "smesh", "local_size": "smesh"}
+    session.execute(client, "create_mesh", {"shape": "extrusion_1"})
+    session.execute(client, "compute", {"mesh": "mesh_9"})
+    n = len(session.graph.nodes)
+    r = session.execute(client, "compute", {"mesh": "mesh_9"})
+    assert r["ok"] and client.calls[-1][0] == "compute"
+    assert len(session.graph.nodes) == n
+    session.execute(client, "local_size", {"mesh": "mesh_9"})
+    session.execute(client, "compute", {"mesh": "mesh_9"})
+    assert [x.tool for x in session.graph.nodes.values()][-2:] == ["local_size", "compute"]
+
+
+def test_the_measure_nudge_names_the_amend_terminator():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("translate", {"shape": "box_1", "dx": 1})),
+                            _resp(("finish_turn", {"summary": "moved"})),
+                            _resp(("finish_turn", {"summary": "moved"}))]
+    run_amend("move it", _graph(), llm, FakeClient(), 1, POLICY | {"verify_cadence": "final"})
+    replies = [m["content"] for m in llm.chat.call_args_list[-1].kwargs["messages"]
+               if m["role"] == "tool"]
+    assert any("then call finish_turn again" in c for c in replies)
+    assert not any("finish_stage" in c for c in replies)
