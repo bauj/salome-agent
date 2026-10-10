@@ -1,10 +1,10 @@
 from executor import geom, shaper, smesh  # top-level — salome_init mutates sys.path later
 from agent_server import handshake
+from agent_server.limits import SIDE_MODULES, TOOL_TIMEOUT
 
 # Tool-calling modules: name -> (package, the SALOME module refreshed after a call).
 _TOOL_MODULES = {"geom": geom, "shaper": shaper, "smesh": smesh}
 _REFRESH = {"geom": "GEOM", "shaper": "SHAPER", "smesh": "SMESH"}
-_TOOL_TIMEOUT = 120
 # Top-level APIs a script may call that are not in the server namespace: imported
 # on demand (on the GUI thread) for introspect.
 _LAZY_APIS = {"model": "salome.shaper.model"}
@@ -57,7 +57,7 @@ class Core:
                 obj = b.namespace.get(name)
                 if obj is None and name in _LAZY_APIS:
                     obj = b.run_tool(lambda: __import__(_LAZY_APIS[name], fromlist=["_"]),
-                                     _TOOL_TIMEOUT)
+                                     TOOL_TIMEOUT)
                 out[name] = {"members": dir(obj) if obj is not None else []}
             return {"id": rid, **out}
         if cmd == "list_study":
@@ -77,7 +77,7 @@ class Core:
             if cmd == "list_tools":
                 return {"id": rid, "tools": pkg.list_tools(), "module": module}
             call = lambda: pkg.call_tool(b, req["name"], req["args"], pin=req.get("pin"))
-            limit = getattr(pkg, "timeout_for", lambda n: None)(req["name"]) or _TOOL_TIMEOUT
+            limit = getattr(pkg, "timeout_for", lambda n: None)(req["name"]) or TOOL_TIMEOUT
             r = call() if module == "geom" else b.run_tool(call, limit)
             if r.get("ok"):
                 b.refresh(_REFRESH[module])
@@ -88,7 +88,7 @@ class Core:
             if pkg is None:
                 return {"id": rid, "ok": False, "error": f"no tool module {module!r}"}
             call = lambda: pkg.check_results(b, req["names"])
-            r = call() if module == "geom" else b.run_tool(call, _TOOL_TIMEOUT)
+            r = call() if module == "geom" else b.run_tool(call, TOOL_TIMEOUT)
             return {"id": rid, "ok": True, "results": r}
         if cmd == "forget":
             r = b.forget(req["names"])
@@ -99,7 +99,7 @@ class Core:
             return {"id": rid, **r}
         if cmd == "clear_study":
             for pkg in _side_modules():
-                b.run_tool(lambda: pkg.clear(b), _TOOL_TIMEOUT)
+                b.run_tool(lambda: pkg.clear(b), TOOL_TIMEOUT)
             r = b.clear_study()
             b.refresh("GEOM")
             return {"id": rid, **r}
@@ -116,7 +116,7 @@ class Core:
 # Side modules (SHAPER) live in the GUI process and notify its widgets on the
 # calling thread, so every call into them goes through backend.run_tool.
 def _side_modules():
-    return [pkg for name, pkg in _TOOL_MODULES.items() if name != "geom"]
+    return [_TOOL_MODULES[name] for name in SIDE_MODULES]
 
 
 def _reset_side_modules(b) -> None:
@@ -126,4 +126,4 @@ def _reset_side_modules(b) -> None:
 
 def _forget_side_modules(b, names: list) -> list:
     return [n for pkg in _side_modules()
-            for n in b.run_tool(lambda: pkg.forget(b, names), _TOOL_TIMEOUT)]
+            for n in b.run_tool(lambda: pkg.forget(b, names), TOOL_TIMEOUT)]
