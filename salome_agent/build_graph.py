@@ -73,10 +73,13 @@ class BuildGraph:
         self._next_block = 1
 
     def add_block(self, turn: int, label: str, module: str, result_names: list,
-                  script: str | None = None) -> str:
+                  script: str | None = None, before: str | None = None) -> str:
+        """`before`: the id of a block the new one goes in front of (else last)."""
         bid = f"b{self._next_block}"
         self._next_block += 1
-        self.blocks.append(Block(bid, turn, label, module, list(result_names), script))
+        block = Block(bid, turn, label, module, list(result_names), script)
+        at = next((i for i, b in enumerate(self.blocks) if b.id == before), len(self.blocks))
+        self.blocks.insert(at, block)
         return bid
 
     def owner(self, var: str) -> str | None:

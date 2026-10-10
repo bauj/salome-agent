@@ -78,6 +78,8 @@ class ModuleSpec:
     forgets: bool = False
     # Offers the calc tool (sandboxed Python arithmetic, answered agent-side).
     calc: bool = False
+    # tool names a load_tools call just added -> text appended to its reply, or None.
+    load_note: Callable[[set], "str | None"] | None = None
     # On every finish the server re-checks result_names (exists, still builds,
     # valid, not empty); a bad one refuses the finish.
     checks_results: bool = False

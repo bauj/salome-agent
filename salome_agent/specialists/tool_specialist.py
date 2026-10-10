@@ -357,6 +357,8 @@ class ToolSpecialist:
                     obs = (f"added: {', '.join(sorted(new)) or '(nothing new)'} "
                            f"— {len(offered)} tools available")
                     obs += _unknown_names_note(names, all_defs, spec.categories)
+                    if spec.load_note is not None:
+                        obs += spec.load_note(new) or ""
                     log.info("  load_tools(names=%s, categories=%s) -> +%d, %d available",
                              args.get("names"), args.get("categories"), len(new), len(offered))
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": obs})
