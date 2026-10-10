@@ -4,11 +4,23 @@ from salome_agent.build_graph import BuildGraph
 from salome_agent.specialists.amend import AmendSession, render_transcript, run_amend
 
 
+_SMESH_TOOLS = [("create_mesh", "setup"), ("mesh_tetra", "setup"), ("compute", "compute"),
+                ("get_subshapes", "naming"), ("name_subshapes", "naming"),
+                ("viscous_layers", "local")]
+
+
+def _smesh_list():
+    return {"tools": [{"name": n, "parameters": {}, "description": n, "category": c}
+                      for n, c in _SMESH_TOOLS], "module": "smesh"}
+
+
 class FakeClient:
     def __init__(self):
         self.calls = []
 
-    def list_tools(self):
+    def list_tools(self, module=None):
+        if module == "smesh":
+            return _smesh_list()
         return {"tools": [{"name": n, "parameters": {}, "description": n, "category": c}
                           for n, c in [("make_box", "primitive"), ("measure", "query"),
                                        ("fuse", "boolean"), ("translate", "transform"),
@@ -143,6 +155,8 @@ def test_amend_prompt_only_deletes_on_request_and_adds_new_objects_alongside():
 
 class ShaperClient(FakeClient):
     def list_tools(self, module=None):
+        if module == "smesh":
+            return _smesh_list()
         assert module == "shaper"
         return {"tools": [{"name": "extrude", "parameters": {}, "description": "e",
                            "category": "swept"}], "module": "shaper"}
@@ -192,6 +206,153 @@ def test_a_shaper_amend_offers_shaper_tools_and_the_snapshot_reads_shaper():
     from salome_agent.specialists.amend import _snapshot, _spec
     client = ShaperClient()
     spec = _spec(AmendSession(_shaper_graph(), client, 1, "shaper"))
-    assert set(spec.tools_for(client)) == {"extrude", "edit_arg", "delete_node"}
+    defs = spec.tools_for(client)
+    assert set(defs) == {"extrude", "edit_arg", "delete_node"} | {n for n, _ in _SMESH_TOOLS}
     assert "extrusion_1 — bbox [0, 0, 0, 0, 0, 0], area 1, 1 face" in _snapshot(
         client, _shaper_graph())
+
+
+def _meshed_graph():
+    g = _shaper_graph()
+    b = g.add_block(0, "stage 2/2: smesh", "smesh", [])
+    g.append(b, "create_mesh", {"shape": "extrusion_1"},
+             [{"fn": "smesh.Mesh", "args": [{"kind": "ref", "value": "extrusion_1"}],
+               "out_vars": ["mesh_1"], "publish": ["mesh_1"]}], 0, module="smesh")
+    g.append(b, "compute", {"mesh": "mesh_1"},
+             [{"fn": "Compute", "args": [], "recv": "mesh_1", "out_vars": []}], 0,
+             module="smesh")
+    return g
+
+
+def test_amend_adds_smesh_tools_routed_to_smesh_and_cad_keeps_the_shared_name():
+    from salome_agent.specialists.amend import _spec
+
+    class Both(ShaperClient):
+        def list_tools(self, module=None):
+            if module == "shaper":
+                return {"tools": [{"name": n, "parameters": {}, "description": n,
+                                   "category": c} for n, c in
+                                  [("extrude", "swept"), ("get_subshapes", "query")]],
+                        "module": "shaper"}
+            return super().list_tools(module)
+
+    client = Both()
+    session = AmendSession(_shaper_graph(), client, 1, "shaper")
+    spec = _spec(session)
+    defs = spec.tools_for(client)
+    assert session.tool_module["get_subshapes"] == "shaper"
+    assert defs["get_subshapes"]["category"] == "query"
+    assert session.tool_module["create_mesh"] == "smesh"
+    assert defs["create_mesh"]["category"] == "smesh"
+    assert defs["viscous_layers"]["category"] == "smesh_local"
+    assert "smesh" in spec.categories
+    session.execute(client, "create_mesh", {"shape": "extrusion_1"})
+    assert client.calls[-1][0] == "create_mesh" and client.calls[-1][3] == "smesh"
+
+
+def test_smesh_tools_are_offered_up_front_only_on_a_meshed_model():
+    from salome_agent.specialists.amend import _spec
+    client = ShaperClient()
+    plain = _spec(AmendSession(_shaper_graph(), client, 1, "shaper"))
+    assert "create_mesh" not in plain.core_tools
+    assert "How the SMESH tools work" not in plain.prompt("final")
+    assert "load_tools with the category smesh" in plain.prompt("final")
+    meshed = _spec(AmendSession(_meshed_graph(), client, 1, "shaper"))
+    assert {"create_mesh", "compute"} <= meshed.core_tools
+    assert "How the SMESH tools work" in meshed.prompt("final")
+
+
+def test_loading_smesh_returns_the_howto_once():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("load_tools", {"categories": ["smesh"]})),
+                            _resp(("load_tools", {"names": ["viscous_layers"]})),
+                            _resp(("finish_turn", {"summary": "nothing"}))]
+    run_amend("mesh it", _shaper_graph(), llm, ShaperClient(), 1, POLICY | {"verify_cadence": "none"},
+              session=AmendSession(_shaper_graph(), ShaperClient(), 1, "shaper"))
+    replies = [m["content"] for m in llm.chat.call_args_list[-1].kwargs["messages"]
+               if m["role"] == "tool"]
+    assert "create_mesh" in replies[0] and "How the SMESH tools work" in replies[0]
+    assert "viscous_layers" in replies[1] and "How the SMESH tools work" not in replies[1]
+    tools = {t["name"] for t in llm.chat.call_args_list[-1].kwargs["tools"]}
+    assert {"create_mesh", "mesh_tetra", "compute", "viscous_layers"} <= tools
+
+
+def test_a_turns_cad_block_goes_before_its_smesh_block():
+    client = ShaperClient()
+    session = AmendSession(_meshed_graph(), client, 1, "shaper")
+    session.tool_module = {"create_mesh": "smesh", "extrude": "shaper"}
+    session.execute(client, "create_mesh", {"shape": "extrusion_1"})
+    session.execute(client, "extrude", {"base": "face_2", "size": 3})
+    assert [b.label for b in session.graph.blocks] == [
+        "stage 1/1: shaper", "stage 2/2: smesh", "turn 2: amend", "turn 2: amend (SMESH)"]
+    assert [b.module for b in session.graph.blocks][2:] == ["shaper", "smesh"]
+    assert session.graph.blocks[3].result_names == ["create_mesh_new"]
+
+
+class SmeshRecords(ShaperClient):
+    """SMESH tools publish nothing, like the real ones."""
+
+    def call_tool(self, name, args, pin=None, module=None):
+        if module != "smesh":
+            return super().call_tool(name, args, pin, module)
+        self.calls.append((name, args, pin, module))
+        rec = {"fn": "Mesh", "emit": "stmt", "publish": None,
+               "args": [{"kind": "expr", "value": "", "refs": [args.get("shape", "")]}]}
+        if name == "create_mesh":
+            rec |= {"code": "mesh_9 = smesh.Mesh(x)", "out_vars": ["mesh_9"]}
+        else:
+            rec |= {"code": "mesh_9.Compute()", "out_vars": [], "recv": "mesh_9", "args": []}
+        return {"ok": True, "records": [rec]}
+
+
+def test_a_mesh_built_in_an_amend_turn_reaches_result_py():
+    from salome_agent.nodes.assembler import render_script
+    client = SmeshRecords()
+    session = AmendSession(_shaper_graph(), client, 1, "shaper")
+    session.tool_module = {"create_mesh": "smesh", "compute": "smesh"}
+    session.graph.blocks[0].result_names = ["extrusion_1"]
+    session.execute(client, "create_mesh", {"shape": "extrusion_1"})
+    session.execute(client, "compute", {"mesh": "mesh_9"})
+    script = render_script(session.graph, "r1")
+    assert "# turn 2: amend (SMESH)" in script
+    assert "mesh_9 = smesh.Mesh(x)" in script and "mesh_9.Compute()" in script
+
+
+def test_a_delete_that_takes_a_mesh_with_it_says_so():
+    client = ShaperClient()
+    session = AmendSession(_meshed_graph(), client, 1, "shaper")
+    r = session.execute(client, "delete_node", {"node": "n1"})
+    assert r["deleted"] == ["n1", "n2", "n3"]
+    assert r["note"] == ("This also removed the SMESH nodes n2, n3 (mesh_1), which were "
+                         "built on what you deleted. Rebuild them on the new shape with the "
+                         "SMESH tools unless the user asked to remove them.")
+    session = AmendSession(_meshed_graph(), client, 1, "shaper")
+    r = session.execute(client, "delete_node", {"node": "n3"})
+    assert r == {"ok": True, "deleted": ["n3"]}
+
+
+def test_a_compute_of_an_untouched_mesh_stays_out_of_the_graph():
+    client = SmeshRecords()
+    session = AmendSession(_shaper_graph(), client, 1, "shaper")
+    session.tool_module = {"create_mesh": "smesh", "compute": "smesh", "local_size": "smesh"}
+    session.execute(client, "create_mesh", {"shape": "extrusion_1"})
+    session.execute(client, "compute", {"mesh": "mesh_9"})
+    n = len(session.graph.nodes)
+    r = session.execute(client, "compute", {"mesh": "mesh_9"})
+    assert r["ok"] and client.calls[-1][0] == "compute"
+    assert len(session.graph.nodes) == n
+    session.execute(client, "local_size", {"mesh": "mesh_9"})
+    session.execute(client, "compute", {"mesh": "mesh_9"})
+    assert [x.tool for x in session.graph.nodes.values()][-2:] == ["local_size", "compute"]
+
+
+def test_the_measure_nudge_names_the_amend_terminator():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("translate", {"shape": "box_1", "dx": 1})),
+                            _resp(("finish_turn", {"summary": "moved"})),
+                            _resp(("finish_turn", {"summary": "moved"}))]
+    run_amend("move it", _graph(), llm, FakeClient(), 1, POLICY | {"verify_cadence": "final"})
+    replies = [m["content"] for m in llm.chat.call_args_list[-1].kwargs["messages"]
+               if m["role"] == "tool"]
+    assert any("then call finish_turn again" in c for c in replies)
+    assert not any("finish_stage" in c for c in replies)

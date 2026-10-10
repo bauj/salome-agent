@@ -37,9 +37,9 @@ def connect(run_id: str, record_path: str | None = None, hold: bool = False,
         except SessionPoisoned as e:
             raise ServerUnavailable(
                 f"The SALOME agent server is poisoned ({e}); restart it. {_HELP}") from e
-        except (ConnectionError, SessionDied, OSError, AssertionError):
+        except (ConnectionError, SessionDied, OSError) as e:
             if attempt == 2:
                 raise ServerUnavailable(
-                    f"Could not connect to the SALOME agent server. {_HELP}")
+                    f"Could not connect to the SALOME agent server ({e}). {_HELP}") from e
             # fall through: re-read the handshake (token may have rotated), retry
     raise ServerUnavailable(f"Could not connect to the SALOME agent server. {_HELP}")
