@@ -599,12 +599,18 @@ def _unique(shape, kind) -> int:
     return len(seen)
 
 
+FLAT = 1e-4
+
+
 def _precise_box(executor, results) -> list | None:
     """[xmin, ymin, zmin, xmax, ymax, zmax] of all results, exact on curved faces.
     computeSize() encloses a curve's control points (a torus of outer radius 60
     reads 64.94); SHAPER's bounding-box feature computes it exactly. It is made
     in an operation that is then aborted, so it leaves no feature and no undo
-    entry."""
+    entry. The feature also builds a box between the two corners, which fails
+    with an "Application errors" popup on a flat shape, so a result thinner
+    than the measure's rounding keeps its fast box (a flat result with a shape
+    tolerance above 5e-5 still reaches the feature)."""
     import ModelAPI
     m = model()
     session = ModelAPI.ModelAPI_Session.get()
@@ -615,13 +621,17 @@ def _precise_box(executor, results) -> list | None:
     session.startOperation("salome-agent measure")
     try:
         for r in results:
-            feat = m.getBoundingBox(doc, m.selection(r.shape().shapeTypeStr(), r.data().name()))
-            res = feat.feature().firstResult()
-            if res is None or res.shape() is None:
-                return None
-            ok, *b = res.shape().computeSize()
+            ok, *b = r.shape().computeSize()
             if not ok:
                 return None
+            if min(b[i + 3] - b[i] for i in range(3)) >= FLAT:
+                feat = m.getBoundingBox(doc, m.selection(r.shape().shapeTypeStr(), r.data().name()))
+                res = feat.feature().firstResult()
+                if res is None or res.shape() is None:
+                    return None
+                ok, *b = res.shape().computeSize()
+                if not ok:
+                    return None
             box = b if box is None else [min(box[i], b[i]) for i in range(3)] + \
                 [max(box[i], b[i]) for i in range(3, 6)]
     finally:
