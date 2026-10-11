@@ -112,6 +112,16 @@ def test_image_description_block_renders_only_when_given():
     assert user.index("a D-shaped handle") < user.index("The user says: add this handle")
 
 
+def test_an_earlier_image_is_named_by_its_turn():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("finish_turn", {"summary": "x"}))]
+    run_amend("the bars are missing", _graph(), llm, FakeClient(), 2, POLICY,
+              image_description="a plate with bars", image_turn=1)
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert "reference image(s) on turn 1" in user and "a plate with bars" in user
+    assert "to this message" not in user
+
+
 def test_append_goes_into_one_amend_block_for_the_turn():
     llm = MagicMock()
     llm.chat.side_effect = [_resp(("make_box", {"dx": 2, "dy": 2, "dz": 2})),
