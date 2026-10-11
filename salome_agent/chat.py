@@ -31,7 +31,7 @@ def _print_event(stream):
     return on_event
 
 
-def run_turn(conv, text, gate, stream):
+def run_turn(conv, text, gate, stream, images=None):
     cancel = threading.Event()
 
     def on_sigint(signum, frame):
@@ -42,7 +42,8 @@ def run_turn(conv, text, gate, stream):
 
     prev = signal.signal(signal.SIGINT, on_sigint)
     try:
-        return conv.turn(text, on_event=_print_event(stream), on_gate=gate, cancel=cancel)
+        return conv.turn(text, images=images, on_event=_print_event(stream), on_gate=gate,
+                         cancel=cancel)
     finally:
         signal.signal(signal.SIGINT, prev)
 
@@ -52,13 +53,13 @@ def _say(stream, result):
     stream.flush()
 
 
-def repl(conv, first_request, *, read=input, stream=sys.stderr, gate=terminal_gate,
-         run_turn=run_turn) -> int:
+def repl(conv, first_request, *, images=None, read=input, stream=sys.stderr,
+         gate=terminal_gate, run_turn=run_turn) -> int:
     try:
         import readline  # noqa: F401 — history and line editing for input()
     except ImportError:
         pass
-    _say(stream, run_turn(conv, first_request, gate, stream))
+    _say(stream, run_turn(conv, first_request, gate, stream, images=images))
     stream.write(_HELP + "\n")
     while not conv.ended:
         try:
