@@ -26,7 +26,7 @@ def test_surface_and_hexa_and_body_fitted():
     s = su.surface_code("m", {"max_size": 2, "quads": True})
     assert "m.Triangle(algo=smeshBuilder.NETGEN_1D2D)" in s and "SetQuadAllowed(True)" in s
     h = su.hexa_code("m", {"segments": 4})
-    assert "m.Segment().NumberOfSegments(4)" in h and "m.Quadrangle()" in h
+    assert "m_a1 = m.Segment()\nm_a1.NumberOfSegments(4)" in h and "m.Quadrangle()" in h
     assert "m.Hexahedron()" in h
     assert "LocalLength(2.5)" in su.hexa_code("m", {"segment_length": 2.5})
     with pytest.raises(ValueError):
@@ -91,7 +91,8 @@ def test_viscous_code_3d_and_2d():
 def test_prism_code():
     code = su.prism_code("m", '_shaper_shape("base")', {"layers": 10, "face_size": 2})
     assert code.splitlines() == [
-        "m_a1 = m.Segment().NumberOfSegments(10)",
+        "m_a1 = m.Segment()",
+        "m_a1.NumberOfSegments(10)",
         "m_a3 = m.Prism()",
         'm_a1_end = m.Segment(geom=_shaper_shape("base"))',
         "m_a1_end.LocalLength(2)",

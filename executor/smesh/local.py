@@ -88,9 +88,10 @@ def tool_edge_segments(executor, args: dict):
     return {"ok": True, "records": [record("edge_segments", code, recv=m, refs=refs)], "mesh": m}
 
 
-# NETGEN 1D-2D-3D takes no viscous layers: on a mesh_tetra mesh the 3D part is
-# split into NETGEN 1D-2D on the faces and NETGEN 3D in the volume first.
-# The face parameters are copied from the tetra setup's, value by value.
+# NETGEN 1D-2D-3D takes no viscous layers and cannot mesh the source of a
+# projection: on a mesh_tetra mesh the 3D part is split into NETGEN 1D-2D on the
+# faces and NETGEN 3D in the volume first. The face parameters are copied from
+# the tetra setup's, value by value, and its local sizes set on them again.
 _SPLIT_TETRA = ("{m}.RemoveHypothesis({m}_a3)\n"
                 "{m}_a2 = {m}.Triangle(algo=smeshBuilder.NETGEN_1D2D)\n"
                 "{m}_netgen2 = {m}_a2.Parameters()\n"
@@ -99,6 +100,25 @@ _SPLIT_TETRA = ("{m}.RemoveHypothesis({m}_a3)\n"
                 "{m}_netgen2.SetFineness({fineness!r})\n"
                 "{m}_netgen2.SetGrowthRate({growth!r})\n"
                 "{m}_a3 = {m}.Tetrahedron(algo=smeshBuilder.NETGEN_3D)")
+
+
+def split_tetra(executor, m, info, why: str) -> tuple:
+    """The lines that split a mesh_tetra setup into faces and volume, and the
+    groups they reference; nothing when it is split already or not a tetra preset."""
+    if info.setup != "mesh_tetra" or (2, None) in info.algos:
+        return [], []
+    if info.mesher != "netgen":
+        raise ValueError(f"{why} needs the faces and the volume meshed apart: use "
+                         "mesh_tetra with mesher netgen, or set_algorithm on dimensions "
+                         "2 and 3")
+    p = state(executor).ns[info.netgen]
+    lines = [_SPLIT_TETRA.format(m=m, max=p.GetMaxSize(), min=p.GetMinSize(),
+                                 fineness=p.GetFineness(), growth=p.GetGrowthRate())]
+    for g, size in info.local_sizes.items():
+        lines.append(f"{m}_netgen2.SetLocalSizeOnShape({group_ref(executor, g)[0]}, {size!r})")
+    info.algos[(2, None)] = f"{m}_a2"
+    info.netgen = f"{m}_netgen2"
+    return lines, list(info.local_sizes)
 
 
 @tool("viscous_layers", category="local",
@@ -116,20 +136,64 @@ def tool_viscous_layers(executor, args: dict):
     if info.dim not in (2, 3):
         raise ValueError(f"{m} has no setup yet: call mesh_tetra, mesh_surface, ... first")
     groups = _on(executor, args.get("faces"))
-    lines = []
-    if info.setup == "mesh_tetra" and (2, None) not in info.algos:
-        p = state(executor).ns[info.netgen]
-        lines.append(_SPLIT_TETRA.format(m=m, max=p.GetMaxSize(), min=p.GetMinSize(),
-                                         fineness=p.GetFineness(), growth=p.GetGrowthRate()))
-        info.algos[(2, None)] = f"{m}_a2"
-        info.netgen = f"{m}_netgen2"
+    lines, kept = split_tetra(executor, m, info, "viscous_layers")
     algo = info.algos.get((info.dim, None))
     if algo is None:
         raise ValueError(f"{m} has no dimension-{info.dim} algorithm to carry the layers")
     lines.append(viscous_code(algo, info.dim, args, [group_ref(executor, g)[0] for g in groups]))
     code = "\n".join(lines)
     run(state(executor), code)
-    return {"ok": True, "records": [record("viscous_layers", code, recv=m, refs=groups)],
+    return {"ok": True, "records": [record("viscous_layers", code, recv=m,
+                                           refs=[*groups, *kept])],
+            "mesh": m}
+
+
+# sub-shape type -> (dimension, Mesh method, how it takes its source)
+_PROJECTIONS = {"edge": (1, "Projection1D", "SourceEdge"),
+                "face": (2, "Projection1D2D", "SourceFace")}
+
+
+def projection_code(var, m, target_expr, sub_type, source_expr) -> str:
+    _, method, source = _PROJECTIONS[sub_type]
+    return f"{var} = {m}.{method}(geom={target_expr})\n{var}.{source}({source_expr})"
+
+
+@tool("project_mesh", category="local",
+      description=("Mesh each named group in `on` as a copy of the mesh of the named "
+                   "group `source`, node for node: matching meshes on the opposite faces "
+                   "of a periodic part, or on edges that must agree. Source and targets "
+                   "are all faces or all edges, of the same form and size."),
+      schema={"type": "object", "properties": {
+          **_MESH, "source": {"type": "string"}, "on": _ON},
+          "required": ["mesh", "source", "on"]})
+def tool_project_mesh(executor, args: dict):
+    from executor.smesh.groups import sub_type_of
+    m, source = args.get("mesh"), args.get("source")
+    info = mesh_of(executor, m)
+    if info.setup is None:
+        raise ValueError(f"{m} has no setup yet: call mesh_tetra, mesh_surface, ... first")
+    sexpr, _ = group_ref(executor, source)
+    kind = sub_type_of(executor, source)
+    if kind not in _PROJECTIONS:
+        raise ValueError(f"{source} is a {kind} group: project_mesh copies faces or edges")
+    targets = _on(executor, args.get("on"))
+    if source in targets:
+        raise ValueError(f"{source} cannot be projected onto itself")
+    other = [g for g in targets if sub_type_of(executor, g) != kind]
+    if other:
+        raise ValueError(f"{', '.join(other)} must be {kind} groups like {source}")
+    lines, kept = split_tetra(executor, m, info, "project_mesh")
+    dim = _PROJECTIONS[kind][0]
+    for g in targets:
+        var = f"{m}_proj_{g}"
+        lines.append(projection_code(var, m, group_ref(executor, g)[0], kind, sexpr))
+        info.algos[(dim, g)] = var
+        info.submeshes[g] = var
+    code = "\n".join(lines)
+    run(state(executor), code)
+    info.count_rule = None
+    return {"ok": True, "records": [record("project_mesh", code, recv=m,
+                                           refs=[source, *targets, *kept])],
             "mesh": m}
 
 

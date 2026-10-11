@@ -46,7 +46,7 @@ def test_failure_line():
 
 def test_quality_criteria_cover_the_tool_enum():
     assert set(c.QUALITY) == {"aspect_ratio", "minimum_angle", "scaled_jacobian", "skew",
-                              "warping", "volume", "area"}
+                              "warping", "volume", "area", "max_element_length", "taper"}
 
 
 def test_group_code():

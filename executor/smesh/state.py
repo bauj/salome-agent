@@ -50,12 +50,16 @@ class MeshInfo:
         self.setup: str | None = None
         # var of the NETGEN parameters when a NETGEN preset meshes it
         self.netgen: str | None = None
+        # the mesher of a mesh_tetra / mesh_surface preset: "netgen" or "gmsh"
+        self.mesher: str | None = None
         # (dimension, group or None) -> algorithm var
         self.algos: dict = {}
         # group -> algorithm var of its local setup (sub-mesh)
         self.submeshes: dict = {}
-        # mesh group name -> geometry group name
+        # mesh group name -> geometry group name (None for a combine_groups group)
         self.groups: dict = {}
+        # combine_groups group -> the mesh groups it is made from
+        self.combined: dict = {}
         # group -> local size set on the NETGEN parameters (local_size)
         self.local_sizes: dict = {}
         # how to count a preset SMESH's Evaluate() cannot: ("grid", step) or ("layers", n)

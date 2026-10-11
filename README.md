@@ -28,7 +28,7 @@ Flow: `request → plan → [per stage: specialist tool loop → finish_stage ch
 
 - **shaper** stages — the default CAD module — run as tool calls (`create_sketch`, `sketch_add`, `extrude`, `fillet_edges`, ...) against the server. Each call executes the same source line that goes into `result.py`, so the live document and the script cannot drift.
 - **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log. The planner picks GEOM only when the request names it ("using GEOM").
-- **smesh** stages run as tool calls (`create_mesh`, `mesh_tetra`, `name_subshapes`, `local_size`, `compute`, ...) on a shape an earlier stage built, SHAPER or GEOM. Each call executes the line it records into `result.py`; `compute` answers with element counts, the mesh volume next to the shape's, quality and every part that failed, and `finish_stage` is refused until the mesh holds up.
+- **smesh** stages run as tool calls (`create_mesh`, `mesh_tetra`, `name_subshapes`, `local_size`, `compute`, ...) on a shape an earlier stage built, SHAPER or GEOM. Each call executes the line it records into `result.py`; `compute` answers with element counts, the mesh volume next to the shape's, quality and every part that failed, and `finish_stage` is refused until the mesh holds up. Meshers: NETGEN and GMSH (`mesh_tetra` / `mesh_surface` take `mesher`), plus the StdMeshers algorithms through `set_algorithm` / `set_hypothesis` (graded, fixed-point, adaptive edge distributions with reversed edges, radial prism and radial quadrangle layers, NETGEN / GMSH parameters). `project_mesh` copies a face or edge mesh onto matching ones, `combine_groups` builds union / intersection / difference groups that follow a recompute, `split_elements` turns hexahedra and prisms into tetrahedra, `check_topology` reports coincident nodes, holes and bare borders.
 - A failed stage stops at the stage-failure gate (or, with `--batch`, follows `on_stage_failure`). A retry continues from what the failed attempt built and is told what that is. GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
 
 ---
@@ -439,7 +439,8 @@ docs/superpowers/   design specs + implementation plans
   unattended path.
 - Tool registries: SHAPER 55 tools, GEOM 52 (primitives, sketch, swept,
   booleans, transforms, fillet/chamfer, display, query, subshape selection),
-  SMESH 25 (setup, naming, local sizes, groups, compute and checks, export).
+  SMESH 29 (setup, naming, local sizes, projection, groups, compute and checks,
+  editing, export).
   The SHAPER stage prompt lists every SHAPER tool in one line each; a call to
   one not loaded yet is refused and the tool loaded. `align` does relative
   placement (move a part so a chosen face/centre meets another's) so the model
@@ -460,7 +461,8 @@ docs/superpowers/   design specs + implementation plans
   are counted by their own rule (grid cells, layers × end-face elements).
   Hand-built `set_algorithm` setups that `Evaluate()` leaves uncounted (Prism,
   quadrangle_medial_axis, ...) compute without the limit, with a note in the
-  reply; `polyhedron_per_solid` is predicted far too low and slips through.
+  reply, and so does every GMSH setup: GMSH's `Evaluate()` predicts nothing;
+  `polyhedron_per_solid` is predicted far too low and slips through.
   NETGEN is predicted 2–6× too high, so a NETGEN mesh can be refused well below
   the limit.
 - `reset_and_replay` (rollback) is wired only for the headless backend and has no

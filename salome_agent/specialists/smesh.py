@@ -12,7 +12,8 @@ message.
 
 A mesh belongs to one shape. create_mesh(shape) makes it, empty; then one call
 sets how the whole mesh is built:
-- mesh_tetra: tetrahedra filling the solids, for solids of any form.
+- mesh_tetra: tetrahedra filling the solids, for solids of any form (NETGEN, or
+  GMSH with mesher="gmsh").
 - mesh_surface: triangles, or mostly quadrangles, on the faces only; no volume
   elements.
 - mesh_hexa: structured hexahedra. Only meshes block-like solids: six sides,
@@ -22,7 +23,9 @@ sets how the whole mesh is built:
 - mesh_prism: hexahedra and prisms swept through an extruded solid, from one
   end face to the other.
 - set_algorithm and set_hypothesis: any other combination, dimension by
-  dimension.
+  dimension -- e.g. radial_prism with number_of_layers between two concentric
+  shells, radial_quadrangle on a disc, graded or fixed-point edge
+  distributions, NETGEN or GMSH parameters.
 Call one of these per mesh; a second one replaces the first.
 
 Local control works on named parts of the shape. get_subshapes lists the
@@ -32,9 +35,13 @@ group names go to:
 - local_size: a finer or coarser element size on those parts.
 - edge_segments: a set number of segments, or a length, along edges.
 - viscous_layers: thin layers of elements along walls.
+- project_mesh: the same mesh, node for node, on faces or edges that must
+  match (periodic sides); also gives the two shells of a radial_prism the
+  same mesh.
 - group_on_geometry: a group of mesh elements -- a boundary face, a fixed edge,
   a material -- for the solver that reads the mesh.
-groups_from_geometry makes one mesh group for every named group of the shape.
+groups_from_geometry makes one mesh group for every named group of the shape;
+combine_groups makes one from others (union, intersect, cut).
 
 compute builds the mesh. Its reply gives the element count per type, the mesh
 volume (or area) next to the shape's, the worst quality values, and every part
@@ -85,30 +92,34 @@ away.
 
 PLANNER_TOOL_LINES = {
     "create_mesh": "empty mesh of a shape or group",
-    "mesh_tetra": "tetrahedra filling the solids (NETGEN), with max/min size and fineness",
-    "mesh_surface": "triangles or quadrangles on the faces only",
+    "mesh_tetra": "tetrahedra filling the solids (NETGEN or GMSH), with max/min size and fineness",
+    "mesh_surface": "triangles or quadrangles on the faces only (NETGEN or GMSH)",
     "mesh_hexa": "structured hexahedra on block-like solids",
     "mesh_body_fitted": "hexahedra on a Cartesian grid",
-    "mesh_prism": "prisms swept through an extruded solid",
+    "mesh_prism": "prisms (or hexahedra with quads) swept through an extruded solid",
     "set_algorithm": "any algorithm for one dimension, on the mesh or on named groups",
-    "set_hypothesis": "any sizing rule, on the mesh or on named groups",
+    "set_hypothesis": "any sizing rule, layer count or NETGEN/GMSH parameters, on the mesh or on named groups",
     "get_subshapes": "ids of a shape's edges, faces, vertices or solids, filtered by position, size or plane",
     "name_subshapes": "named group of some faces, edges or solids of a shape",
     "shape_info": "type, volume, area, face count of shapes and groups",
     "local_size": "element size on named groups",
     "edge_segments": "segment count or length along named edges",
     "viscous_layers": "thin layers along walls",
+    "project_mesh": "copy the mesh of a face or edge onto matching ones",
     "set_submesh_order": "which local setup wins where two meet",
     "group_on_geometry": "mesh group on a named group, for a solver",
     "groups_from_geometry": "mesh groups for every named group of the shape",
+    "combine_groups": "mesh group as union, intersection or difference of others",
     "evaluate": "predicted element count without meshing",
     "compute": "build the mesh; counts, volume, quality, failed parts",
     "mesh_info": "counts of a mesh and its groups",
     "check_quality": "min/max of a quality criterion, count past a threshold",
+    "check_topology": "coincident nodes, holes, bare borders, over-constrained elements",
     "clear_mesh": "remove the elements, keep the setup",
     "remove_hypothesis": "remove a sizing rule",
     "convert_to_quadratic": "add mid-edge nodes",
-    "export_mesh": "write the mesh to a med, unv, stl or cgns file",
+    "split_elements": "split hexahedra/prisms into tetrahedra, quadrangles into triangles",
+    "export_mesh": "write the mesh to a med, unv, stl, cgns, gmf or dat file",
 }
 CORE_TOOLS = frozenset({"create_mesh", "mesh_tetra", "mesh_surface", "mesh_hexa",
                         "get_subshapes", "name_subshapes", "local_size",

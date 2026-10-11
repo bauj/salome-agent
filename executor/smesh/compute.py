@@ -47,6 +47,8 @@ QUALITY = {
     "warping": ("FT_Warping3D", "FT_Warping"),
     "volume": ("FT_Volume3D", None),
     "area": (None, "FT_Area"),
+    "max_element_length": ("FT_MaxElementLength3D", "FT_MaxElementLength2D"),
+    "taper": (None, "FT_Taper"),
 }
 _REPLY_QUALITY = ("aspect_ratio", "minimum_angle", "scaled_jacobian")
 
@@ -256,8 +258,8 @@ def tool_mesh_info(executor, args: dict):
 
 @tool("check_quality", category="query",
       description=("The min and max of `criterion` (aspect_ratio, minimum_angle, "
-                   "scaled_jacobian, skew, warping, volume, area) over the elements of "
-                   "`mesh`, and how many pass `threshold`."),
+                   "scaled_jacobian, skew, warping, volume, area, max_element_length, "
+                   "taper) over the elements of `mesh`, and how many pass `threshold`."),
       schema={"type": "object", "properties": {
           "mesh": {"type": "string"},
           "criterion": {"type": "string", "enum": list(QUALITY)},
@@ -281,3 +283,52 @@ def tool_check_quality(executor, args: dict):
         flt = smesh.GetFilter(kind, getattr(SMESH, functor), SMESH.FT_MoreThan, t)
         out["above_threshold"] = len(m.GetIdsFromFilter(flt))
     return out
+
+
+# defect -> (element type it is counted on, SMESH functor), what it means
+TOPOLOGY = {
+    "faces_with_free_edges": ("FACE", "FT_FreeEdges"),
+    "free_border_edges": ("EDGE", "FT_FreeBorders"),
+    "bare_border_faces": ("FACE", "FT_BareBorderFace"),
+    "bare_border_volumes": ("VOLUME", "FT_BareBorderVolume"),
+    "over_constrained_faces": ("FACE", "FT_OverConstrainedFace"),
+    "over_constrained_volumes": ("VOLUME", "FT_OverConstrainedVolume"),
+}
+
+
+def topology(st, m, tolerance: float) -> dict:
+    SMESH, smesh = st.ns["SMESH"], st.ns["smesh"]
+    out = {}
+    for key, (kind, functor) in TOPOLOGY.items():
+        if kind == "VOLUME" and not m.NbVolumes() or kind == "FACE" and not m.NbFaces():
+            continue
+        if key == "faces_with_free_edges" and m.NbVolumes():
+            continue  # every face of a volume mesh's skin has free edges
+        flt = smesh.GetFilter(getattr(SMESH, kind), getattr(SMESH, functor))
+        out[key] = len(m.GetIdsFromFilter(flt))
+    out["coincident_nodes"] = sum(len(g) - 1 for g in m.FindCoincidentNodes(tolerance))
+    return out
+
+
+@tool("check_topology", category="query",
+      description=("Defects of a computed `mesh`: nodes closer than `tolerance` "
+                   "(default 1e-6) that are not merged; on a face-only mesh, faces with "
+                   "an edge no other face shares (holes or open borders); bare borders "
+                   "(a boundary face or edge without its element); over-constrained "
+                   "elements (all nodes on the boundary). 0 everywhere is a clean mesh."),
+      schema={"type": "object", "properties": {
+          "mesh": {"type": "string"}, "tolerance": {"type": "number"}},
+          "required": ["mesh"]})
+def tool_check_topology(executor, args: dict):
+    st = state(executor)
+    name = args.get("mesh")
+    mesh_of(executor, name)
+    m = _mesh(st, name)
+    if m.NbNodes() == 0:
+        raise ValueError(f"{name} is not computed: call compute first")
+    tol = args.get("tolerance")
+    if tol is None:
+        tol = 1e-6
+    if isinstance(tol, bool) or not isinstance(tol, (int, float)) or tol <= 0:
+        raise ValueError(f"tolerance must be a positive number, got {tol!r}")
+    return {"ok": True, "records": [], "mesh": name, **topology(st, m, tol)}
