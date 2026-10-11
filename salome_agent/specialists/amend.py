@@ -324,7 +324,7 @@ def _spec(session: AmendSession) -> ModuleSpec:
 
 def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
               history=(), selection=None, session=None, cancel=None,
-              image_description=None, image_turn=None):
+              image_description=None, earlier_images=()):
     session = session or AmendSession(graph, client, turn)
     blocks = ["Build graph:\n" + graph.render()]
     snap = _snapshot(client, graph)
@@ -336,14 +336,19 @@ def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
     if selection:
         blocks.append("The user currently has these selected in the viewer:\n"
                       + "\n".join(json.dumps(s) for s in selection))
-    if image_description and image_turn is None:
+    for image_turn, description in earlier_images:
+        blocks.append(f"The user attached reference image(s) on turn {image_turn}; the "
+                      "image-analysis agent described them as:\n" + description)
+    if image_description:
         blocks.append("The user attached reference image(s) to this message; the "
                       "image-analysis agent describes them as:\n" + image_description)
-    elif image_description:
-        blocks.append(f"The user attached reference image(s) on turn {image_turn}; the "
-                      "image-analysis agent described them as:\n" + image_description
-                      + "\nThe model you are amending should match this description "
-                      "unless the user says otherwise.")
+    if len(earlier_images) + bool(image_description) > 1:
+        blocks.append("Images came on several turns: a later one may show the current "
+                      "result rather than the target. The user's words say which one the "
+                      "model should match.")
+    elif earlier_images:
+        blocks.append("The model you are amending should match this description unless "
+                      "the user says otherwise.")
     blocks.append(f"The user says: {text}")
     stage_plan = {"module": "amend", "intent": text, "tools": ["edit_arg", "delete_node"]}
     outcome = ToolSpecialist(_spec(session)).run(
