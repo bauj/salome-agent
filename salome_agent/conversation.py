@@ -9,6 +9,14 @@ from salome_agent.runner import EventMapper, drive, initial_state, show_results
 from salome_agent.logs import log
 
 
+def _built(final: dict) -> str | None:
+    """A planned turn's summary: what each of its stages said it built."""
+    stages = final.get("stages") or {}
+    built = [stages[k].get("built") for k in sorted(stages)
+             if stages[k].get("status") == "ok" and stages[k].get("built")]
+    return "; ".join(built) or None
+
+
 def _stage_vars(final: dict, *graphs: BuildGraph) -> list[str]:
     """Names a turn's stages built that no graph accounts for: a stage's calls
     reach build_graph only in assemble, and only when the stage is ok (task 259)."""
@@ -106,8 +114,11 @@ class Conversation:
                 self._viewer("hide", consumed)
             show_results(self.client, self.graph.to_dict())
         outcome = final.get("turn_outcome") or {}
+        if final.get("image_spec") and result.status in ("ok", "needs_input"):
+            self.history.append({"event": "image", "turn": n, "spec": final["image_spec"]})
         self.history.append({"event": "turn", "turn": n, "text": text,
-                             "status": result.status, "summary": outcome.get("summary")})
+                             "status": result.status,
+                             "summary": outcome.get("summary") or _built(final)})
         usage = getattr(self.llm, "usage", None)
         self._event(on_event, "turn_done", turn=n, status=result.status, message=result.message,
                     usage=dict(usage) if usage else None)

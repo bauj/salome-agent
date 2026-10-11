@@ -300,3 +300,31 @@ def test_turn_done_carries_the_usage_totals_even_when_cancelled(conv, monkeypatc
     assert done["data"]["usage"] == {"calls": 7, "prompt_tokens": 900}
     conv.llm.usage["calls"] = 99
     assert done["data"]["usage"]["calls"] == 7          # a snapshot, not the live counter
+
+
+def test_an_image_reading_reaches_later_turns_until_undone(conv, monkeypatch):
+    seen = []
+
+    def fake(app, inp, cfg, mapper, llm, on_event, on_gate, cancel):
+        seen.append([e for e in inp["history"] if e["event"] == "image"])
+        spec = {"summary": "a plate"} if inp["reference_images"] else None
+        return {**inp, "build_graph": _graph_with(1).to_dict(), "image_spec": spec}
+
+    monkeypatch.setattr(conv_mod, "drive", fake)
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    conv.turn("like this", images=["data:image/png;base64,AAAA"], on_event=lambda e: None,
+              on_gate=None)
+    conv.turn("missing the bars", on_event=lambda e: None, on_gate=None)
+    assert seen[1] == [{"event": "image", "turn": 0, "spec": {"summary": "a plate"}}]
+    conv.undo(); conv.undo()
+    conv.turn("a box", on_event=lambda e: None, on_gate=None)
+    assert seen[2] == []
+
+
+def test_a_planned_turn_records_what_its_stages_built(conv, monkeypatch):
+    _fake_drive(monkeypatch, {"build_graph": _graph_with(1).to_dict(), "stages": {
+        0: {"status": "ok", "built": "a plate of diameter 100"},
+        1: {"status": "failed", "built": "half a slot"},
+        2: {"status": "ok", "built": "four slots"}}})
+    conv.turn("like this", on_event=lambda e: None, on_gate=None)
+    assert conv.history[-1]["summary"] == "a plate of diameter 100; four slots"

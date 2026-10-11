@@ -153,6 +153,14 @@ def _replan_context(state: dict, graph, reason: str = "") -> str:
             + _earlier_requests(state))
 
 
+def _earlier_image(state: dict) -> dict | None:
+    """The newest reference-image reading of an earlier turn of the conversation."""
+    for event in reversed(state.get("history") or []):
+        if event.get("event") == "image":
+            return event
+    return None
+
+
 def _amend_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
     from salome_agent.build_graph import BuildGraph
@@ -167,10 +175,14 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
     session = amend.AmendSession(graph, client, turn, _amend_module(state, graph))
+    from salome_agent.nodes.vision_spec import amend_block
     extra = {}
+    earlier = _earlier_image(state)
     if state.get("image_spec"):
-        from salome_agent.nodes.vision_spec import amend_block
         extra = {"image_description": amend_block(state["image_spec"])}
+    elif earlier:
+        extra = {"image_description": amend_block(earlier["spec"]),
+                 "image_turn": earlier["turn"] + 1}
     try:
         session, outcome = amend.run_amend(
             state["user_request"], graph, llm, client, turn,
