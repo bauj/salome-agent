@@ -231,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             conv = Conversation(config, client, run_id, verbose=args.verbose,
                                 request_timeout=args.timeout)
-            return chat.repl(conv, args.request)
+            return chat.repl(conv, args.request, images=reference_images)
         finally:
             try:
                 client.close()

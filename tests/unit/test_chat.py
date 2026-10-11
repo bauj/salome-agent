@@ -8,6 +8,7 @@ from salome_agent.conversation import TurnResult
 class FakeConv:
     def __init__(self):
         self.turns = []
+        self.images = []
         self.run_dir = "/w/r1"
         self.graph = SimpleNamespace(render=lambda: "n1  box_1 = make_box(dx=1)")
         self.ended = False
@@ -27,7 +28,7 @@ class FakeConv:
         return TurnResult("ok", "rebuilt 1 node(s)", {})
 
 
-def _run(lines, conv=None):
+def _run(lines, conv=None, images=None):
     conv = conv or FakeConv()
     feed = iter(lines)
 
@@ -37,12 +38,13 @@ def _run(lines, conv=None):
         except StopIteration:
             raise EOFError
 
-    def run_turn(c, text, gate, stream):
+    def run_turn(c, text, gate, stream, images=None):
         c.turns.append(text)
+        c.images.append(images)
         return TurnResult("ok", f"did {text}", {})
 
     out = io.StringIO()
-    code = repl(conv, "a house", read=read, stream=out, run_turn=run_turn)
+    code = repl(conv, "a house", images=images, read=read, stream=out, run_turn=run_turn)
     return conv, out.getvalue(), code
 
 
@@ -50,6 +52,11 @@ def test_first_request_then_bare_text_turns():
     conv, out, code = _run(["make the roof taller", "/quit"])
     assert conv.turns == ["a house", "make the roof taller"]
     assert code == 0 and "did make the roof taller" in out
+
+
+def test_the_first_turn_gets_the_command_line_images():
+    conv, _, _ = _run(["the bars are missing", "/quit"], images=["data:image/png;base64,AA"])
+    assert conv.images == [["data:image/png;base64,AA"], None]
 
 
 def test_commands():
@@ -77,7 +84,7 @@ def test_result_prints_path(tmp_path):
 def test_ended_conversation_exits_1():
     conv = FakeConv()
 
-    def run_turn(c, text, gate, stream):
+    def run_turn(c, text, gate, stream, images=None):
         c.ended = True
         return TurnResult("ended", "server gone", {})
 

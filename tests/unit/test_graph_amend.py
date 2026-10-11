@@ -140,6 +140,55 @@ def test_follow_up_with_images_is_described_then_amended(tmp_path, monkeypatch):
     assert out["turn_outcome"]["summary"] == "ok"
 
 
+def test_a_later_amend_gets_the_earlier_image_reading(tmp_path, monkeypatch):
+    from salome_agent.specialists import amend as amend_mod
+
+    seen = {}
+
+    def fake_run_amend(text, graph, llm, client, turn, policy, **kw):
+        seen.update(kw)
+        return amend_mod.AmendSession(graph, client, turn), {"summary": "ok", "question": None}
+
+    monkeypatch.setattr(amend_mod, "run_amend", fake_run_amend)
+    state = _state(tmp_path, _graph(), "the bars are missing", turn=2)
+    state["history"] = [{"event": "image", "turn": 0, "spec": {"summary": "a plate with bars",
+                                                               "parts": []}},
+                        {"event": "turn", "turn": 0, "text": "like this", "status": "ok"}]
+    app = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    app.invoke(state, config=cfg)
+    [(n, block)] = seen["earlier_images"]
+    assert n == 1 and "a plate with bars" in block
+    assert "image_description" not in seen
+
+
+def test_a_picture_of_the_result_does_not_replace_the_reference(tmp_path, monkeypatch):
+    from salome_agent.nodes import vision as vision_mod
+    from salome_agent.specialists import amend as amend_mod
+
+    monkeypatch.setattr(vision_mod, "describe_images",
+                        lambda request, images, llm, **kw: {"summary": "a bare plate",
+                                                            "parts": []})
+    seen = {}
+
+    def fake_run_amend(text, graph, llm, client, turn, policy, **kw):
+        seen.update(kw)
+        return amend_mod.AmendSession(graph, client, turn), {"summary": "ok", "question": None}
+
+    monkeypatch.setattr(amend_mod, "run_amend", fake_run_amend)
+    state = _state(tmp_path, _graph(), "this is what I got", turn=2)
+    state["reference_images"] = ["data:image/png;base64,AAAA"]
+    state["history"] = [{"event": "image", "turn": 0, "spec": {"summary": "a plate with bars",
+                                                               "parts": []}}]
+    app = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    app.invoke(state, config=cfg)
+    assert "a plate with bars" in seen["earlier_images"][0][1]
+    assert "a bare plate" in seen["image_description"]
+
+
 def _replan_seen(tmp_path, monkeypatch, history):
     from salome_agent.specialists import amend as amend_mod
     from salome_agent.nodes import planner as planner_mod
