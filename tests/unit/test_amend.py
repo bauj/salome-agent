@@ -116,10 +116,21 @@ def test_an_earlier_image_is_named_by_its_turn():
     llm = MagicMock()
     llm.chat.side_effect = [_resp(("finish_turn", {"summary": "x"}))]
     run_amend("the bars are missing", _graph(), llm, FakeClient(), 2, POLICY,
-              image_description="a plate with bars", image_turn=1)
+              earlier_images=[(1, "a plate with bars")])
     user = llm.chat.call_args.kwargs["messages"][1]["content"]
     assert "reference image(s) on turn 1" in user and "a plate with bars" in user
-    assert "to this message" not in user
+    assert "to this message" not in user and "should match this description" in user
+
+
+def test_images_of_several_turns_are_all_given_and_the_user_picks_the_target():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("finish_turn", {"summary": "x"}))]
+    run_amend("this is what I got", _graph(), llm, FakeClient(), 3, POLICY,
+              earlier_images=[(1, "a plate with bars")], image_description="a bare plate")
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert user.index("on turn 1") < user.index("a plate with bars") < user.index("a bare plate")
+    assert "The user's words say which one" in user
+    assert "should match this description" not in user
 
 
 def test_append_goes_into_one_amend_block_for_the_turn():

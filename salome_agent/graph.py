@@ -153,12 +153,12 @@ def _replan_context(state: dict, graph, reason: str = "") -> str:
             + _earlier_requests(state))
 
 
-def _earlier_image(state: dict) -> dict | None:
-    """The newest reference-image reading of an earlier turn of the conversation."""
-    for event in reversed(state.get("history") or []):
-        if event.get("event") == "image":
-            return event
-    return None
+def _earlier_images(state: dict) -> list:
+    """(turn number, amend block) of every image reading of an earlier turn: a
+    later image can be a picture of the result, so none replaces the others."""
+    from salome_agent.nodes.vision_spec import amend_block
+    return [(e["turn"] + 1, amend_block(e["spec"])) for e in state.get("history") or []
+            if e.get("event") == "image"]
 
 
 def _amend_node(state: dict, config: "RunnableConfig"):
@@ -175,14 +175,13 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
     session = amend.AmendSession(graph, client, turn, _amend_module(state, graph))
-    from salome_agent.nodes.vision_spec import amend_block
     extra = {}
-    earlier = _earlier_image(state)
+    earlier = _earlier_images(state)
+    if earlier:
+        extra["earlier_images"] = earlier
     if state.get("image_spec"):
-        extra = {"image_description": amend_block(state["image_spec"])}
-    elif earlier:
-        extra = {"image_description": amend_block(earlier["spec"]),
-                 "image_turn": earlier["turn"] + 1}
+        from salome_agent.nodes.vision_spec import amend_block
+        extra["image_description"] = amend_block(state["image_spec"])
     try:
         session, outcome = amend.run_amend(
             state["user_request"], graph, llm, client, turn,
