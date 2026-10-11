@@ -545,3 +545,36 @@ def test_check_results_sees_a_face_whose_sketch_was_edited(agent_client):
     r = agent_client.check_results([face, good], module="shaper")
     assert r["results"][face]["status"] == "broken", r
     assert r["results"][good]["status"] == "ok"
+
+
+_COUNT_BOXES = """
+import sys
+m = sys.modules["salome.shaper.model"]
+if not hasattr(m, "_agent_box_calls"):
+    m._agent_box_calls, m._agent_box_real = [], m.getBoundingBox
+    m.getBoundingBox = lambda *a: m._agent_box_calls.append(1) or m._agent_box_real(*a)
+m._agent_box_calls.clear()
+"""
+_RESTORE_BOXES = """
+import sys
+m = sys.modules["salome.shaper.model"]
+print("calls", len(m._agent_box_calls))
+m.getBoundingBox = m._agent_box_real
+del m._agent_box_calls, m._agent_box_real
+"""
+
+
+def test_a_flat_result_is_measured_without_the_bounding_box_feature(agent_client):
+    # SHAPER's bounding-box feature fails with an "Application errors" popup
+    # when the box between its corners is flat
+    name, _ = _plate(agent_client)
+    _call(agent_client, "close_sketch", sketch=name)
+    assert agent_client.run(_COUNT_BOXES, timeout=10)["ok"] is True
+    try:
+        face = _call(agent_client, "make_face", sketch=name, regions=[0])
+        assert face["ok"] is True, face.get("error")
+        assert face["measure"]["bbox"] == pytest.approx([0, 40, 0, 20, 0, 0], abs=1e-4)
+    finally:
+        out = agent_client.run(_RESTORE_BOXES, timeout=10)
+    assert out["ok"] is True, out
+    assert "calls 0" in out["stdout"]
