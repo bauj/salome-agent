@@ -1718,3 +1718,25 @@ def test_carried_reasoning_goes_back_under_the_field_it_came_in(monkeypatch):
 def test_assistant_tool_turn_defaults_to_reasoning_content():
     turn = assistant_tool_turn([{"name": "mk", "args": {}, "id": "c1"}], None, "thought")
     assert turn["reasoning_content"] == "thought"
+
+
+def test_trace_records_the_shared_base_url_too(monkeypatch, tmp_path):
+    _capture_request(monkeypatch)
+    trace = tmp_path / "t.jsonl"
+    LLMClient("http://x/v1/", "", "small", trace_path=str(trace)).chat(
+        messages=[{"role": "user", "content": "x"}])
+    req = json.loads(trace.read_text().splitlines()[0])["request"]
+    assert req["base_url"] == "http://x/v1"
+
+
+def test_endpoints_lists_shared_then_module_overrides():
+    client = LLMClient("http://x/v1", "", "small",
+                       modules={"vision": {"base_url": "http://other/v1", "model": "big"}})
+    assert client.endpoints() == [(None, "http://x/v1", "small"),
+                                  ("vision", "http://other/v1", "big")]
+
+
+def test_shown_url_drops_credentials_and_query():
+    from salome_agent.llm import shown_url
+
+    assert shown_url("https://u:pw@host:8443/v1?key=secret") == "https://host:8443/v1"

@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -375,6 +376,13 @@ def _cert_verify(ssl_cert_file: str):
     if not os.path.isfile(cert_path):
         raise FileNotFoundError(f"SSL certificate file not found: {cert_path}")
     return cert_path
+
+
+def shown_url(url: str) -> str:
+    """A URL fit for a report or an error: no user:password part, no query
+    (some providers take the key as ?key=...)."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], parts.path, "", ""))
 
 
 class _Endpoint:
@@ -785,11 +793,10 @@ class LLMClient:
         messages = redact_images(payload["messages"])
         approx_in = self._approx_tokens({**payload, "messages": messages})
         self.usage["approx_prompt_tokens"] += approx_in
-        trace_request = {"model": ep.model, "temperature": ep.temperature,
+        trace_request = {"base_url": shown_url(ep.base_url), "model": ep.model,
+                         "temperature": ep.temperature,
                          "tools": tool_names or [], "approx_input_tokens": approx_in,
                          "messages": messages}
-        if ep.base_url != self.base_url:
-            trace_request["base_url"] = ep.base_url
         if ep.extra_body:
             trace_request["extra_body"] = ep.extra_body
         self._trace_prompt(trace_request)
@@ -905,6 +912,12 @@ class LLMClient:
                          pick("timeout", self.request_timeout),
                          pick("extra_headers", {} if own_host else self.extra_headers),
                          pick("extra_body", extra_body))
+
+    def endpoints(self) -> list[tuple[str | None, str, str]]:
+        """(module, shown base_url, model): the shared endpoint first (module
+        None), then each module with its own endpoint or model."""
+        return [(None, shown_url(self.base_url), self.model)] + [
+            (name, shown_url(ep.base_url), ep.model) for name, ep in self._endpoints.items()]
 
     def endpoint(self, module: str | None = None) -> _Endpoint:
         if module in self._endpoints:
