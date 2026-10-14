@@ -6,7 +6,7 @@ from langchain_core.runnables import RunnableConfig
 
 from salome_agent.executor_client import ServerOutdated
 from salome_agent.llm import (ReasoningTimeExceeded, RepetitionLoopDetected, StreamBudgetExceeded,
-                              StreamErrorFrame)
+                              StreamErrorFrame, shown_url)
 from salome_agent.logs import log
 
 
@@ -58,8 +58,10 @@ def _llm_endpoint_fatal(e: Exception) -> str | None:
                     "or requests-per-minute exceeded; wait or use a higher-tier key")
         if isinstance(code, int) and 400 <= code < 500:
             body = _body_snippet(e.response)
-            return (f"LLM endpoint rejected the request (HTTP {code}) — check "
-                    f"base_url, model name, API key and request parameters"
+            url = getattr(e.response, "url", None)
+            return (f"LLM endpoint rejected the request (HTTP {code}"
+                    + (f" from {shown_url(url)}" if url else "")
+                    + ") — check base_url, model name, API key and request parameters"
                     + (f"; endpoint said: {body}" if body else ""))
         return (f"LLM endpoint unavailable (HTTP {code}) — the model backend is "
                 f"down or slow; retry later")
@@ -562,7 +564,8 @@ def _report_node(state: dict, config: "RunnableConfig"):
     from salome_agent.nodes.report import write_report
 
     llm = config["configurable"].get("llm_client")
-    report_text = write_report(state, usage=getattr(llm, "usage", None))
+    report_text = write_report(state, usage=getattr(llm, "usage", None),
+                               endpoints=llm.endpoints() if hasattr(llm, "endpoints") else None)
     work_dir = os.path.expanduser(state["config"].get("work_dir") or ".")
     run_dir = os.path.join(work_dir, state["run_id"] or "run")
     os.makedirs(run_dir, exist_ok=True)
