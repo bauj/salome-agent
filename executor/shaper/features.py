@@ -117,6 +117,10 @@ def _size(args: dict) -> tuple:
     back = args.get("from_size", 0)
     if isinstance(back, bool) or not isinstance(back, (int, float)):
         raise ValueError(f"from_size must be a number, got {back!r}")
+    if size + back == 0:
+        raise ValueError(f"size {size} with from_size {back} has zero length: from_size "
+                         "extends the other way, so it adds to size — for a length the other "
+                         f"way use size {-size}, or size 0 with from_size {size}")
     return size, back
 
 
@@ -189,7 +193,8 @@ def _region_names(st, sk, regions: list) -> list:
       description=(
           "Extrude a face or a whole sketch (all its closed regions) by `size` along "
           "`direction` (OX, OY, OZ; default the sketch normal). from_size extends it the "
-          "other way. Returns the solid's name and its measure."),
+          "other way: the length is size + from_size, both positive for a two-sided "
+          "extrusion. Returns the solid's name and its measure."),
       schema={"type": "object", "properties": {
           "base": {"type": "string", "description": "a sketch or a make_face result"},
           "size": {"type": "number"},
