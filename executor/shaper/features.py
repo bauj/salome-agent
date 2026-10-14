@@ -47,6 +47,14 @@ def _base_selections(executor, base) -> tuple[list, list]:
 
 def _result_selections(st, name: str) -> list:
     feat = st.ns[name].feature()
+    results = [r for r in feat.results() if r.shape() is not None]
+    if results and all(r.isConcealed() for r in results):
+        owners = {a.owner().data().name() for r in results for a in r.data().refsToMe()}
+        users = [o for o in st.objects if o in owners]
+        by, use = ((", ".join(users), users[-1]) if users
+                   else ("a later operation", "that operation's result"))
+        raise ValueError(f"{name} was used up by {by}, which replaced it — use {use}, "
+                         f"or build a new shape instead of {name}")
     return [f'model.selection("{r.shape().shapeTypeStr()}", {r.data().name()!r})'
             for r in feat.results() if r.shape() is not None]
 
