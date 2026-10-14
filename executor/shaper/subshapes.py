@@ -10,8 +10,8 @@ _MEET = 0.95   # OCC segfaults when two fillets on one face meet (2r ~ face widt
 _USED = " `shape` is used up: refer to the result by its new name."
 
 _WHERE = {"description": (
-    "\"all\"; {\"sorted_by\": \"x|y|z\", \"take\": \"max|min\", \"count\": N}; "
-    "{\"by_size\": \"longest|shortest|largest|smallest\", \"count\": N}; or "
+    "\"all\"; {\"sorted_by\": \"x|y|z\", \"take\": \"max|min\", \"count\": N (default 1)}; "
+    "{\"by_size\": \"longest|shortest|largest|smallest\", \"count\": N (default 1)}; or "
     "{\"on_plane\": {\"point\": [x, y, z], \"normal\": [x, y, z]}, \"state\": "
     "\"on|in|out|onin|onout\"} (in = the side the normal points away from)")}
 _IDS = {"description": "\"all\" or a list of ids from get_subshapes (\"E3\", \"F2\", ...)",
@@ -59,7 +59,7 @@ def select(subs: list, where, points_of) -> list:
         return list(subs)
     if not isinstance(where, dict):
         raise ValueError(f"where must be \"all\" or a predicate object, got {where!r}")
-    count = lambda: _count(where.get("count"))
+    count = lambda: _count(where.get("count", 1))
     if "sorted_by" in where:
         axis = {"x": 0, "y": 1, "z": 2}.get(where["sorted_by"]) \
             if isinstance(where["sorted_by"], str) else None
@@ -76,7 +76,9 @@ def select(subs: list, where, points_of) -> list:
     if "on_plane" in where:
         test = _plane_test(where)
         return [u for u in subs if test(points_of(u))]
-    raise ValueError(f"unknown where {where!r}")
+    raise ValueError(f"where {where!r} has none of sorted_by, by_size or on_plane — use "
+                     f"one of: {_WHERE['description']}; e.g. {{\"sorted_by\": \"z\", "
+                     f"\"take\": \"max\"}} for the highest one")
 
 
 def _count(value) -> int:
@@ -142,6 +144,10 @@ def _sels(sub_type: str, picked: list) -> str:
           "sub_type": {"type": "string", "enum": list(SUB_TYPES)},
           "where": _WHERE}, "required": ["shape", "sub_type"]})
 def tool_get_subshapes(executor, args: dict):
+    stray = sorted(set(args) - {"shape", "sub_type", "where"})
+    if stray:
+        raise ValueError(f"get_subshapes takes shape, sub_type and where, not "
+                         f"{', '.join(stray)} — a filter goes in `where`")
     name = _shape_name(executor, args)
     subs = subshapes(executor, name, args.get("sub_type"))
     picked = select(subs, args.get("where", "all"), _points)

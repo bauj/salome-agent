@@ -377,7 +377,7 @@ _PT = {"type": "array", "items": {"type": "number"}}
 @tool("sketch_add", category="sketch",
       description=(
           "Add entities to a sketch, each with an id you choose (unique in the sketch, "
-          "letters and digits, e.g. L1, C2): "
+          "letters, digits and underscores, e.g. L1, C2): "
           "{id, type: \"line\", start: [x, y], end: [x, y]}, "
           "{id, type: \"circle\", center, radius}, "
           "{id, type: \"arc\", center, start, end, reversed?} (counter-clockwise from start "
