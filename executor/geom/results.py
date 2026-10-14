@@ -193,13 +193,13 @@ def _select_subshapes(geompy, shape, type_code: int, where) -> list:
     if "sorted_by" in where:
         axis = {"x": 0, "y": 1, "z": 2}[where["sorted_by"]]
         take = where.get("take", "max")
-        n = int(where["count"])
+        n = int(where.get("count", 1))
         ordered = sorted(pairs, key=lambda p: _centre(geompy, p[1])[axis],
                          reverse=(take == "max"))
         return ordered[:n]
     if "by_size" in where:
         kind = where["by_size"]
-        n = int(where["count"])
+        n = int(where.get("count", 1))
         metric_idx = 1 if kind in ("largest", "smallest") else 0
         biggest = kind in ("longest", "largest")
         ordered = sorted(pairs,
@@ -214,7 +214,8 @@ def _select_subshapes(geompy, shape, type_code: int, where) -> list:
         sel_ids = set(geompy.GetShapesOnPlaneWithLocationIDs(
             shape, type_code, nrm, pnt, st))
         return [p for p in pairs if p[0] in sel_ids]
-    raise ValueError(f"unknown where {where!r}")
+    raise ValueError(f"where {where!r} has none of sorted_by, by_size or on_plane — e.g. "
+                     "{\"sorted_by\": \"z\", \"take\": \"max\"} for the highest one")
 
 
 def shape_status(geompy, shape) -> dict:
