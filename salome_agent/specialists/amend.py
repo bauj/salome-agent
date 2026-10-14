@@ -313,7 +313,9 @@ def _spec(session: AmendSession) -> ModuleSpec:
         render_result=session.render,
         tools_for=tools_for,
         load_note=session.load_note,
-        no_tool_nudge="You did not call a tool. Call a tool now — finish_turn when done.",
+        no_tool_nudge=("You did not call a tool. If the change is done, or you cannot make "
+                       "it, call finish_turn and say so in its summary; otherwise make the "
+                       "call for the next step."),
         on_exhausted=lambda call_log, last_error: {"exhausted": True, "last_error": last_error},
         core_tools=core,
         categories=base.categories + ("smesh",),

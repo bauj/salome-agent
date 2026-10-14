@@ -403,3 +403,32 @@ def test_an_edit_that_failed_runs_again_after_a_delete():
     tall = [c for c in client.calls if c[0] == "make_box" and c[1]["dz"] == 3]
     assert len(tall) == 2
     assert session.graph.nodes["n1"].tool_args["dz"] == 3
+
+
+def test_a_finish_turn_written_as_a_tag_ends_the_turn():
+    from tests.unit.test_text_tool_calls import GEMMA_TAG
+    llm = MagicMock()
+    llm.chat.side_effect = [{"tool_calls": [], "content": GEMMA_TAG, "raw_message": None}]
+    _, outcome = run_amend("use smesh for that", _graph(), llm, FakeClient(), 1, POLICY)
+    assert outcome["summary"] == ("No changes made as meshing tools are not available in the "
+                                  "current toolset.")
+    assert llm.chat.call_count == 1
+
+
+def test_a_reply_with_no_call_is_told_finish_turn_also_ends_a_turn_it_cannot_do():
+    llm = MagicMock()
+    llm.chat.side_effect = [{"tool_calls": [], "content": "I cannot do that.", "raw_message": None},
+                            _resp(("finish_turn", {"summary": "cannot"}))]
+    run_amend("use smesh for that", _graph(), llm, FakeClient(), 1, POLICY)
+    nudge = llm.chat.call_args_list[1].kwargs["messages"][-1]["content"]
+    assert "or you cannot make it, call finish_turn" in nudge
+
+
+def test_an_unreadable_tag_gets_the_text_call_nudge():
+    llm = MagicMock()
+    llm.chat.side_effect = [{"tool_calls": [], "content": "Done. <finish_turn>",
+                             "raw_message": None},
+                            _resp(("finish_turn", {"summary": "done"}))]
+    run_amend("move it", _graph(), llm, FakeClient(), 1, POLICY)
+    nudge = llm.chat.call_args_list[1].kwargs["messages"][-1]["content"]
+    assert "You wrote a tool call as text" in nudge
