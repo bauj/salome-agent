@@ -25,6 +25,14 @@ def _usage_lines(usage: dict) -> list[str]:
     return lines
 
 
+def _endpoint_lines(endpoints: list) -> list[str]:
+    lines = ["## LLM endpoint", ""]
+    for module, url, model in endpoints:
+        lines.append(f"- {module or 'shared'}: `{model}` at {url}")
+    lines.append("")
+    return lines
+
+
 def _tok(n: int) -> str:
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
@@ -86,7 +94,8 @@ def _image_lines(state: dict) -> list[str]:
     return ["## Reference image", "", *lines, ""] if lines else []
 
 
-def write_report(state: dict, usage: dict | None = None) -> str:
+def write_report(state: dict, usage: dict | None = None,
+                 endpoints: list | None = None) -> str:
     lines = [f"# Report: {state['run_id']}", "",
              f"Request: {state['user_request']}", ""]
     if state.get("fatal"):
@@ -100,6 +109,8 @@ def write_report(state: dict, usage: dict | None = None) -> str:
         prefix = sess.get("name_prefix") or "sa_"
         lines += [f"Session: headless study, shared across runs. This run's "
                   f"objects are prefixed `{prefix}`.", ""]
+    if endpoints:
+        lines += _endpoint_lines(endpoints)
     if usage and usage.get("calls"):
         lines += _usage_lines(usage)
     lines += _timing_lines(state)

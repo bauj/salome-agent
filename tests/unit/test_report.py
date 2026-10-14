@@ -108,3 +108,11 @@ def test_report_has_no_image_section_when_nothing_to_say():
     spec = {"dimensionality": {"value": "3d"}, "parts": [{"id": "P1"}]}
     assert "## Reference image" not in write_report(_state(image_spec=spec, plan=[]))
     assert "## Reference image" not in write_report(_state())
+
+
+def test_report_names_each_endpoint_and_model():
+    out = write_report(_state(), endpoints=[(None, "https://api.x/v1", "small"),
+                                            ("vision", "https://other/v1", "big")])
+    assert "## LLM endpoint" in out
+    assert "- shared: `small` at https://api.x/v1" in out
+    assert "- vision: `big` at https://other/v1" in out

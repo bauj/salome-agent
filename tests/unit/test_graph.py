@@ -671,3 +671,13 @@ def test_the_graph_has_no_script_verify_nodes():
     nodes = set(build_graph(batch=True).get_graph().nodes)
     assert "run_stage" in nodes
     assert not {"verify_static", "verify_exec"} & nodes
+
+
+def test_endpoint_fatal_4xx_names_the_url_it_posted_to():
+    from salome_agent.graph import _llm_endpoint_fatal
+
+    err = _http_error(404)
+    err.response.url = "https://api.x/v1/chat/completions/chat/completions?key=s"
+    msg = _llm_endpoint_fatal(err)
+    assert "HTTP 404 from https://api.x/v1/chat/completions/chat/completions)" in msg
+    assert "key=s" not in msg
