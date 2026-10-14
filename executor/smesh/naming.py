@@ -12,7 +12,7 @@ _GEOM_TYPES = {"VERTEX": "vertex", "EDGE": "edge", "FACE": "face", "SOLID": "sol
       schema={"type": "object", "properties": {
           "shape": {"type": "string"},
           "sub_type": {"type": "string", "enum": ["vertex", "edge", "face", "solid"]},
-          "where": {"description": "\"all\", or {\"sorted_by\":\"x|y|z\",\"take\":\"max|min\",\"count\":N}, or {\"by_size\":\"longest|shortest|largest|smallest\",\"count\":N}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"}},
+          "where": {"description": "\"all\", or {\"sorted_by\":\"x|y|z\",\"take\":\"max|min\",\"count\":N (default 1)}, or {\"by_size\":\"longest|shortest|largest|smallest\",\"count\":N (default 1)}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"}},
           "required": ["shape", "sub_type"]})
 def tool_get_subshapes(executor, args: dict):
     _, owner = shape_ref(executor, args.get("shape"))
