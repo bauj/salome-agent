@@ -305,7 +305,9 @@ class ToolSpecialist:
             tool_calls = response["tool_calls"]
             names = {d["name"] for d in tools} | set(all_defs)
             if not tool_calls:
-                tool_calls = text_tool_calls(response["content"], names)
+                schemas = {n: d.get("parameters") for n, d in all_defs.items()}
+                schemas.update((d["name"], d.get("parameters")) for d in tools)
+                tool_calls = text_tool_calls(response["content"], names, schemas)
                 if tool_calls:
                     log.info("  %s stage: tool calls read from the reply text", spec.name)
             log.debug("    LLM -> %s", [(c["name"], c["args"]) for c in tool_calls])
@@ -317,7 +319,8 @@ class ToolSpecialist:
                                  **reasoning_field(response.get("reasoning"),
                                                    response.get("raw_message"))})
                 content = response["content"] or ""
-                as_text = "```" in content or any(f'"{n}"' in content for n in names)
+                as_text = "```" in content or any(f'"{n}"' in content or f"<{n}" in content
+                                                  for n in names)
                 messages.append({"role": "user",
                                  "content": _TEXT_CALL_NUDGE if as_text else spec.no_tool_nudge})
                 continue
