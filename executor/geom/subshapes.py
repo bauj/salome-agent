@@ -60,7 +60,7 @@ def tool_get_subshape(executor, args: dict):
 
 @tool("get_subshapes", category="query",
       description='Find subshape ids of `shape` without changing geometry. Returns {ids, centres}. Pass the ids to fillet_edges, chamfer_edges or get_subshape. where = "all", or select by a centre axis (sorted_by/take/count), by size (by_size/count), or by a plane (on_plane/state). on_plane with state "on" returns only subshapes lying in that plane -- e.g. the rim circle of a revolved shape, not the seam edges running along its profile.',
-      schema={"type": "object", "properties": {"shape": {"type": "string"}, "sub_type": {"type": "string", "enum": ["vertex", "edge", "wire", "face", "shell", "solid"]}, "where": {"description": "\"all\", or {\"sorted_by\":\"x|y|z\",\"take\":\"max|min\",\"count\":N}, or {\"by_size\":\"longest|shortest|largest|smallest\",\"count\":N}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"}}, "required": ["shape", "sub_type", "where"]},
+      schema={"type": "object", "properties": {"shape": {"type": "string"}, "sub_type": {"type": "string", "enum": ["vertex", "edge", "wire", "face", "shell", "solid"]}, "where": {"description": "\"all\", or {\"sorted_by\":\"x|y|z\",\"take\":\"max|min\",\"count\":N (default 1)}, or {\"by_size\":\"longest|shortest|largest|smallest\",\"count\":N (default 1)}, or {\"on_plane\":{\"point\":[x,y,z],\"normal\":[x,y,z]},\"state\":\"on\"}"}}, "required": ["shape", "sub_type", "where"]},
       arg_types={})
 def tool_get_subshapes(executor, args: dict):
     geompy = executor.namespace["geompy"]
