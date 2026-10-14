@@ -74,3 +74,44 @@ def test_a_call_written_as_text_that_does_not_parse_gets_the_text_call_nudge():
     sent = llm.chat.call_args_list[1].kwargs["messages"]
     assert "You wrote a tool call as text" in sent[-1]["content"]
     client.call_tool.assert_not_called()
+
+
+SCHEMAS = {
+    "finish_turn": {"properties": {"summary": {"type": "string"}, "question": {"type": "string"}},
+                    "required": ["summary"]},
+    "extrude": {"properties": {"base": {"type": "string"}, "size": {"type": "number"}},
+                "required": ["base", "size"]},
+    "measure": {"properties": {"names": {"type": "array"}}, "required": ["names"]},
+    "make_face": {"properties": {"regions": {"anyOf": [{"type": "array"},
+                                                       {"type": "string", "enum": ["all"]}]}}},
+}
+TAGGED = set(SCHEMAS)
+
+# gemma4:31b on Ollama, run ee92a610cbbf turn 4 (llm_trace call 50)
+GEMMA_TAG = ('I do not have access to the SMESH module or any meshing tools; I can only create '
+             'and modify geometry using the SHAPER tools.\n\n<finish_turn summary="No changes '
+             'made as meshing tools are not available in the current toolset." />')
+
+
+def test_reads_a_call_written_as_a_tag():
+    assert text_tool_calls(GEMMA_TAG, TAGGED, SCHEMAS) == [{"name": "finish_turn", "id": None,
+        "args": {"summary": "No changes made as meshing tools are not available in the "
+                            "current toolset."}}]
+
+
+def test_tag_values_take_the_type_their_schema_declares():
+    calls = text_tool_calls('<extrude base="f1" size="5"/><measure names=\'["a", "b"]\'>'
+                            '</measure>', TAGGED, SCHEMAS)
+    assert [c["args"] for c in calls] == [{"base": "f1", "size": 5}, {"names": ["a", "b"]}]
+    assert text_tool_calls('<make_face regions="all"/>', TAGGED, SCHEMAS)[0]["args"] == {
+        "regions": "all"}
+    assert text_tool_calls('<make_face regions="[0, 2]"/>', TAGGED, SCHEMAS)[0]["args"] == {
+        "regions": [0, 2]}
+    assert text_tool_calls('<finish_turn summary="2024 &quot;ok&quot;"/>', TAGGED, SCHEMAS)[0][
+        "args"] == {"summary": '2024 "ok"'}
+
+
+def test_a_tag_that_does_not_fit_its_tool_is_not_a_call():
+    assert text_tool_calls('<extrude base="f1" size="big"/>', TAGGED, SCHEMAS) == []
+    assert text_tool_calls("I will finish with <finish_turn> now.", TAGGED, SCHEMAS) == []
+    assert text_tool_calls('<b>bold</b> <make_teapot spout="1"/>', TAGGED, SCHEMAS) == []

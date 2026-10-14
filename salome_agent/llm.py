@@ -1,3 +1,4 @@
+import html
 import json
 import os
 import re
@@ -10,6 +11,10 @@ from salome_agent.logs import log
 from salome_agent.repetition import RepetitionWatch
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+_TAG_RE = re.compile(r"<([A-Za-z_]\w*)((?:\s+[A-Za-z_]\w*\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*/?>")
+_ATTR_RE = re.compile(r"([A-Za-z_]\w*)\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
+_JSON_TYPES = {"string": str, "number": (int, float), "integer": int, "boolean": bool,
+               "array": list, "object": dict}
 _CANCEL_POLL = 0.1
 _EOF = object()
 
@@ -283,10 +288,12 @@ def _parse_json_content(content: str):
         f"LLM did not return parseable JSON ({first_err}). Raw content:\n{content}")
 
 
-def text_tool_calls(content: str | None, names) -> list[dict]:
-    """Tool calls a model wrote as JSON in its reply text instead of making them
-    (seen with gemma4 on Ollama): [{"tool": {args}}], {"name": ..., "arguments":
-    ...}, or a list of these. Only names in `names` count; [] when nothing parses."""
+def text_tool_calls(content: str | None, names, schemas: dict | None = None) -> list[dict]:
+    """Tool calls a model wrote in its reply text instead of making them (seen
+    with gemma4 on Ollama): as JSON -- [{"tool": {args}}], {"name": ...,
+    "arguments": ...}, or a list of these -- or as tags, <tool key="value" />.
+    Only names in `names` count; a tag's values are typed by `schemas` (tool
+    name -> parameters schema). [] when nothing parses."""
     if not content:
         return []
     for text in [m.group(1) for m in _FENCE_RE.finditer(content)] or [content]:
@@ -296,7 +303,46 @@ def text_tool_calls(content: str | None, names) -> list[dict]:
             continue
         if calls:
             return calls
-    return []
+    return _tag_calls(content, names, schemas or {})
+
+
+def _tag_calls(content: str, names, schemas: dict) -> list[dict]:
+    out = []
+    for m in _TAG_RE.finditer(content):
+        if m.group(1) not in names:
+            continue
+        schema = schemas.get(m.group(1)) or {}
+        props = schema.get("properties") or {}
+        args = {}
+        for key, dq, sq in _ATTR_RE.findall(m.group(2)):
+            value = _typed(html.unescape(dq or sq), props.get(key) or {})
+            if value is _NO_FIT:
+                return []
+            args[key] = value
+        if not set(schema.get("required") or ()) <= set(args):
+            return []
+        out.append({"name": m.group(1), "args": args, "id": None})
+    return out
+
+
+_NO_FIT = object()
+
+
+def _typed(raw: str, prop: dict):
+    """A tag attribute as the type its schema property declares: a string stays
+    as written, any other type is read as JSON; _NO_FIT when it is neither."""
+    types = [prop["type"]] if "type" in prop else [p.get("type") for p in prop.get("anyOf", [])]
+    if not types or None in types or types == ["string"]:
+        return raw
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw if "string" in types else _NO_FIT
+    for t in types:
+        if isinstance(value, _JSON_TYPES.get(t, ())) and not (
+                isinstance(value, bool) and t in ("number", "integer")):
+            return value
+    return raw if "string" in types else _NO_FIT
 
 
 def _as_calls(obj, names) -> list[dict]:
