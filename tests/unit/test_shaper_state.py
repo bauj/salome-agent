@@ -184,3 +184,16 @@ def test_show_sets_the_displayed_flag_of_known_results_and_flushes(fake_model):
     assert state_mod.show(ex, ["ext_1", "box_9"], True) == ["ext_1"]
     assert log == [("displayed", True)]
     assert fake_model.flushes == [1] and fake_model.begins == 0
+
+
+@pytest.mark.parametrize("id_", ["L1", "L1_1", "M_outline", "K3"])
+def test_sketch_ids_may_use_underscores(id_):
+    state_mod.check_id(id_, "entity")
+
+
+@pytest.mark.parametrize("id_, text", [("1L", "must start with a letter"),
+                                       ("L-1", "must start with a letter"),
+                                       ("P_op", "reserved for sketch_copy")])
+def test_sketch_ids_that_could_clash_are_refused(id_, text):
+    with pytest.raises(ValueError, match=text):
+        state_mod.check_id(id_, "entity")

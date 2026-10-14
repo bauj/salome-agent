@@ -59,7 +59,7 @@ PREAMBLE = ('from salome.shaper import model\n'
 POSTAMBLE = 'model.end()\nmodel.publishToShaperStudy()\n'
 PUBLISH_LINE = "_name({var}, {name!r})"
 
-_ID = re.compile(r"[A-Za-z][A-Za-z0-9]*$")
+_ID = re.compile(r"[A-Za-z][A-Za-z0-9_]*$")
 TOL = 1e-5
 # Set once this server process has opened a SHAPER document: until then every
 # hook (clear, forget) leaves SHAPER unloaded.
@@ -279,7 +279,9 @@ def record(fn: str, code: str, *, out=(), refs=(), recv=None, publish=False) -> 
 def check_id(id_: str, what: str) -> None:
     if not isinstance(id_, str) or not _ID.fullmatch(id_):
         raise ValueError(f"{what} id {id_!r} must start with a letter and use only "
-                         "letters and digits (e.g. L1, C2, K3)")
+                         "letters, digits and underscores (e.g. L1, C2, K3)")
+    if id_.endswith("_op"):
+        raise ValueError(f"{what} id {id_!r}: ids ending in _op are reserved for sketch_copy")
 
 
 def publish_study(executor) -> None:
