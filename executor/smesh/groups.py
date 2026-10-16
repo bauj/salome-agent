@@ -1,4 +1,4 @@
-from executor.smesh.state import group_ref, mesh_of, record, run, state, tool
+from executor.smesh.state import evaluate, group_ref, mesh_of, record, run, state, tool
 
 ELEMENT_TYPES = {"vertex": "NODE", "edge": "EDGE", "face": "FACE", "solid": "VOLUME"}
 _CHOICES = {"node": "NODE", "edge": "EDGE", "face": "FACE", "volume": "VOLUME"}
@@ -20,7 +20,7 @@ def group_code(var, m, gexpr, name, element) -> str:
 def _sub_type(st, gexpr, g) -> str:
     if g.sub_type:
         return g.sub_type
-    t = str(eval(gexpr, st.ns).GetMinShapeType())
+    t = str(evaluate(st, gexpr).GetMinShapeType())
     g.sub_type = _SHAPE_TYPES.get(t, "face")
     return g.sub_type
 

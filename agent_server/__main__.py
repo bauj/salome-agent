@@ -14,6 +14,9 @@ def parse_args(argv):
                    default=True,
                    help="keep serving after the first client disconnects "
                         "(accepts the abandoned-watchdog hazard)")
+    p.add_argument("--allow-run", action="store_true",
+                   help="answer the run command, which executes any code sent "
+                        "with the token (live tests only)")
     return p.parse_args(argv)
 
 
@@ -40,7 +43,7 @@ def main(argv=None) -> int:
 
     backend = HeadlessBackend()
     token = secrets.token_hex(16)
-    srv = Server(Core(backend), token)
+    srv = Server(Core(backend, allow_run=args.allow_run), token)
     port = srv.bind()
     handshake.write(port=port, token=token, mode="headless", log_path=log_path)
     try:

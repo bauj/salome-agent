@@ -7,6 +7,7 @@ import math
 import re
 from contextlib import contextmanager
 
+from executor.code_guard import check
 from executor.registry import ToolRegistry
 from executor.geom.helpers import _next_name
 
@@ -264,6 +265,7 @@ def new_name(executor, prefix: str) -> str:
 
 
 def run(st: ShaperState, code: str) -> None:
+    check(code, st.ns)
     exec(code, st.ns)
 
 

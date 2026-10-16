@@ -4,7 +4,6 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from typing import Protocol
 
-from agent_server.limits import TOOL_TIMEOUT
 from executor import geom
 
 
@@ -124,12 +123,10 @@ class Backend(Protocol):
     name_prefix: str
     namespace: dict
     geom_bindings: dict
-    accepted_scripts: list
 
     def begin_session(self, run_id: str | None) -> None: ...
     def end_session(self) -> None: ...
     def run_code(self, code: str, timeout: float, module: str | None = None) -> dict: ...
-    def reset(self, scripts: list) -> dict: ...
     def refresh(self, module: str | None) -> None: ...
     def run_tool(self, fn, timeout: float): ...
     def forget(self, names: list) -> dict: ...
@@ -152,7 +149,6 @@ class HeadlessBackend:
         self.name_prefix = ""
         self.namespace = self._build(False)
         self.geom_bindings: dict = {}
-        self.accepted_scripts: list = []
         self._poisoned = False
 
     def begin_session(self, run_id: str | None) -> None:
@@ -161,7 +157,6 @@ class HeadlessBackend:
         self.name_prefix = f"sa_{run_id}_" if run_id else ""
         geom.reset_counters()
         self.geom_bindings.clear()
-        self.accepted_scripts = []
 
     def end_session(self) -> None:
         pass
@@ -171,17 +166,6 @@ class HeadlessBackend:
         if not r["ok"] and (r["exception"] or "").startswith("timeout after"):
             self._poisoned = True
         return r
-
-    def reset(self, scripts: list) -> dict:
-        self.namespace = self._build(False)
-        geom.reset_counters()
-        self.geom_bindings.clear()
-        for idx, s in enumerate(scripts):
-            r = _run_with_timeout(s, self.namespace, TOOL_TIMEOUT)
-            if not r["ok"]:
-                return {"ok": False, "failed_index": idx}
-        self.accepted_scripts = list(scripts)
-        return {"ok": True, "failed_index": None}
 
     def refresh(self, module: str | None) -> None:
         pass

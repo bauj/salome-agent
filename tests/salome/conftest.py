@@ -39,7 +39,7 @@ def _start_server(repo_root: str) -> subprocess.Popen:
         os.unlink(_HS)
     proc = subprocess.Popen(
         [f"{SALOME_ROOT}/salome", "shell", "--", "python3", "-m", "agent_server",
-         "--serve-forever"],
+         "--serve-forever", "--allow-run"],
         cwd=repo_root, env=_salome_subprocess_env(),
         # Own process group so teardown can SIGKILL the whole SALOME tree
         # (the `salome` launcher forks helpers that a bare proc.terminate()
