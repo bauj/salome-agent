@@ -192,6 +192,9 @@ body.shot .stage, body.shot #view { height: 100%; }
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineSegmentsGeometry.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineMaterial.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineSegments2.js"></script>
 <script>
 const PARTS = __PARTS__;
 const LABEL = { match: "match", moved: "placed differently", turned: "turned", differs: "differs",
@@ -287,6 +290,7 @@ function init() {
 function resize() {
   const w = view.clientWidth, h = view.clientHeight || w / 1.6;
   renderer.setSize(w, h, false);
+  thickMats.forEach((mat) => mat.resolution.set(w, h));
   persp.aspect = w / h; persp.updateProjectionMatrix();
   setOrtho();
 }
@@ -313,6 +317,17 @@ function look(name) {
   controls.update();
 }
 
+// WebGL draws plain lines 1 px wide; the reference edges use three.js's wide lines when they loaded.
+const thickMats = [];
+function thick(edges, tok, width) {
+  if (!THREE.LineSegments2) return null;
+  const g = new THREE.LineSegmentsGeometry().setPositions(edges.attributes.position.array);
+  const mat = new THREE.LineMaterial({ color: new THREE.Color(css(tok)), linewidth: width, clippingPlanes: [clipPlane] });
+  mat.resolution.set(view.clientWidth, view.clientHeight || view.clientWidth / 1.6);
+  thickMats.push(mat);
+  return new THREE.LineSegments2(g, mat);
+}
+
 function build(p) {
   if (cache[p.id]) return cache[p.id];
   const mat = (tok) => new THREE.MeshStandardMaterial({ color: css(tok), metalness: 0.15, roughness: 0.5, side: THREE.DoubleSide,
@@ -320,7 +335,7 @@ function build(p) {
   const lines = (tok, opacity) => new THREE.LineBasicMaterial({ color: css(tok), clippingPlanes: [clipPlane], transparent: opacity < 1, opacity });
   const gr = parseSTL(p.ref), m = { box: gr.boundingBox.clone(), refBox: gr.boundingBox.clone() };
   m.refSolid = new THREE.Mesh(gr, mat("--ref"));
-  m.refEdges = new THREE.LineSegments(new THREE.EdgesGeometry(gr, 25), lines("--ref", 1));
+  m.refEdges = thick(new THREE.EdgesGeometry(gr, 25), "--ref", 2.5) || new THREE.LineSegments(new THREE.EdgesGeometry(gr, 25), lines("--ref", 1));
   if (p.ours) {
     const go = parseSTL(p.ours);
     m.ours = new THREE.Mesh(go, mat("--ours"));
