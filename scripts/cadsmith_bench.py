@@ -10,6 +10,7 @@ usage:
   cadsmith_bench.py run --data DIR --config CFG [--ids T2_001,...] [--tiers T2,T3]
                         [--name NAME] [--timeout S]
   cadsmith_bench.py rescore NAME --data DIR
+  cadsmith_bench.py reexport NAME --data DIR --config CFG
   cadsmith_bench.py summary NAME
   cadsmith_bench.py view NAME [NAME ...] --data DIR [--no-open]
 
@@ -33,7 +34,8 @@ when perfect. The *_surf scores measure each point's distance to the other
 mesh's surface instead (cd, f1 at 1 mm, d99 = 99th percentile, dmax), after
 an ICP alignment onto the reference surface (the paper's point-to-point ICP
 leaves ~0.2 mm of noise on identical parts) and, as *_surf_placed, before it. rescore recomputes every
-score from the saved STLs.
+score from the saved STLs; reexport first rebuilds every scored run's
+result.py and exports its STL again (after a change to cadsmith_export.py).
 
 Results: ~/.local/share/salome-agent/bench/<name>/results.jsonl, one row per
 prompt; progress.txt is the line to tail.
@@ -335,6 +337,28 @@ def cmd_view(args) -> int:
     return 0
 
 
+def cmd_reexport(args) -> int:
+    with open(args.config) as f:
+        salome_root = json.load(f)["salome"]["root"]
+    out = os.path.join(BENCH, args.name)
+    with open(os.path.join(out, "results.jsonl")) as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    for r in rows:
+        if r["status"] != "scored":
+            continue
+        pid = r["id"]
+        r["export"] = export(salome_root, os.path.join(r["run_dir"], "result.py"),
+                             os.path.join(out, "stl", f"{pid}.stl"),
+                             os.path.join(out, "stl", f"{pid}.json"),
+                             os.path.join(out, "logs", f"{pid}.export.log"))
+        if not r["export"].get("ok"):
+            r["status"] = "export_failed"
+        print(f"{pid}: exported {'ok' if r['export'].get('ok') else 'FAILED'}", flush=True)
+    with open(os.path.join(out, "results.jsonl"), "w") as f:
+        f.write("".join(json.dumps(r) + "\n" for r in rows))
+    return cmd_rescore(args)
+
+
 def _stat(vals, f):
     return f"{f(vals):.4f}" if vals else "-"
 
@@ -376,6 +400,10 @@ def main(argv=None) -> int:
     rs = sub.add_parser("rescore")
     rs.add_argument("name")
     rs.add_argument("--data", required=True)
+    re_ = sub.add_parser("reexport")
+    re_.add_argument("name")
+    re_.add_argument("--data", required=True)
+    re_.add_argument("--config", required=True)
     s = sub.add_parser("summary")
     s.add_argument("name")
     v = sub.add_parser("view")
@@ -383,7 +411,8 @@ def main(argv=None) -> int:
     v.add_argument("--data", required=True)
     v.add_argument("--no-open", action="store_true")
     args = ap.parse_args(argv)
-    return {"run": cmd_run, "rescore": cmd_rescore, "summary": cmd_summary,
+    return {"run": cmd_run, "rescore": cmd_rescore, "reexport": cmd_reexport,
+            "summary": cmd_summary,
             "view": cmd_view}[args.cmd](args)
 
 

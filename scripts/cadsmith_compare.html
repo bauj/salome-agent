@@ -432,7 +432,21 @@ document.addEventListener("keydown", (e) => {
   if (j >= 0 && j < shown.length) { e.preventDefault(); current = shown[j]; show(); $("part-" + PARTS[current].id).scrollIntoView({ block: "nearest" }); }
 });
 
-try { init(); fill(); }
+function fromHash() {
+  const [id, ...opts] = location.hash.slice(1).split(".");
+  const i = PARTS.findIndex((p) => p.id === id);
+  if (i < 0) return;
+  opts.forEach((o) => {
+    if (DIRS[o]) dir = o;
+    const b = document.querySelector(`[data-mode="${o}"]`);
+    if (b) { mode = o; press("[data-mode]", b); }
+  });
+  current = i; show();
+  $("part-" + id)?.scrollIntoView({ block: "nearest" });
+}
+window.addEventListener("hashchange", fromHash);
+
+try { init(); fill(); fromHash(); }
 catch (e) { view.insertAdjacentHTML("beforeend", '<div class="msg full">The 3D view could not start: ' + e.message + '. It needs WebGL and network access to load three.js.</div>'); }
 </script>
 </body>
