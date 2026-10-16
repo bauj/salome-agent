@@ -9,6 +9,7 @@ files and reference_stls/ with --data.
 usage:
   cadsmith_bench.py run --data DIR --config CFG [--ids T2_001,...] [--tiers T2,T3]
                         [--name NAME] [--timeout S]
+  cadsmith_bench.py rescore NAME --data DIR
   cadsmith_bench.py summary NAME
 
 Each prompt goes through the normal CLI (--batch -vv), one at a time. The
@@ -24,6 +25,14 @@ both ways, mm^2), F1 at 1 mm, voxel IoU. The paper's IoU compares surface
 voxels by grid index, each grid anchored at its own mesh's corner; it is
 kept as iou_paper. iou is the filled volume on one shared grid. cd_placed and
 f1_placed skip the centring and ICP: the prompts say where the part sits.
+
+Point to point, two samples of the same surface sit about half a point
+spacing apart, so a big part scores a worse CD and F1 than a small one even
+when perfect. The *_surf scores measure each point's distance to the other
+mesh's surface instead (cd, f1 at 1 mm, d99 = 99th percentile, dmax), after
+an ICP alignment onto the reference surface (the paper's point-to-point ICP
+leaves ~0.2 mm of noise on identical parts) and, as *_surf_placed, before it. rescore recomputes every
+score from the saved STLs.
 
 Results: ~/.local/share/salome-agent/bench/<name>/results.jsonl, one row per
 prompt; progress.txt is the line to tail.
@@ -71,6 +80,20 @@ def _cd_f1(pts_gen, pts_ref, tau: float) -> tuple[float, float]:
     return cd, (0.0 if p + r == 0 else 2 * p * r / (p + r))
 
 
+def _surface(gen, ref, n_points: int, tau: float) -> dict:
+    """Each sampled point's distance to the other mesh's surface, both ways:
+    unlike point to point, a perfect part scores ~0 at any size."""
+    import numpy as np
+    import trimesh
+    d_gen = trimesh.proximity.closest_point(ref, trimesh.sample.sample_surface(gen, n_points)[0])[1]
+    d_ref = trimesh.proximity.closest_point(gen, trimesh.sample.sample_surface(ref, n_points)[0])[1]
+    p, r = float((d_gen < tau).mean()), float((d_ref < tau).mean())
+    return {"cd": float((d_gen ** 2).mean() + (d_ref ** 2).mean()),
+            "f1": 0.0 if p + r == 0 else 2 * p * r / (p + r),
+            "d99": float(np.percentile(np.concatenate([d_gen, d_ref]), 99)),
+            "dmax": float(max(d_gen.max(), d_ref.max()))}
+
+
 def _iou_paper(gen, ref, pitch: float) -> float:
     a = set(map(tuple, gen.voxelized(pitch=pitch).sparse_indices))
     b = set(map(tuple, ref.voxelized(pitch=pitch).sparse_indices))
@@ -94,6 +117,7 @@ def score(gen_stl: str, ref_stl: str, seed: int = 0, n_points: int = 10000,
     gen_raw, ref_raw = trimesh.load(gen_stl), trimesh.load(ref_stl)
     cd_placed, f1_placed = _cd_f1(trimesh.sample.sample_surface(gen_raw, n_points)[0],
                                   trimesh.sample.sample_surface(ref_raw, n_points)[0], tau)
+    placed = _surface(gen_raw, ref_raw, n_points, tau)
     gen, ref = _centred(gen_raw), _centred(ref_raw)
     try:
         matrix, _, _ = icp(trimesh.sample.sample_surface(gen, 5000)[0],
@@ -104,9 +128,19 @@ def score(gen_stl: str, ref_stl: str, seed: int = 0, n_points: int = 10000,
     cd, f1 = _cd_f1(trimesh.sample.sample_surface(gen, n_points)[0],
                     trimesh.sample.sample_surface(ref, n_points)[0], tau)
     pitch = max(1.0, max(gen.extents.max(), ref.extents.max()) / 100.0)
-    return {"cd": cd, "f1": f1, "iou_paper": _iou_paper(gen, ref, pitch),
-            "iou": _iou_filled(gen, ref, pitch), "cd_placed": cd_placed,
-            "f1_placed": f1_placed, "ref_volume": float(ref_raw.volume)}
+    out = {"cd": cd, "f1": f1, "iou_paper": _iou_paper(gen, ref, pitch),
+           "iou": _iou_filled(gen, ref, pitch), "cd_placed": cd_placed,
+           "f1_placed": f1_placed, "ref_volume": float(ref_raw.volume)}
+    gen_s = _centred(gen_raw)
+    try:
+        matrix, _, _ = icp(trimesh.sample.sample_surface(gen_s, 5000)[0], ref,
+                           max_iterations=100)
+        gen_s.apply_transform(matrix)
+    except Exception:
+        pass
+    out.update({f"{k}_surf": v for k, v in _surface(gen_s, ref, n_points, tau).items()})
+    out.update({f"{k}_surf_placed": v for k, v in placed.items()})
+    return out
 
 
 # --- running ---------------------------------------------------------------
@@ -222,6 +256,25 @@ def cmd_run(args) -> int:
     return cmd_summary(argparse.Namespace(name=args.name))
 
 
+def cmd_rescore(args) -> int:
+    data = os.path.abspath(args.data)
+    out = os.path.join(BENCH, args.name)
+    path = os.path.join(out, "results.jsonl")
+    with open(path) as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    for r in rows:
+        if r["status"] != "scored":
+            continue
+        r["scores"] = score(os.path.join(out, "stl", f"{r['id']}.stl"),
+                            os.path.join(data, "reference_stls", f"{r['id']}.stl"))
+        rv = r["scores"]["ref_volume"]
+        r["volume_err_pct"] = abs(r["export"]["volume"] - rv) / rv * 100 if rv else None
+        print(f"{r['id']}: rescored", flush=True)
+    with open(path, "w") as f:
+        f.write("".join(json.dumps(r) + "\n" for r in rows))
+    return cmd_summary(args)
+
+
 def _stat(vals, f):
     return f"{f(vals):.4f}" if vals else "-"
 
@@ -231,7 +284,8 @@ def cmd_summary(args) -> int:
     with open(os.path.join(BENCH, args.name, "results.jsonl")) as f:
         rows = [json.loads(line) for line in f if line.strip()]
     print(f"{'tier':<5} {'n':>3} {'ok':>4} {'CD med':>8} {'CD mean':>8} {'F1 med':>7} "
-          f"{'IoU med':>7} {'IoUp med':>8} {'CDplc med':>9} {'vol%med':>7}")
+          f"{'IoU med':>7} {'IoUp med':>8} {'CDs med':>8} {'F1s med':>7} {'d99s med':>8} "
+          f"{'d99sp med':>9} {'vol%med':>7}")
     for tier in sorted({r["tier"] for r in rows}) + ["all"]:
         rs = [r for r in rows if tier in ("all", r["tier"])]
         sc = [r for r in rs if r["status"] == "scored"]
@@ -240,7 +294,9 @@ def cmd_summary(args) -> int:
         print(f"{tier:<5} {len(rs):>3} {len(sc):>4} {_stat(g('cd'), st.median):>8} "
               f"{_stat(g('cd'), st.mean):>8} {_stat(g('f1'), st.median):>7} "
               f"{_stat(g('iou'), st.median):>7} {_stat(g('iou_paper'), st.median):>8} "
-              f"{_stat(g('cd_placed'), st.median):>9} {_stat(vol, st.median):>7}")
+              f"{_stat(g('cd_surf'), st.median):>8} {_stat(g('f1_surf'), st.median):>7} "
+              f"{_stat(g('d99_surf'), st.median):>8} {_stat(g('d99_surf_placed'), st.median):>9} "
+              f"{_stat(vol, st.median):>7}")
     for r in rows:
         if r["status"] != "scored":
             print(f"  {r['id']}: {r['status']} (run {os.path.basename(r.get('run_dir') or '-')})")
@@ -257,10 +313,13 @@ def main(argv=None) -> int:
     r.add_argument("--tiers")
     r.add_argument("--name", default=time.strftime("%Y%m%d-%H%M%S"))
     r.add_argument("--timeout", type=float, default=1800)
+    rs = sub.add_parser("rescore")
+    rs.add_argument("name")
+    rs.add_argument("--data", required=True)
     s = sub.add_parser("summary")
     s.add_argument("name")
     args = ap.parse_args(argv)
-    return cmd_run(args) if args.cmd == "run" else cmd_summary(args)
+    return {"run": cmd_run, "rescore": cmd_rescore, "summary": cmd_summary}[args.cmd](args)
 
 
 if __name__ == "__main__":
