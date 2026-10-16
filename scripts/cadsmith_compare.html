@@ -4,114 +4,186 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CADSmith Part Comparison</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Archivo:wght@600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap">
 <style>
 /* Template for cadsmith_bench.py view: __TITLE__ and __PARTS__ are filled in. */
 :root {
-  --bg: #eef1f3; --panel: #ffffff; --ink: #1b2329; --muted: #5d6b75; --line: #cfd7dd;
-  --ours: #2f6fa3; --ref: #c46a12; --view: #f7f9fa;
-  --ok: #2e7d4f; --warn: #a86a00; --bad: #b3372b; --info: #5b5fa8;
+  --chrome: #dfe3e7; --panel: #f2f4f5; --field: #ffffff; --ink: #1d2733; --muted: #5c6876; --line: #b7c0c9; --line-soft: #ccd3d9;
+  --vp-top: #8a9bb0; --vp-bot: #e4e8ec; --grid: #6f7f90; --grid-soft: #a9b5c1;
+  --ours: #8fa9c4; --ours-edge: #1f2a36; --ref: #d98a1f; --sel: #2d6cdf; --sel-soft: #d6e2f8; --on-sel: #ffffff;
+  --ok: #2f8a4c; --info: #4f5fc0; --warn: #b8730a; --bad: #c0392b;
   --ax-x: #d0342c; --ax-y: #2e9a48; --ax-z: #2f6fd0;
-  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
-  --body: "IBM Plex Sans", "Segoe UI", Roboto, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --cond: "Barlow Semi Condensed", "Arial Narrow", Arial, sans-serif;
+  --body: "Barlow", "Segoe UI", Roboto, sans-serif;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) { :root {
-  --bg: #12171b; --panel: #1a2126; --ink: #e3e9ed; --muted: #93a1ab; --line: #2c363d;
-  --ours: #5ea3db; --ref: #f0954a; --view: #0e1316;
-  --ok: #5cbf86; --warn: #e0a640; --bad: #e8725f; --info: #9a9de8;
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --chrome: #262b31; --panel: #2e343b; --field: #1f2429; --ink: #e2e7ec; --muted: #9aa6b2; --line: #48515b; --line-soft: #3b434c;
+  --vp-top: #3d4856; --vp-bot: #15191d; --grid: #6b7a8a; --grid-soft: #3a444f;
+  --ours: #8ba7c4; --ours-edge: #0d1217; --ref: #f0a040; --sel: #5b8ff0; --sel-soft: #2c3d5c; --on-sel: #0f1620;
+  --ok: #5cc17e; --info: #9aa4f0; --warn: #e8a742; --bad: #ef7a6a;
   --ax-x: #ff6b5e; --ax-y: #5fd47c; --ax-z: #6fa2ff; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --chrome: #262b31; --panel: #2e343b; --field: #1f2429; --ink: #e2e7ec; --muted: #9aa6b2; --line: #48515b; --line-soft: #3b434c;
+  --vp-top: #3d4856; --vp-bot: #15191d; --grid: #6b7a8a; --grid-soft: #3a444f;
+  --ours: #8ba7c4; --ours-edge: #0d1217; --ref: #f0a040; --sel: #5b8ff0; --sel-soft: #2c3d5c; --on-sel: #0f1620;
+  --ok: #5cc17e; --info: #9aa4f0; --warn: #e8a742; --bad: #ef7a6a;
+  --ax-x: #ff6b5e; --ax-y: #5fd47c; --ax-z: #6fa2ff; color-scheme: dark }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5;
-  padding: 20px max(16px, env(safe-area-inset-right, 0px)) 20px max(16px, env(safe-area-inset-left, 0px)); }
-.wrap { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
-header h1 { font-family: var(--display); font-size: 22px; margin: 0; text-wrap: balance; }
-header p { margin: 4px 0 0; color: var(--muted); max-width: 80ch; }
-.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); align-items: center; }
-.legend span { display: inline-flex; align-items: center; gap: 6px; }
-.sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
-.main { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 820px) { .main { grid-template-columns: 1fr; } }
-.side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.filters { display: flex; gap: 8px; flex-wrap: wrap; }
-.filters select { font: inherit; font-size: 13px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
-.count { color: var(--muted); font-size: 12px; align-self: center; }
-.list { display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 220px); overflow-y: auto; padding-right: 4px; }
-.item { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
-  color: var(--ink); font: inherit; cursor: pointer; display: grid; gap: 2px; }
-.item:hover { border-color: var(--muted); }
-.item:focus-visible { outline: 2px solid var(--ours); outline-offset: 2px; }
-.item[aria-pressed="true"] { border-color: var(--ours); box-shadow: inset 3px 0 0 var(--ours); }
-.item .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.item .id { font-family: var(--mono); font-weight: 500; }
-.item .sum { color: var(--muted); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.chip { font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 1px 7px; border-radius: 99px;
-  border: 1px solid currentColor; white-space: nowrap; }
-.chip.match { color: var(--ok); } .chip.moved, .chip.turned { color: var(--info); }
-.chip.miss, .chip.differs { color: var(--warn); } .chip.dataset, .chip.failed { color: var(--bad); }
-.stage { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; min-width: 0; }
-.bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); align-items: center; }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.seg button { font: inherit; font-size: 13px; background: transparent; color: var(--ink); border: 0; padding: 5px 10px; cursor: pointer; }
-.seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-pressed="true"] { background: var(--ours); color: var(--panel); }
-.seg button:focus-visible { outline: 2px solid var(--ours); outline-offset: -2px; }
-.tog { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink); }
-.hint { margin-left: auto; color: var(--muted); font-size: 12px; }
-#view { position: relative; aspect-ratio: 16 / 10; max-width: 100%; background: var(--view); }
+html, body { height: 100%; }
+body { margin: 0; background: var(--chrome); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45;
+  font-variant-numeric: tabular-nums; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
+
+.app { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+.brand { font-family: var(--cond); font-weight: 700; font-size: 17px; letter-spacing: .01em; margin-right: 6px; }
+.brand small { font-weight: 500; font-size: 14px; color: var(--muted); margin-left: 8px; }
+.group { display: inline-flex; align-items: center; gap: 2px; padding-left: 12px; border-left: 1px solid var(--line); }
+.group > .gl { font-family: var(--cond); font-size: 13px; color: var(--muted); margin-right: 6px; }
+.tb { background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 3px 9px; cursor: pointer;
+  font-family: var(--cond); font-size: 14px; font-weight: 500; }
+.tb:hover { border-color: var(--line); background: var(--panel); }
+.tb[aria-pressed="true"] { background: var(--sel); border-color: var(--sel); color: var(--on-sel); }
+.tb kbd { font: inherit; font-size: 11px; opacity: .6; margin-left: 4px; }
+.chk { display: inline-flex; align-items: center; gap: 5px; font-family: var(--cond); font-size: 14px; padding: 0 6px; cursor: pointer; }
+.chk input { accent-color: var(--sel); margin: 0; }
+#clip { width: 110px; accent-color: var(--sel); }
+#clip:disabled { opacity: .4; }
+
+.work { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 0; }
+.tree { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--line); }
+.pane-h { font-family: var(--cond); font-weight: 600; font-size: 14px; padding: 7px 10px; border-bottom: 1px solid var(--line-soft);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pane-h span { font-weight: 400; color: var(--muted); }
+.filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); }
+.filters select { font-size: 13px; padding: 3px 4px; border: 1px solid var(--line); border-radius: 3px; background: var(--field); }
+.list { overflow-y: auto; flex: 1; padding: 4px 0 8px; }
+.tier { font-family: var(--cond); font-weight: 600; font-size: 13px; color: var(--muted); padding: 8px 10px 3px; display: flex; gap: 6px; align-items: center; }
+.tier::before { content: ""; width: 8px; height: 8px; border: 1.5px solid var(--muted); border-radius: 1px; }
+.item { display: grid; grid-template-columns: 12px auto 1fr; gap: 0 8px; align-items: center; width: 100%; text-align: left;
+  background: transparent; border: 0; padding: 3px 10px 3px 22px; cursor: pointer; }
+.item:hover { background: var(--sel-soft); }
+.item[aria-pressed="true"] { background: var(--sel); color: var(--on-sel); }
+.item[aria-pressed="true"] .v { color: inherit; opacity: .85; }
+.item .id { font-family: var(--cond); font-weight: 600; font-size: 14px; }
+.item .v { font-family: var(--cond); font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mk { width: 10px; height: 10px; border-radius: 2px; background: var(--mk); }
+.mk.match { --mk: var(--ok); } .mk.moved, .mk.turned { --mk: var(--info); }
+.mk.miss, .mk.differs { --mk: var(--warn); } .mk.dataset, .mk.failed { --mk: var(--bad); }
+.item[aria-pressed="true"] .mk { box-shadow: 0 0 0 1.5px var(--on-sel); }
+.legend { border-top: 1px solid var(--line-soft); padding: 8px 10px; display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
+.legend div { display: flex; align-items: center; gap: 8px; }
+.sw { width: 18px; height: 10px; border-radius: 1px; }
+.sw.ref { background: transparent; border: 2px solid var(--ref); }
+
+.stage { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; min-width: 0; }
+#view { position: relative; min-height: 280px; background: linear-gradient(var(--vp-top), var(--vp-bot)); overflow: hidden; }
 #view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-#view .msg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 20px; text-align: center; }
-.info { padding: 12px 14px; display: grid; gap: 8px; border-top: 1px solid var(--line); }
-.info p { margin: 0; max-width: 100ch; }
-.info .note { font-weight: 500; }
-.stats { display: flex; flex-wrap: wrap; gap: 6px 20px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.stats b { color: var(--ink); font-weight: 500; }
-.path { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; user-select: all; }
+#view .msg { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
+  padding: 5px 12px; border-radius: 3px; font-size: 13px; max-width: calc(100% - 28px); text-align: center; }
+#view .msg.full { inset: 0; transform: none; left: 0; top: 0; max-width: none; display: grid; place-items: center; background: transparent; border: 0; }
+.tblock { position: absolute; right: 14px; bottom: 14px; border: 1.5px solid var(--ink); background: var(--field); color: var(--ink);
+  border-collapse: collapse; font-family: var(--cond); font-size: 13px; min-width: 250px; pointer-events: none; }
+.tblock td { border: 1px solid var(--ink); padding: 2px 8px; vertical-align: top; }
+.tblock .k { color: var(--muted); font-size: 11.5px; display: block; line-height: 1.2; }
+.tblock .big { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.tblock .vd { font-weight: 600; display: inline-flex; gap: 6px; align-items: center; }
+
+.props { background: var(--panel); border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 420px); max-height: 34vh; overflow: auto; }
+.desc { padding: 10px 14px; display: grid; gap: 6px; align-content: start; border-right: 1px solid var(--line-soft); }
+.desc p { margin: 0; max-width: 78ch; }
+.desc .note { font-weight: 600; }
+.desc .note:empty { display: none; }
+.grid { border-collapse: collapse; width: 100%; font-size: 13.5px; align-self: start; }
+.grid th, .grid td { text-align: left; padding: 3px 12px; border-bottom: 1px solid var(--line-soft); font-weight: 400; }
+.grid th { font-family: var(--cond); color: var(--muted); width: 55%; }
+.grid td { font-family: var(--cond); font-weight: 600; }
+
+.status { display: flex; flex-wrap: wrap; gap: 2px 0; border-top: 1px solid var(--line); font-family: var(--cond); font-size: 13px; color: var(--muted); }
+.status > span { padding: 3px 12px; border-right: 1px solid var(--line-soft); }
+.status b { color: var(--ink); font-weight: 600; }
+.status .path { margin-left: auto; border-right: 0; overflow-wrap: anywhere; user-select: all; }
+
+@media (max-width: 860px) {
+  .app { display: block; height: auto; }
+  .work, .stage { display: block; }
+  .tree { border-right: 0; border-bottom: 1px solid var(--line); }
+  .list { max-height: 220px; }
+  #view { aspect-ratio: 4 / 3; }
+  .props { grid-template-columns: 1fr; max-height: none; }
+  .desc { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .tblock { min-width: 0; font-size: 12px; right: 8px; bottom: 8px; }
+  .tblock .big { font-size: 17px; }
+  .group { padding-left: 0; border-left: 0; }
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>CADSmith Part Comparison</h1>
-    <p>__TITLE__ — salome-agent result (blue) against the CADSmith reference STL (orange). Drag to turn, right-drag to pan, scroll to zoom. Arrow keys step through the list.</p>
-  </header>
-  <div class="legend">
-    <span><i class="sw" style="background:var(--ours)"></i>ours (salome-agent)</span>
-    <span><i class="sw" style="background:var(--ref)"></i>reference (CADSmith)</span>
-    <span><i class="sw" style="background:var(--ax-x)"></i>X</span>
-    <span><i class="sw" style="background:var(--ax-y)"></i>Y</span>
-    <span><i class="sw" style="background:var(--ax-z)"></i>Z</span>
+<div class="app">
+  <div class="toolbar" role="toolbar" aria-label="View">
+    <div class="brand">CADSmith comparison<small>__TITLE__</small></div>
+    <div class="group" role="group" aria-label="Display">
+      <button class="tb" data-mode="overlay" aria-pressed="true" title="Our part shaded, the reference as edges, both as placed">Overlay</button>
+      <button class="tb" data-mode="side" aria-pressed="false" title="The two parts next to each other along X">Side by side</button>
+      <button class="tb" data-mode="ours" aria-pressed="false">Ours</button>
+      <button class="tb" data-mode="ref" aria-pressed="false">Reference</button>
+    </div>
+    <div class="group" role="group" aria-label="Standard views">
+      <button class="tb" data-dir="iso" title="Isometric view (0)">Iso<kbd>0</kbd></button>
+      <button class="tb" data-dir="front" title="Front view, looking along +Y (1)">Front<kbd>1</kbd></button>
+      <button class="tb" data-dir="top" title="Top view, looking down Z (2)">Top<kbd>2</kbd></button>
+      <button class="tb" data-dir="right" title="Right view, looking along −X (3)">Right<kbd>3</kbd></button>
+      <button class="tb" data-dir="fit" title="Fit the part in the view (F)">Fit<kbd>F</kbd></button>
+    </div>
+    <div class="group" role="group" aria-label="Projection">
+      <button class="tb" data-proj="ortho" aria-pressed="true">Orthographic</button>
+      <button class="tb" data-proj="persp" aria-pressed="false">Perspective</button>
+    </div>
+    <div class="group">
+      <label class="chk" title="Cut both parts with a plane normal to Z and keep what is below it"><input type="checkbox" id="t-clip"> Section Z</label>
+      <input type="range" id="clip" min="0" max="1000" value="500" disabled aria-label="Section height">
+    </div>
+    <div class="group">
+      <label class="chk"><input type="checkbox" id="t-axes" checked> Axes</label>
+      <label class="chk"><input type="checkbox" id="t-grid" checked> Grid</label>
+    </div>
   </div>
-  <div class="main">
-    <div class="side">
+
+  <div class="work">
+    <aside class="tree">
+      <div class="pane-h">Parts <span id="count"></span></div>
       <div class="filters">
-        <select id="f-tier" aria-label="Tier"><option value="">all tiers</option><option>T1</option><option>T2</option><option>T3</option></select>
-        <select id="f-verdict" aria-label="Verdict"><option value="">all verdicts</option></select>
-        <span class="count" id="count"></span>
+        <select id="f-tier" aria-label="Tier"><option value="">All tiers</option><option>T1</option><option>T2</option><option>T3</option></select>
+        <select id="f-verdict" aria-label="Verdict"><option value="">All verdicts</option></select>
       </div>
       <nav class="list" id="list" aria-label="Parts"></nav>
-    </div>
-    <section class="stage">
-      <div class="bar">
-        <div class="seg" role="group" aria-label="Show">
-          <button id="m-overlay" data-mode="overlay" aria-pressed="true">Overlay</button>
-          <button id="m-side" data-mode="side" aria-pressed="false">Side by side</button>
-          <button id="m-ours" data-mode="ours" aria-pressed="false">Ours</button>
-          <button id="m-ref" data-mode="ref" aria-pressed="false">Reference</button>
-        </div>
-        <label class="tog"><input type="checkbox" id="t-axes" checked> axes</label>
-        <span class="hint">Overlay: ours solid, reference as edges, both as placed</span>
+      <div class="legend">
+        <div><i class="sw" style="background:var(--ours)"></i>Ours, salome-agent result</div>
+        <div><i class="sw ref"></i>Reference STL from CADSmith</div>
       </div>
-      <div id="view"></div>
-      <div class="info">
-        <p class="note" id="note"></p>
-        <p id="prompt"></p>
-        <div class="stats" id="stats"></div>
-        <div class="path" id="path"></div>
+    </aside>
+
+    <section class="stage">
+      <div id="view">
+        <table class="tblock" aria-hidden="true">
+          <tr><td colspan="2"><span class="k">Part</span><span class="big" id="tb-id"></span></td></tr>
+          <tr><td><span class="k">Tier</span><span id="tb-tier"></span></td><td><span class="k">Verdict</span><span class="vd" id="tb-vd"></span></td></tr>
+          <tr><td><span class="k">Grid</span><span id="tb-grid"></span></td><td><span class="k">Units</span>mm, Z up</td></tr>
+        </table>
+      </div>
+      <div class="props">
+        <div class="desc">
+          <p class="note" id="note"></p>
+          <p id="prompt"></p>
+        </div>
+        <table class="grid" id="stats"></table>
       </div>
     </section>
   </div>
+
+  <div class="status" id="status"></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -120,6 +192,8 @@ header p { margin: 4px 0 0; color: var(--muted); max-width: 80ch; }
 const PARTS = __PARTS__;
 const LABEL = { match: "match", moved: "placed differently", turned: "turned", differs: "differs",
                 miss: "agent miss", dataset: "dataset fault", failed: "failed" };
+const TIERS = { T1: "T1 primitives", T2: "T2 engineering parts", T3: "T3 complex parts" };
+const DIRS = { iso: [1, -1, 0.8], front: [0, -1, 0], top: [0, 0, 1], right: [1, 0, 0] };
 
 function parseSTL(b64) {
   const bin = atob(b64), buf = new Uint8Array(bin.length);
@@ -137,14 +211,17 @@ function parseSTL(b64) {
   return g;
 }
 
+const $ = (id) => document.getElementById(id);
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const view = document.getElementById("view");
-let renderer, scene, camera, controls, content, current = -1, mode = "overlay", cache = {}, shown = [];
+const view = $("view");
+const clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
+let renderer, scene, persp, ortho, camera, controls, content, current = -1, mode = "overlay", dir = "iso", cache = {}, shown = [];
+let frame = { box: new THREE.Box3(), span: 1 };
 
 function label(text, color, size) {
   const c = document.createElement("canvas"); c.width = c.height = 64;
   const x = c.getContext("2d");
-  x.fillStyle = color; x.font = "600 44px Archivo, Arial, sans-serif";
+  x.fillStyle = color; x.font = "700 46px 'Barlow Semi Condensed', Arial, sans-serif";
   x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(text, 32, 34);
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
   s.scale.set(size, size, 1); s.renderOrder = 2;
@@ -154,34 +231,48 @@ function label(text, color, size) {
 function axes(len) {
   const g = new THREE.Group();
   [["X", [1, 0, 0], "--ax-x"], ["Y", [0, 1, 0], "--ax-y"], ["Z", [0, 0, 1], "--ax-z"]].forEach(([n, d, tok]) => {
-    const col = css(tok), dir = new THREE.Vector3(...d);
-    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(len)]),
+    const col = css(tok), v = new THREE.Vector3(...d);
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), v.clone().multiplyScalar(len)]),
                                 new THREE.LineBasicMaterial({ color: col, depthTest: false }));
     line.renderOrder = 1; g.add(line);
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(len * 0.03, len * 0.09, 16),
-                                new THREE.MeshBasicMaterial({ color: col, depthTest: false }));
-    cone.renderOrder = 1;
-    cone.position.copy(dir.clone().multiplyScalar(len));
-    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(len * 0.03, len * 0.09, 16), new THREE.MeshBasicMaterial({ color: col, depthTest: false }));
+    cone.renderOrder = 1; cone.position.copy(v.clone().multiplyScalar(len));
+    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), v);
     g.add(cone);
-    const l = label(n, col, len * 0.12); l.position.copy(dir.clone().multiplyScalar(len * 1.14)); g.add(l);
+    const l = label(n, col, len * 0.13); l.position.copy(v.clone().multiplyScalar(len * 1.15)); g.add(l);
   });
-  const o = new THREE.Mesh(new THREE.SphereGeometry(len * 0.018, 12, 8), new THREE.MeshBasicMaterial({ color: css("--ink"), depthTest: false }));
-  o.renderOrder = 1; g.add(o);
   return g;
+}
+
+function niceStep(span) {
+  const raw = span / 8, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
+}
+
+function grid(box) {
+  const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  const step = niceStep(Math.max(size.x, size.y, 1e-6)), cells = Math.ceil(Math.max(size.x, size.y) * 1.6 / step / 2) * 2 + 2;
+  const g = new THREE.GridHelper(cells * step, cells, css("--grid"), css("--grid-soft"));
+  g.rotation.x = Math.PI / 2;
+  g.position.set(Math.round(c.x / step) * step, Math.round(c.y / step) * step, box.min.z);
+  g.material.transparent = true; g.material.opacity = 0.7; g.material.depthWrite = false;
+  return { g, step };
 }
 
 function init() {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  view.appendChild(renderer.domElement);
+  renderer.localClippingEnabled = true;
+  view.prepend(renderer.domElement);
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(35, 1.6, 0.1, 5000);
-  camera.up.set(0, 0, 1);
+  persp = new THREE.PerspectiveCamera(30, 1.6, 0.1, 5000);
+  ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 5000);
+  persp.up.set(0, 0, 1); ortho.up.set(0, 0, 1);
+  camera = ortho;
   controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.75));
-  const d = new THREE.DirectionalLight(0xffffff, 0.6); d.position.set(1, -1.5, 2); scene.add(d);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4450, 0.7));
+  const d = new THREE.DirectionalLight(0xffffff, 0.65); d.position.set(1, -1.5, 2); scene.add(d);
   const d2 = new THREE.DirectionalLight(0xffffff, 0.25); d2.position.set(-2, 1, -1); scene.add(d2);
   content = new THREE.Group(); scene.add(content);
   new ResizeObserver(resize).observe(view);
@@ -191,32 +282,68 @@ function init() {
 
 function resize() {
   const w = view.clientWidth, h = view.clientHeight || w / 1.6;
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+  persp.aspect = w / h; persp.updateProjectionMatrix();
+  setOrtho();
+}
+
+function setOrtho() {
+  const w = view.clientWidth, h = view.clientHeight || w / 1.6, half = frame.span * 0.75;
+  ortho.left = -half * w / h; ortho.right = half * w / h; ortho.top = half; ortho.bottom = -half;
+  ortho.updateProjectionMatrix();
+}
+
+function look(name) {
+  if (name !== "fit") dir = name;
+  const c = frame.box.getCenter(new THREE.Vector3()), v = new THREE.Vector3(...DIRS[dir]).normalize(), span = frame.span;
+  const dist = span / (2 * Math.tan(persp.fov * Math.PI / 360)) * 1.25;
+  controls.target.copy(c);
+  [persp, ortho].forEach((cam) => {
+    cam.up.set(0, 0, 1);
+    if (dir === "top") cam.up.set(0, 1, 0);
+    cam.position.copy(c).addScaledVector(v, dist);
+    cam.near = dist / 100; cam.far = dist * 20; cam.zoom = 1;
+    cam.updateProjectionMatrix();
+  });
+  setOrtho();
+  controls.update();
 }
 
 function build(p) {
   if (cache[p.id]) return cache[p.id];
-  const mat = (tok) => new THREE.MeshStandardMaterial({ color: css(tok), metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide });
-  const gr = parseSTL(p.ref), m = { box: gr.boundingBox.clone() };
+  const mat = (tok) => new THREE.MeshStandardMaterial({ color: css(tok), metalness: 0.15, roughness: 0.5, side: THREE.DoubleSide,
+    clippingPlanes: [clipPlane], polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const lines = (tok, opacity) => new THREE.LineBasicMaterial({ color: css(tok), clippingPlanes: [clipPlane], transparent: opacity < 1, opacity });
+  const gr = parseSTL(p.ref), m = { box: gr.boundingBox.clone(), refBox: gr.boundingBox.clone() };
   m.refSolid = new THREE.Mesh(gr, mat("--ref"));
-  m.refEdges = new THREE.LineSegments(new THREE.EdgesGeometry(gr, 25), new THREE.LineBasicMaterial({ color: css("--ref") }));
+  m.refEdges = new THREE.LineSegments(new THREE.EdgesGeometry(gr, 25), lines("--ref", 1));
   if (p.ours) {
     const go = parseSTL(p.ours);
     m.ours = new THREE.Mesh(go, mat("--ours"));
-    m.oursEdges = new THREE.LineSegments(new THREE.EdgesGeometry(go, 25), new THREE.LineBasicMaterial({ color: css("--ink"), transparent: true, opacity: 0.35 }));
+    m.oursEdges = new THREE.LineSegments(new THREE.EdgesGeometry(go, 25), lines("--ours-edge", 0.8));
+    m.oursBox = go.boundingBox.clone();
     m.box.union(go.boundingBox);
   }
   return (cache[p.id] = m);
 }
 
+function applyClip() {
+  const on = $("t-clip").checked, b = frame.box;
+  $("clip").disabled = !on;
+  const h = b.min.z + (b.max.z - b.min.z) * $("clip").value / 1000;
+  clipPlane.constant = on ? h : Infinity;
+}
+
+const dims = (b) => { if (!b) return "–"; const s = b.getSize(new THREE.Vector3()); return [s.x, s.y, s.z].map((v) => v.toFixed(1)).join(" × "); };
+
 function show(keepCamera) {
   const p = PARTS[current], m = build(p);
   content.clear();
-  const size = m.box.getSize(new THREE.Vector3()), centre = m.box.getCenter(new THREE.Vector3());
-  const shift = size.x * 1.35 + 5, objs = [m.ours, m.oursEdges, m.refSolid, m.refEdges].filter(Boolean);
-  objs.forEach((o) => o.position.set(0, 0, 0));
-  const ours = m.ours ? [m.ours] : [], oursE = m.ours ? [m.ours, m.oursEdges] : [];
-  if (mode === "overlay") content.add(...(m.ours ? [m.ours, m.refEdges] : [m.refSolid, m.refEdges]));
+  const size = m.box.getSize(new THREE.Vector3());
+  const shift = size.x * 1.35 + 5;
+  [m.ours, m.oursEdges, m.refSolid, m.refEdges].filter(Boolean).forEach((o) => o.position.set(0, 0, 0));
+  const oursE = m.ours ? [m.ours, m.oursEdges] : [];
+  if (mode === "overlay") content.add(...(m.ours ? [m.ours, m.oursEdges, m.refEdges] : [m.refSolid, m.refEdges]));
   if (mode === "ours") content.add(...oursE);
   if (mode === "ref") content.add(m.refSolid, m.refEdges);
   if (mode === "side") {
@@ -224,64 +351,89 @@ function show(keepCamera) {
     m.refSolid.position.x = m.refEdges.position.x = m.ours ? shift / 2 : 0;
     content.add(m.refSolid, m.refEdges);
   }
-  const span = Math.max(size.x + (mode === "side" ? shift : 0), size.y, size.z);
-  if (document.getElementById("t-axes").checked) content.add(axes(Math.max(size.x, size.y, size.z) * 0.6));
-  const msg = view.querySelector(".msg"); if (msg) msg.remove();
-  if (!m.ours && mode !== "ref") view.insertAdjacentHTML("beforeend", '<div class="msg">No result from the agent for this part: showing the reference only.</div>');
-  if (!keepCamera) {
-    const c = mode === "side" ? new THREE.Vector3(0, centre.y, centre.z) : centre;
-    controls.target.copy(c);
-    camera.position.set(c.x + span * 1.1, c.y - span * 1.5, c.z + span * 0.9);
-    camera.near = span / 100; camera.far = span * 50; camera.updateProjectionMatrix();
-  }
-  document.getElementById("note").textContent = p.note || "";
-  document.getElementById("prompt").textContent = p.id + " · " + p.prompt;
+  frame.box = m.box.clone();
+  if (mode === "side" && m.ours) frame.box.expandByVector(new THREE.Vector3(shift / 2, 0, 0));
+  const fs = frame.box.getSize(new THREE.Vector3());
+  frame.span = Math.max(fs.x, fs.y, fs.z, 1e-3);
+  const gr = grid(frame.box);
+  if ($("t-grid").checked) content.add(gr.g);
+  if ($("t-axes").checked) content.add(axes(Math.max(size.x, size.y, size.z) * 0.6));
+  applyClip();
+  view.querySelectorAll(".msg").forEach((e) => e.remove());
+  if (!m.ours && mode !== "ref") view.insertAdjacentHTML("beforeend", '<div class="msg">The agent produced no part here. Showing the reference only.</div>');
+  if (!keepCamera) look(dir);
+
+  $("tb-id").textContent = p.id;
+  $("tb-tier").textContent = TIERS[p.tier] || p.tier;
+  $("tb-vd").innerHTML = `<i class="mk ${p.verdict}"></i>${LABEL[p.verdict] || p.verdict}`;
+  $("tb-grid").textContent = gr.step + " mm";
+  $("note").textContent = p.note || "";
+  $("prompt").textContent = p.prompt;
   const f = (v, d, u) => (v == null ? "–" : v.toFixed(d) + (u || ""));
-  document.getElementById("stats").innerHTML =
-    `<span>status <b>${p.status}</b></span>` +
-    `<span>volume error <b>${f(p.vol, 2, " %")}</b></span>` +
-    `<span>largest gap as placed <b>${f(p.gap, 2, " mm")}</b></span>` +
-    `<span>99% within, aligned <b>${f(p.d99, 3, " mm")}</b></span>` +
-    `<span>F1 to surface <b>${f(p.f1s, 3)}</b></span>` +
-    `<span>paper F1 <b>${f(p.f1p, 3)}</b></span>` +
-    `<span>time <b>${f(p.seconds, 0, " s")}</b></span>`;
-  document.getElementById("path").textContent = p.run_dir ? p.run_dir + "/result.py" : "";
+  const rows = [["Status", p.status], ["Volume error", f(p.vol, 2, " %")], ["Largest gap, as placed", f(p.gap, 2, " mm")],
+    ["99 % of surface within, aligned", f(p.d99, 3, " mm")], ["F1 to surface at 1 mm", f(p.f1s, 3)],
+    ["F1, paper method", f(p.f1p, 3)], ["Agent time", f(p.seconds, 0, " s")]];
+  $("stats").innerHTML = rows.map(([k, v]) => `<tr><th scope="row">${k}</th><td>${v}</td></tr>`).join("");
+  $("status").innerHTML =
+    `<span>Ours <b>${dims(m.oursBox)}</b></span><span>Reference <b>${dims(m.refBox)}</b></span>` +
+    `<span>${camera === ortho ? "Orthographic" : "Perspective"}</span>` +
+    `<span class="path"></span>`;
+  $("status").querySelector(".path").textContent = p.run_dir ? p.run_dir + "/result.py" : "No run directory";
   document.querySelectorAll(".item").forEach((b) => b.setAttribute("aria-pressed", b.dataset.i == current));
 }
 
-const list = document.getElementById("list"), fTier = document.getElementById("f-tier"), fVerdict = document.getElementById("f-verdict");
+const list = $("list"), fTier = $("f-tier"), fVerdict = $("f-verdict");
 [...new Set(PARTS.map((p) => p.verdict))].forEach((v) => fVerdict.insertAdjacentHTML("beforeend", `<option value="${v}">${LABEL[v] || v}</option>`));
 
 function fill() {
   list.innerHTML = "";
   shown = PARTS.map((p, i) => i).filter((i) => (!fTier.value || PARTS[i].tier === fTier.value) && (!fVerdict.value || PARTS[i].verdict === fVerdict.value));
+  let tier = null;
   shown.forEach((i) => {
-    const p = PARTS[i], b = document.createElement("button");
-    b.className = "item"; b.id = "part-" + p.id; b.dataset.i = i;
-    b.innerHTML = `<span class="top"><span class="id">${p.id}</span><span class="chip ${p.verdict}">${LABEL[p.verdict] || p.verdict}</span></span><span class="sum"></span>`;
-    b.querySelector(".sum").textContent = p.prompt;
+    const p = PARTS[i];
+    if (p.tier !== tier) {
+      tier = p.tier;
+      const n = shown.filter((j) => PARTS[j].tier === tier).length;
+      list.insertAdjacentHTML("beforeend", `<div class="tier">${TIERS[tier] || tier} (${n})</div>`);
+    }
+    const b = document.createElement("button");
+    b.className = "item"; b.id = "part-" + p.id; b.dataset.i = i; b.title = p.prompt;
+    b.innerHTML = `<i class="mk ${p.verdict}"></i><span class="id">${p.id}</span><span class="v">${LABEL[p.verdict] || p.verdict}</span>`;
     b.addEventListener("click", () => { current = i; show(); });
     list.appendChild(b);
   });
-  document.getElementById("count").textContent = shown.length + " of " + PARTS.length;
+  $("count").textContent = shown.length + " of " + PARTS.length;
   if (shown.length && !shown.includes(current)) { current = shown[0]; show(); }
   else if (current >= 0) show(true);
 }
+
+function press(sel, btn) { document.querySelectorAll(sel).forEach((x) => x.setAttribute("aria-pressed", x === btn)); }
 fTier.addEventListener("change", fill); fVerdict.addEventListener("change", fill);
-document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
-  mode = b.dataset.mode;
-  document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", x === b));
-  show();
-}));
-document.getElementById("t-axes").addEventListener("change", () => show(true));
+document.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => { mode = b.dataset.mode; press("[data-mode]", b); show(); }));
+document.querySelectorAll("[data-dir]").forEach((b) => b.addEventListener("click", () => look(b.dataset.dir)));
+function project(kind) {
+  const next = kind === "ortho" ? ortho : persp;
+  if (next === camera) return;
+  camera = next; controls.object = camera;
+  press("[data-proj]", document.querySelector(`[data-proj="${kind}"]`));
+  look(dir); show(true);
+}
+document.querySelectorAll("[data-proj]").forEach((b) => b.addEventListener("click", () => project(b.dataset.proj)));
+$("t-axes").addEventListener("change", () => show(true));
+$("t-grid").addEventListener("change", () => show(true));
+$("t-clip").addEventListener("change", applyClip);
+$("clip").addEventListener("input", applyClip);
 document.addEventListener("keydown", (e) => {
-  if (!["ArrowDown", "ArrowUp"].includes(e.key) || e.target.tagName === "SELECT") return;
-  const k = shown.indexOf(current) + (e.key === "ArrowDown" ? 1 : -1);
-  if (k >= 0 && k < shown.length) { e.preventDefault(); current = shown[k]; show(); document.getElementById("part-" + PARTS[current].id).scrollIntoView({ block: "nearest" }); }
+  if (["SELECT", "INPUT"].includes(e.target.tagName) && e.target.type !== "checkbox") return;
+  const k = { "0": "iso", "1": "front", "2": "top", "3": "right", f: "fit", F: "fit" }[e.key];
+  if (k && current >= 0) { look(k); return; }
+  if (!["ArrowDown", "ArrowUp"].includes(e.key)) return;
+  const j = shown.indexOf(current) + (e.key === "ArrowDown" ? 1 : -1);
+  if (j >= 0 && j < shown.length) { e.preventDefault(); current = shown[j]; show(); $("part-" + PARTS[current].id).scrollIntoView({ block: "nearest" }); }
 });
 
 try { init(); fill(); }
-catch (e) { view.innerHTML = '<div class="msg">The 3D view could not start: ' + e.message + '. It needs WebGL and network access for three.js.</div>'; }
+catch (e) { view.insertAdjacentHTML("beforeend", '<div class="msg full">The 3D view could not start: ' + e.message + '. It needs WebGL and network access to load three.js.</div>'); }
 </script>
 </body>
 </html>
