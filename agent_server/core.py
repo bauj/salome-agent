@@ -16,8 +16,10 @@ _FATAL = {"ok": False, "fatal": True,
 
 
 class Core:
-    def __init__(self, backend):
+    def __init__(self, backend, allow_run: bool = False):
         self.backend = backend
+        # `run` executes any code sent with the token; only the live tests use it.
+        self.allow_run = allow_run
 
     def poisoned(self) -> bool:
         return self.backend.poisoned()
@@ -51,13 +53,13 @@ class Core:
                     "mode": b.mode, "name_prefix": b.name_prefix,
                     "leftovers": b.leftovers()}
         if cmd == "run":
+            if not self.allow_run:
+                return {"id": rid, "ok": False,
+                        "error": "run is disabled on this server (start it with --allow-run)"}
             r = b.run_code(req["code"], req["timeout"], req.get("module"))
             if r["ok"]:
                 b.refresh(req.get("module"))
             return {"id": rid, **r}
-        if cmd == "reset_and_replay":
-            _reset_side_modules(b)
-            return {"id": rid, **b.reset(req["scripts"])}
         if cmd == "introspect":
             out = {}
             for name in req["names"]:

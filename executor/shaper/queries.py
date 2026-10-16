@@ -1,6 +1,6 @@
 from executor.shaper.features import _unknown
 from executor.shaper.state import (
-    CONSTRUCTION, measure, publish_study, record, results_of, shape_status, state, tool,
+    CONSTRUCTION, measure, publish_study, record, results_of, run, shape_status, state, tool,
     transaction,
 )
 
@@ -131,7 +131,7 @@ def _display(executor, name, fn: str, call: str) -> dict:
     code = f"for _r in {name}.results():\n    _r.{call}"
     rec = record(fn, code, refs=[name], recv=name)
     with transaction():
-        exec(code, st.ns)
+        run(st, code)
     publish_study(executor)
     return {"ok": True, "records": [rec], "result_shape": name}
 

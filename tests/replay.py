@@ -95,9 +95,5 @@ class ReplayExecutorClient:
     def run(self, code, timeout, module=None):
         return self._next("run", {"code": code, "timeout": timeout, "module": module})
 
-
-    def reset_and_replay(self, scripts):
-        return self._next("reset_and_replay", {"scripts": scripts})
-
     def close(self):
         pass

@@ -8,7 +8,6 @@ class FakeBackend:
         self.name_prefix = ""
         self.namespace = {"salome": None}
         self.geom_bindings = {}
-        self.accepted_scripts = []
         self._poisoned = False
         self.began_with = None
         self.refreshed = []
@@ -30,9 +29,6 @@ class FakeBackend:
 
     def run_code(self, code, timeout, module=None):
         return {"ok": True, "stdout": "", "exception": None}
-
-    def reset(self, scripts):
-        return {"ok": True, "failed_index": None}
 
     def refresh(self, module):
         self.refreshed.append(module)
@@ -62,9 +58,18 @@ def test_hello_begins_session_and_returns_prefix():
 
 def test_run_ok_triggers_refresh():
     b = FakeBackend()
-    Core(b).handle({"id": 2, "cmd": "run", "code": "x=1", "timeout": 5,
-                    "module": "GEOM"})
+    Core(b, allow_run=True).handle({"id": 2, "cmd": "run", "code": "x=1", "timeout": 5,
+                                    "module": "GEOM"})
     assert b.refreshed == ["GEOM"]
+
+
+def test_run_is_refused_unless_allowed():
+    b = FakeBackend()
+    ran = []
+    b.run_code = lambda *a, **k: ran.append(a) or {"ok": True}
+    resp = Core(b).handle({"id": 2, "cmd": "run", "code": "x=1", "timeout": 5})
+    assert resp["ok"] is False and "--allow-run" in resp["error"]
+    assert ran == [] and b.refreshed == []
 
 
 def test_poison_gate_refuses_every_command_including_hello():
@@ -162,12 +167,11 @@ def test_forget_reaches_shaper_objects_too(monkeypatch):
     assert "sketch_1" in resp["removed"]
 
 
-def test_hello_and_reset_clear_shaper_state(monkeypatch):
+def test_hello_clears_shaper_state(monkeypatch):
     shaper = _with_shaper(monkeypatch)
     core = Core(FakeBackend())
     core.handle({"id": 1, "cmd": "hello", "run_id": "abc"})
-    core.handle({"id": 2, "cmd": "reset_and_replay", "scripts": []})
-    assert shaper.resets == 2
+    assert shaper.resets == 1
 
 
 def test_shaper_calls_run_through_backend_run_tool(monkeypatch):

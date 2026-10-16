@@ -4,6 +4,7 @@ tool shares: resolving names, running SMESH code, recording it.
 Every change is made by executing the same source line that goes into
 result.py, so the live study and the generated script cannot drift."""
 from executor.geom.helpers import _next_name
+from executor.code_guard import check
 from executor.registry import ToolRegistry
 from executor.shaper.state import record  # noqa: F401 — the record format is shared
 
@@ -122,7 +123,13 @@ def mesh_of(executor, name) -> MeshInfo:
 
 
 def run(st: SmeshState, code: str) -> None:
+    check(code, st.ns)
     exec(code, st.ns)
+
+
+def evaluate(st: SmeshState, expr: str):
+    check(expr, st.ns, "eval")
+    return eval(expr, st.ns)
 
 
 def new_name(executor, prefix: str) -> str:
