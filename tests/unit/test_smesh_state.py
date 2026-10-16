@@ -74,7 +74,7 @@ def test_core_registers_smesh():
 
 
 def test_shaper_shape_takes_the_newest_study_object():
-    # A run that rebuilds (reset_and_replay) leaves the old Part's results in
+    # An earlier run on the same server leaves its Part's results in
     # the study under the same names; the newest is the live one.
     found = [types.SimpleNamespace(GetObject=lambda v=v: v) for v in ("old", "new")]
     study = types.SimpleNamespace(FindObjectByName=lambda name, comp: found)

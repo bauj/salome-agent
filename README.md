@@ -276,7 +276,8 @@ otherwise stays up across runs) **exits** on a poisoning timeout — restart it.
 
 **Headless:** do **not** run `python -m agent_server` from an activated venv — the
 wrapper script strips `.venv` from `PATH` first (the venv python lacks `psutil` and
-SALOME's `sys.path`).
+SALOME's `sys.path`). The server refuses the raw `run` command (any code sent with
+the token) unless started with `--allow-run`; only the live tests pass it.
 
 ### Interactive mode
 
@@ -463,6 +464,4 @@ docs/superpowers/   design specs + implementation plans
   reply; `polyhedron_per_solid` is predicted far too low and slips through.
   NETGEN is predicted 2–6× too high, so a NETGEN mesh can be refused well below
   the limit.
-- `reset_and_replay` (rollback) is wired only for the headless backend and has no
-  graph-level caller: a retried stage keeps what the failed attempt built.
 - RAG / documentation retrieval was cut from v1.

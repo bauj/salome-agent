@@ -307,7 +307,6 @@ def test_each_command_waits_as_long_as_the_server_may_take(monkeypatch):
         "display": limits.MAIN_THREAD_TIMEOUT + m,
         "hide": limits.MAIN_THREAD_TIMEOUT + m,
         "run": 300 + limits.REFRESH_TIMEOUT + m,
-        "reset_and_replay": 2 * limits.TOOL_TIMEOUT + m,
         "list_study": ec.READ_TIMEOUT,
     }
     c = _offline_client()
@@ -318,7 +317,6 @@ def test_each_command_waits_as_long_as_the_server_may_take(monkeypatch):
     c.display(["a"])
     c.hide(["a"])
     c.run("pass", 300)
-    c.reset_and_replay(["a = 1", "b = 2"])
     c.list_study()
     assert dict(c._sock.seen) == expected
     assert c._sock.timeout == ec.READ_TIMEOUT
