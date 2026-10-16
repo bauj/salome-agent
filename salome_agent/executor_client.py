@@ -107,10 +107,6 @@ class ExecutorClient:
         return self._call("run", timeout + REFRESH_TIMEOUT, code=code, timeout=timeout,
                           module=module)
 
-    def reset_and_replay(self, scripts):
-        return self._call("reset_and_replay", TOOL_TIMEOUT * max(len(scripts), 1),
-                          scripts=scripts)
-
     def introspect(self, names):
         return self._call("introspect", TOOL_TIMEOUT, names=names)
 

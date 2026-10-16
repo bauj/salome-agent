@@ -76,14 +76,12 @@ class GuiBackend:
         self.namespace = build_namespace(True)
         self.name_prefix = ""
         self.geom_bindings: dict = {}
-        self.accepted_scripts: list = []
         self._poisoned = False
 
     def begin_session(self, run_id):
         self.name_prefix = f"sa_{run_id}_" if run_id else ""
         geom.reset_counters()
         self.geom_bindings.clear()
-        self.accepted_scripts = []
 
     def end_session(self):
         pass
@@ -105,9 +103,6 @@ class GuiBackend:
             import traceback
             return {"ok": False, "stdout": "", "stderr": "", "exception": str(e),
                     "traceback": traceback.format_exc(), "offending_line": None}
-
-    def reset(self, scripts):
-        return {"ok": False, "error": "no rollback in a live GUI study"}
 
     def run_tool(self, fn, timeout):
         try:

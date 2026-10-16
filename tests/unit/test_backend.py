@@ -57,19 +57,3 @@ def test_timeout_poisons_the_backend():
     assert r["ok"] is False and "timeout" in r["exception"].lower()
     assert b.poisoned() is True
 
-
-def test_reset_rebuilds_namespace_and_replays():
-    made = []
-    b = HeadlessBackend(build_namespace=lambda live: made.append(1) or _fake_ns())
-    b.begin_session(None)
-    made.clear()
-    r = b.reset(["a = 1", "b = a + 1"])
-    assert r == {"ok": True, "failed_index": None}
-    assert made == [1]                       # rebuilt once
-
-
-def test_reset_reports_failed_index():
-    b = HeadlessBackend(build_namespace=lambda live: _fake_ns())
-    b.begin_session(None)
-    r = b.reset(["a = 1", "a = undefined_name"])
-    assert r == {"ok": False, "failed_index": 1}
