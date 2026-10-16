@@ -106,6 +106,10 @@ button, select, input { font: inherit; color: inherit; }
 .status b { color: var(--ink); font-weight: 600; }
 .status .path { margin-left: auto; border-right: 0; overflow-wrap: anywhere; user-select: all; }
 
+body.shot .toolbar, body.shot .tree, body.shot .props, body.shot .status { display: none; }
+body.shot .app, body.shot .work { display: block; height: 100%; }
+body.shot .stage, body.shot #view { height: 100%; }
+
 @media (max-width: 860px) {
   .app { display: block; height: auto; }
   .work, .stage { display: block; }
@@ -438,6 +442,7 @@ function fromHash() {
   if (i < 0) return;
   opts.forEach((o) => {
     if (DIRS[o]) dir = o;
+    if (o === "shot") { document.body.classList.add("shot"); resize(); }
     const b = document.querySelector(`[data-mode="${o}"]`);
     if (b) { mode = o; press("[data-mode]", b); }
   });
