@@ -279,6 +279,21 @@ def test_forget_a_group_drops_its_mesh_groups(agent_client):
     assert g["ok"] is False
 
 
+def test_forget_a_group_on_a_geom_shape(agent_client):
+    b = geom_box(agent_client)
+    top_face_group(agent_client, b, name="lid")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    _ok(agent_client, "smesh", "group_on_geometry", mesh=m, group="lid")
+    assert "lid" in agent_client.forget(["lid"])["removed"]
+    r = agent_client.run("print(len(salome.myStudy.FindObjectByName('lid', 'GEOM')))", 30)
+    assert r["stdout"].strip() == "0"
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert "lid" not in r["groups"]
+    g = _call(agent_client, "smesh", "groups_from_geometry", mesh=m)
+    assert g["ok"] is False
+
+
 def test_a_mesh_on_a_shaper_group_measures_the_group(agent_client):
     b = shaper_box(agent_client)
     top_face_group(agent_client, b, name="roof")

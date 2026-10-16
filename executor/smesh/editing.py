@@ -97,9 +97,8 @@ def forget(executor, names: list) -> list:
                 if name in info.groups:
                     info.groups.pop(name)
                     st.ns[m].RemoveGroup(st.ns.pop(f"{m}_{name}"))
-            if g.owner == "geom":
-                st.ns["geompy"].RemoveObject(st.ns[name])
-            else:
+            # A GEOM group's study entry goes with the server's own forget, run first.
+            if g.owner == "shaper":
                 from executor.shaper.state import forget as shaper_forget
                 shaper_forget(executor, [name])
         else:
