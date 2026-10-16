@@ -48,3 +48,20 @@ def test_tokens_from_report(tmp_path):
     t = _tokens(str(tmp_path))
     assert t["llm_calls"] == 12 and t["input_tokens"] == 75816
     assert t["modules"] == ["shaper", "shaper"] and t["stages_ok"] is False
+
+
+def test_surface_scores_ignore_part_size(tmp_path):
+    pytest.importorskip("rtree")
+    big = _box(tmp_path, "big", (120, 120, 30))
+    s = score(big, big)
+    assert s["f1"] < 0.95
+    assert s["f1_surf"] == pytest.approx(1.0) and s["d99_surf"] < 0.01
+
+
+def test_surface_scores_see_a_moved_part(tmp_path):
+    pytest.importorskip("rtree")
+    ref = _box(tmp_path, "ref", (40, 20, 10))
+    moved = _box(tmp_path, "moved", (40, 20, 10), at=(5, 0, 0))
+    s = score(moved, ref)
+    assert s["d99_surf"] < 0.1
+    assert s["d99_surf_placed"] > 4

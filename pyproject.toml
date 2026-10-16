@@ -14,7 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-xdist"]
-bench = ["trimesh", "scipy"]
+bench = ["trimesh", "scipy", "rtree"]
 
 [project.scripts]
 salome-agent = "salome_agent.cli:main"
