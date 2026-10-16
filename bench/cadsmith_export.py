@@ -1,4 +1,4 @@
-# Runs INSIDE SALOME (`salome shell -- python3 scripts/cadsmith_export.py ...`),
+# Runs INSIDE SALOME (`salome shell -- python3 bench/cadsmith_export.py ...`),
 # in its own process, not in the agent server: rebuilds a run's result.py and
 # exports the run's final geometry to STL.
 #
