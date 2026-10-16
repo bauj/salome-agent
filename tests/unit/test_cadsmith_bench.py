@@ -5,7 +5,7 @@ import pytest
 
 trimesh = pytest.importorskip("trimesh")
 pytest.importorskip("scipy")
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "bench"))
 from cadsmith_bench import _tokens, score  # noqa: E402
 
 
