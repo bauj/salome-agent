@@ -31,7 +31,7 @@ def _export_geom(ns: dict, names: list, out_stl: str, info: dict) -> None:
     info["faces"] = geompy.NumberOfFaces(shape)
     info["solids"] = geompy.NumberOfSolids(shape)
     info["check_shape"] = bool(geompy.CheckShape(shape))
-    geompy.ExportSTL(shape, out_stl, False, 0.001, True)
+    geompy.ExportSTL(shape, out_stl, False, 0.0001, True)
 
 
 def _export_shaper(ns: dict, names: list, out_stl: str, info: dict) -> None:
@@ -56,7 +56,7 @@ def _export_shaper(ns: dict, names: list, out_stl: str, info: dict) -> None:
         model.do()
         r = compound.feature().firstResult()
         sel = model.selection(r.shape().shapeTypeStr(), r.data().name())
-    model.exportToSTL(doc, out_stl, sel, 0.001, 0.5, True, False)
+    model.exportToSTL(doc, out_stl, sel, 0.0001, 0.5, True, False)
     model.end()
     if not os.path.exists(out_stl):
         raise RuntimeError("SHAPER's STL export wrote no file")
