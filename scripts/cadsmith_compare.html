@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CADSmith Part Comparison</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Archivo:wght@600;700&display=swap">
+<style>
+/* Template for cadsmith_bench.py view: __TITLE__ and __PARTS__ are filled in. */
+:root {
+  --bg: #eef1f3; --panel: #ffffff; --ink: #1b2329; --muted: #5d6b75; --line: #cfd7dd;
+  --ours: #2f6fa3; --ref: #c46a12; --view: #f7f9fa;
+  --ok: #2e7d4f; --warn: #a86a00; --bad: #b3372b; --info: #5b5fa8;
+  --ax-x: #d0342c; --ax-y: #2e9a48; --ax-z: #2f6fd0;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #12171b; --panel: #1a2126; --ink: #e3e9ed; --muted: #93a1ab; --line: #2c363d;
+  --ours: #5ea3db; --ref: #f0954a; --view: #0e1316;
+  --ok: #5cbf86; --warn: #e0a640; --bad: #e8725f; --info: #9a9de8;
+  --ax-x: #ff6b5e; --ax-y: #5fd47c; --ax-z: #6fa2ff; color-scheme: dark } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5;
+  padding: 20px max(16px, env(safe-area-inset-right, 0px)) 20px max(16px, env(safe-area-inset-left, 0px)); }
+.wrap { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+header h1 { font-family: var(--display); font-size: 22px; margin: 0; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 80ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); align-items: center; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+.main { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 820px) { .main { grid-template-columns: 1fr; } }
+.side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.filters select { font: inherit; font-size: 13px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.count { color: var(--muted); font-size: 12px; align-self: center; }
+.list { display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 220px); overflow-y: auto; padding-right: 4px; }
+.item { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
+  color: var(--ink); font: inherit; cursor: pointer; display: grid; gap: 2px; }
+.item:hover { border-color: var(--muted); }
+.item:focus-visible { outline: 2px solid var(--ours); outline-offset: 2px; }
+.item[aria-pressed="true"] { border-color: var(--ours); box-shadow: inset 3px 0 0 var(--ours); }
+.item .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.item .id { font-family: var(--mono); font-weight: 500; }
+.item .sum { color: var(--muted); font-size: 12px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.chip { font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 1px 7px; border-radius: 99px;
+  border: 1px solid currentColor; white-space: nowrap; }
+.chip.match { color: var(--ok); } .chip.moved, .chip.turned { color: var(--info); }
+.chip.miss, .chip.differs { color: var(--warn); } .chip.dataset, .chip.failed { color: var(--bad); }
+.stage { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; min-width: 0; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { font: inherit; font-size: 13px; background: transparent; color: var(--ink); border: 0; padding: 5px 10px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ours); color: var(--panel); }
+.seg button:focus-visible { outline: 2px solid var(--ours); outline-offset: -2px; }
+.tog { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink); }
+.hint { margin-left: auto; color: var(--muted); font-size: 12px; }
+#view { position: relative; aspect-ratio: 16 / 10; max-width: 100%; background: var(--view); }
+#view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#view .msg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); padding: 20px; text-align: center; }
+.info { padding: 12px 14px; display: grid; gap: 8px; border-top: 1px solid var(--line); }
+.info p { margin: 0; max-width: 100ch; }
+.info .note { font-weight: 500; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 20px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--ink); font-weight: 500; }
+.path { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; user-select: all; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>CADSmith Part Comparison</h1>
+    <p>__TITLE__ — salome-agent result (blue) against the CADSmith reference STL (orange). Drag to turn, right-drag to pan, scroll to zoom. Arrow keys step through the list.</p>
+  </header>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--ours)"></i>ours (salome-agent)</span>
+    <span><i class="sw" style="background:var(--ref)"></i>reference (CADSmith)</span>
+    <span><i class="sw" style="background:var(--ax-x)"></i>X</span>
+    <span><i class="sw" style="background:var(--ax-y)"></i>Y</span>
+    <span><i class="sw" style="background:var(--ax-z)"></i>Z</span>
+  </div>
+  <div class="main">
+    <div class="side">
+      <div class="filters">
+        <select id="f-tier" aria-label="Tier"><option value="">all tiers</option><option>T1</option><option>T2</option><option>T3</option></select>
+        <select id="f-verdict" aria-label="Verdict"><option value="">all verdicts</option></select>
+        <span class="count" id="count"></span>
+      </div>
+      <nav class="list" id="list" aria-label="Parts"></nav>
+    </div>
+    <section class="stage">
+      <div class="bar">
+        <div class="seg" role="group" aria-label="Show">
+          <button id="m-overlay" data-mode="overlay" aria-pressed="true">Overlay</button>
+          <button id="m-side" data-mode="side" aria-pressed="false">Side by side</button>
+          <button id="m-ours" data-mode="ours" aria-pressed="false">Ours</button>
+          <button id="m-ref" data-mode="ref" aria-pressed="false">Reference</button>
+        </div>
+        <label class="tog"><input type="checkbox" id="t-axes" checked> axes</label>
+        <span class="hint">Overlay: ours solid, reference as edges, both as placed</span>
+      </div>
+      <div id="view"></div>
+      <div class="info">
+        <p class="note" id="note"></p>
+        <p id="prompt"></p>
+        <div class="stats" id="stats"></div>
+        <div class="path" id="path"></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const PARTS = __PARTS__;
+const LABEL = { match: "match", moved: "placed differently", turned: "turned", differs: "differs",
+                miss: "agent miss", dataset: "dataset fault", failed: "failed" };
+
+function parseSTL(b64) {
+  const bin = atob(b64), buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  const dv = new DataView(buf.buffer), n = dv.getUint32(80, true);
+  const pos = new Float32Array(n * 9);
+  for (let i = 0; i < n; i++) {
+    const o = 84 + i * 50 + 12;
+    for (let k = 0; k < 9; k++) pos[i * 9 + k] = dv.getFloat32(o + k * 4, true);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  g.computeBoundingBox();
+  return g;
+}
+
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const view = document.getElementById("view");
+let renderer, scene, camera, controls, content, current = -1, mode = "overlay", cache = {}, shown = [];
+
+function label(text, color, size) {
+  const c = document.createElement("canvas"); c.width = c.height = 64;
+  const x = c.getContext("2d");
+  x.fillStyle = color; x.font = "600 44px Archivo, Arial, sans-serif";
+  x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(text, 32, 34);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
+  s.scale.set(size, size, 1); s.renderOrder = 2;
+  return s;
+}
+
+function axes(len) {
+  const g = new THREE.Group();
+  [["X", [1, 0, 0], "--ax-x"], ["Y", [0, 1, 0], "--ax-y"], ["Z", [0, 0, 1], "--ax-z"]].forEach(([n, d, tok]) => {
+    const col = css(tok), dir = new THREE.Vector3(...d);
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(len)]),
+                                new THREE.LineBasicMaterial({ color: col, depthTest: false }));
+    line.renderOrder = 1; g.add(line);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(len * 0.03, len * 0.09, 16),
+                                new THREE.MeshBasicMaterial({ color: col, depthTest: false }));
+    cone.renderOrder = 1;
+    cone.position.copy(dir.clone().multiplyScalar(len));
+    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    g.add(cone);
+    const l = label(n, col, len * 0.12); l.position.copy(dir.clone().multiplyScalar(len * 1.14)); g.add(l);
+  });
+  const o = new THREE.Mesh(new THREE.SphereGeometry(len * 0.018, 12, 8), new THREE.MeshBasicMaterial({ color: css("--ink"), depthTest: false }));
+  o.renderOrder = 1; g.add(o);
+  return g;
+}
+
+function init() {
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  view.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(35, 1.6, 0.1, 5000);
+  camera.up.set(0, 0, 1);
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.75));
+  const d = new THREE.DirectionalLight(0xffffff, 0.6); d.position.set(1, -1.5, 2); scene.add(d);
+  const d2 = new THREE.DirectionalLight(0xffffff, 0.25); d2.position.set(-2, 1, -1); scene.add(d2);
+  content = new THREE.Group(); scene.add(content);
+  new ResizeObserver(resize).observe(view);
+  resize();
+  (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+}
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight || w / 1.6;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+
+function build(p) {
+  if (cache[p.id]) return cache[p.id];
+  const mat = (tok) => new THREE.MeshStandardMaterial({ color: css(tok), metalness: 0.1, roughness: 0.55, side: THREE.DoubleSide });
+  const gr = parseSTL(p.ref), m = { box: gr.boundingBox.clone() };
+  m.refSolid = new THREE.Mesh(gr, mat("--ref"));
+  m.refEdges = new THREE.LineSegments(new THREE.EdgesGeometry(gr, 25), new THREE.LineBasicMaterial({ color: css("--ref") }));
+  if (p.ours) {
+    const go = parseSTL(p.ours);
+    m.ours = new THREE.Mesh(go, mat("--ours"));
+    m.oursEdges = new THREE.LineSegments(new THREE.EdgesGeometry(go, 25), new THREE.LineBasicMaterial({ color: css("--ink"), transparent: true, opacity: 0.35 }));
+    m.box.union(go.boundingBox);
+  }
+  return (cache[p.id] = m);
+}
+
+function show(keepCamera) {
+  const p = PARTS[current], m = build(p);
+  content.clear();
+  const size = m.box.getSize(new THREE.Vector3()), centre = m.box.getCenter(new THREE.Vector3());
+  const shift = size.x * 1.35 + 5, objs = [m.ours, m.oursEdges, m.refSolid, m.refEdges].filter(Boolean);
+  objs.forEach((o) => o.position.set(0, 0, 0));
+  const ours = m.ours ? [m.ours] : [], oursE = m.ours ? [m.ours, m.oursEdges] : [];
+  if (mode === "overlay") content.add(...(m.ours ? [m.ours, m.refEdges] : [m.refSolid, m.refEdges]));
+  if (mode === "ours") content.add(...oursE);
+  if (mode === "ref") content.add(m.refSolid, m.refEdges);
+  if (mode === "side") {
+    if (m.ours) { m.ours.position.x = m.oursEdges.position.x = -shift / 2; content.add(...oursE); }
+    m.refSolid.position.x = m.refEdges.position.x = m.ours ? shift / 2 : 0;
+    content.add(m.refSolid, m.refEdges);
+  }
+  const span = Math.max(size.x + (mode === "side" ? shift : 0), size.y, size.z);
+  if (document.getElementById("t-axes").checked) content.add(axes(Math.max(size.x, size.y, size.z) * 0.6));
+  const msg = view.querySelector(".msg"); if (msg) msg.remove();
+  if (!m.ours && mode !== "ref") view.insertAdjacentHTML("beforeend", '<div class="msg">No result from the agent for this part: showing the reference only.</div>');
+  if (!keepCamera) {
+    const c = mode === "side" ? new THREE.Vector3(0, centre.y, centre.z) : centre;
+    controls.target.copy(c);
+    camera.position.set(c.x + span * 1.1, c.y - span * 1.5, c.z + span * 0.9);
+    camera.near = span / 100; camera.far = span * 50; camera.updateProjectionMatrix();
+  }
+  document.getElementById("note").textContent = p.note || "";
+  document.getElementById("prompt").textContent = p.id + " · " + p.prompt;
+  const f = (v, d, u) => (v == null ? "–" : v.toFixed(d) + (u || ""));
+  document.getElementById("stats").innerHTML =
+    `<span>status <b>${p.status}</b></span>` +
+    `<span>volume error <b>${f(p.vol, 2, " %")}</b></span>` +
+    `<span>largest gap as placed <b>${f(p.gap, 2, " mm")}</b></span>` +
+    `<span>99% within, aligned <b>${f(p.d99, 3, " mm")}</b></span>` +
+    `<span>F1 to surface <b>${f(p.f1s, 3)}</b></span>` +
+    `<span>paper F1 <b>${f(p.f1p, 3)}</b></span>` +
+    `<span>time <b>${f(p.seconds, 0, " s")}</b></span>`;
+  document.getElementById("path").textContent = p.run_dir ? p.run_dir + "/result.py" : "";
+  document.querySelectorAll(".item").forEach((b) => b.setAttribute("aria-pressed", b.dataset.i == current));
+}
+
+const list = document.getElementById("list"), fTier = document.getElementById("f-tier"), fVerdict = document.getElementById("f-verdict");
+[...new Set(PARTS.map((p) => p.verdict))].forEach((v) => fVerdict.insertAdjacentHTML("beforeend", `<option value="${v}">${LABEL[v] || v}</option>`));
+
+function fill() {
+  list.innerHTML = "";
+  shown = PARTS.map((p, i) => i).filter((i) => (!fTier.value || PARTS[i].tier === fTier.value) && (!fVerdict.value || PARTS[i].verdict === fVerdict.value));
+  shown.forEach((i) => {
+    const p = PARTS[i], b = document.createElement("button");
+    b.className = "item"; b.id = "part-" + p.id; b.dataset.i = i;
+    b.innerHTML = `<span class="top"><span class="id">${p.id}</span><span class="chip ${p.verdict}">${LABEL[p.verdict] || p.verdict}</span></span><span class="sum"></span>`;
+    b.querySelector(".sum").textContent = p.prompt;
+    b.addEventListener("click", () => { current = i; show(); });
+    list.appendChild(b);
+  });
+  document.getElementById("count").textContent = shown.length + " of " + PARTS.length;
+  if (shown.length && !shown.includes(current)) { current = shown[0]; show(); }
+  else if (current >= 0) show(true);
+}
+fTier.addEventListener("change", fill); fVerdict.addEventListener("change", fill);
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+  mode = b.dataset.mode;
+  document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  show();
+}));
+document.getElementById("t-axes").addEventListener("change", () => show(true));
+document.addEventListener("keydown", (e) => {
+  if (!["ArrowDown", "ArrowUp"].includes(e.key) || e.target.tagName === "SELECT") return;
+  const k = shown.indexOf(current) + (e.key === "ArrowDown" ? 1 : -1);
+  if (k >= 0 && k < shown.length) { e.preventDefault(); current = shown[k]; show(); document.getElementById("part-" + PARTS[current].id).scrollIntoView({ block: "nearest" }); }
+});
+
+try { init(); fill(); }
+catch (e) { view.innerHTML = '<div class="msg">The 3D view could not start: ' + e.message + '. It needs WebGL and network access for three.js.</div>'; }
+</script>
+</body>
+</html>
