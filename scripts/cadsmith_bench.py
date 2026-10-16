@@ -13,6 +13,7 @@ usage:
   cadsmith_bench.py reexport NAME --data DIR --config CFG
   cadsmith_bench.py summary NAME
   cadsmith_bench.py view NAME [NAME ...] --data DIR [--no-open]
+  cadsmith_bench.py report NAME [--no-open]
 
 Each prompt goes through the normal CLI (--batch -vv), one at a time. The
 run's result.py is then rebuilt in a separate SALOME process
@@ -45,6 +46,9 @@ reference (cadsmith_compare.html filled with the STLs; three.js from a CDN),
 and opens it. A part found in several runs shows the last one named. Each
 part gets a verdict from its scores; <name>/notes.json, {"T1_013":
 {"verdict": "miss", "note": "..."}}, overrides it with a reviewed one.
+
+report turns <name>/report/report.md (images under report/img/) into one
+self-contained report.html with pandoc and cadsmith_report.css.
 """
 import argparse
 import glob
@@ -359,6 +363,28 @@ def cmd_reexport(args) -> int:
     return cmd_rescore(args)
 
 
+def cmd_report(args) -> int:
+    folder = os.path.join(BENCH, args.name, "report")
+    out = os.path.join(folder, "report.html")
+    subprocess.run(["pandoc", "report.md", "-f", "gfm", "-t", "html5", "--standalone",
+                    "--embed-resources", "--metadata",
+                    "pagetitle=salome-agent on the CADSmith Benchmark",
+                    "-c", os.path.join(HERE, "cadsmith_report.css"), "-o", out],
+                   cwd=folder, check=True)
+    fonts = ('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:'
+             'wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">')
+    with open(out) as f:
+        page = f.read()
+    page = (page.replace("<head>", "<head>\n" + fonts, 1)
+            .replace("<body>", "<body>\n<main>", 1).replace("</body>", "</main>\n</body>", 1))
+    with open(out, "w") as f:
+        f.write(page)
+    print(out)
+    if not args.no_open:
+        subprocess.Popen(["xdg-open", out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return 0
+
+
 def _stat(vals, f):
     return f"{f(vals):.4f}" if vals else "-"
 
@@ -406,6 +432,9 @@ def main(argv=None) -> int:
     re_.add_argument("--config", required=True)
     s = sub.add_parser("summary")
     s.add_argument("name")
+    rp = sub.add_parser("report")
+    rp.add_argument("name")
+    rp.add_argument("--no-open", action="store_true")
     v = sub.add_parser("view")
     v.add_argument("names", nargs="+")
     v.add_argument("--data", required=True)
@@ -413,7 +442,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     return {"run": cmd_run, "rescore": cmd_rescore, "reexport": cmd_reexport,
             "summary": cmd_summary,
-            "view": cmd_view}[args.cmd](args)
+            "view": cmd_view, "report": cmd_report}[args.cmd](args)
 
 
 if __name__ == "__main__":
