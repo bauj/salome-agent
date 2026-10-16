@@ -11,6 +11,7 @@ usage:
                         [--name NAME] [--timeout S]
   cadsmith_bench.py rescore NAME --data DIR
   cadsmith_bench.py summary NAME
+  cadsmith_bench.py view NAME [NAME ...] --data DIR [--no-open]
 
 Each prompt goes through the normal CLI (--batch -vv), one at a time. The
 run's result.py is then rebuilt in a separate SALOME process
@@ -36,6 +37,12 @@ score from the saved STLs.
 
 Results: ~/.local/share/salome-agent/bench/<name>/results.jsonl, one row per
 prompt; progress.txt is the line to tail.
+
+view writes <first name>/compare.html, a 3D viewer of every part over its
+reference (cadsmith_compare.html filled with the STLs; three.js from a CDN),
+and opens it. A part found in several runs shows the last one named. Each
+part gets a verdict from its scores; <name>/notes.json, {"T1_013":
+{"verdict": "miss", "note": "..."}}, overrides it with a reviewed one.
 """
 import argparse
 import glob
@@ -275,6 +282,59 @@ def cmd_rescore(args) -> int:
     return cmd_summary(args)
 
 
+def _verdict(row: dict) -> str:
+    if row["status"] != "scored":
+        return "failed"
+    s = row["scores"]
+    if s["dmax_surf_placed"] <= 0.2:
+        return "match"
+    return "moved" if s["d99_surf"] <= 0.2 else "differs"
+
+
+def cmd_view(args) -> int:
+    import base64
+    data = os.path.abspath(args.data)
+    prompts = {p["id"]: p for p in load_prompts(data)}
+    rows, notes = {}, {}
+    for name in args.names:
+        out = os.path.join(BENCH, name)
+        with open(os.path.join(out, "results.jsonl")) as f:
+            for line in f:
+                if line.strip():
+                    r = json.loads(line)
+                    rows[r["id"]] = (out, r)
+        if os.path.exists(os.path.join(out, "notes.json")):
+            with open(os.path.join(out, "notes.json")) as f:
+                notes.update(json.load(f))
+    b64 = lambda path: base64.b64encode(open(path, "rb").read()).decode()
+    parts = []
+    for pid in sorted(rows):
+        out, r = rows[pid]
+        s, note = r.get("scores") or {}, notes.get(pid, {})
+        stl = os.path.join(out, "stl", f"{pid}.stl")
+        parts.append({
+            "id": pid, "tier": r["tier"], "prompt": prompts[pid]["prompt"],
+            "status": r["status"], "verdict": note.get("verdict") or _verdict(r),
+            "note": note.get("note", ""), "run_dir": r.get("run_dir"),
+            "seconds": r.get("seconds"), "vol": r.get("volume_err_pct"),
+            "gap": s.get("dmax_surf_placed"), "d99": s.get("d99_surf"),
+            "f1s": s.get("f1_surf"), "f1p": s.get("f1"),
+            "ours": b64(stl) if r["status"] == "scored" else None,
+            "ref": b64(os.path.join(data, "reference_stls", f"{pid}.stl"))})
+    with open(os.path.join(HERE, "cadsmith_compare.html")) as f:
+        page = f.read()
+    title = " + ".join(args.names)
+    page = (page.replace("__TITLE__", title)
+            .replace("__PARTS__", json.dumps(parts).replace("</", "<\\/")))
+    path = os.path.join(BENCH, args.names[0], "compare.html")
+    with open(path, "w") as f:
+        f.write(page)
+    print(path)
+    if not args.no_open:
+        subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return 0
+
+
 def _stat(vals, f):
     return f"{f(vals):.4f}" if vals else "-"
 
@@ -318,8 +378,13 @@ def main(argv=None) -> int:
     rs.add_argument("--data", required=True)
     s = sub.add_parser("summary")
     s.add_argument("name")
+    v = sub.add_parser("view")
+    v.add_argument("names", nargs="+")
+    v.add_argument("--data", required=True)
+    v.add_argument("--no-open", action="store_true")
     args = ap.parse_args(argv)
-    return {"run": cmd_run, "rescore": cmd_rescore, "summary": cmd_summary}[args.cmd](args)
+    return {"run": cmd_run, "rescore": cmd_rescore, "summary": cmd_summary,
+            "view": cmd_view}[args.cmd](args)
 
 
 if __name__ == "__main__":
