@@ -1,6 +1,6 @@
 import math
 
-from executor.smesh.state import MAX_ELEMENTS, mesh_of, record, shape_ref, state, tool
+from executor.smesh.state import MAX_ELEMENTS, evaluate, mesh_of, record, shape_ref, state, tool
 
 
 def geom_copy(st, obj):
@@ -32,7 +32,7 @@ def shape_props(executor, name: str) -> dict:
                 "volume": m["volume"], "faces": m["faces"]}
     st = state(executor)
     geompy = st.ns["geompy"]
-    obj = eval(expr, st.ns)
+    obj = evaluate(st, expr)
     p = geompy.BasicProperties(obj)
     return {"type": str(obj.GetShapeType()).lower(), "area": round(p[1], 4),
             "volume": round(p[2], 4), "faces": geompy.NumberOfFaces(obj)}
@@ -122,7 +122,7 @@ def shape_bbox(executor, name: str) -> list:
         from executor.shaper import state as shaper
         return shaper.measure(executor, name)["bbox"]
     st = state(executor)
-    return list(st.ns["geompy"].BoundingBox(eval(expr, st.ns)))
+    return list(st.ns["geompy"].BoundingBox(evaluate(st, expr)))
 
 
 def predicted(executor, name: str) -> "int | None":
