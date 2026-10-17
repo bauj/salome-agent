@@ -165,19 +165,21 @@ class ToolSpecialist:
 
     def run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
             tool_selection="hints", verify_cadence="final", retry=None,
-            seed_call_log=None, seed_calls=None, cancel=None, upstream=()) -> dict:
+            seed_call_log=None, seed_calls=None, cancel=None, upstream=(),
+            reference_images: list[str] | None = None) -> dict:
         if client is None and self.spec.needs_session:
             return {"fatal": f"a {self.spec.name} stage needs a SALOME agent server"}
         try:
             return self._run(stage_plan, llm, client, iteration_cap, blocks,
                              tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
-                             cancel, frozenset(upstream))
+                             cancel, frozenset(upstream), reference_images=reference_images)
         except (SessionDied, SessionPoisoned) as e:
             return {"fatal": f"SALOME agent server unavailable: {e}"}
 
     def _run(self, stage_plan, llm, client, iteration_cap, blocks,
              tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
-             cancel, upstream) -> dict:
+             cancel, upstream, reference_images: list[str] | None = None) -> dict:
+        from salome_agent.llm import with_images
         spec = self.spec
         parts = [str(stage_plan)] + [b for b in blocks if b]
         if spec.kickoff:
@@ -187,7 +189,7 @@ class ToolSpecialist:
             if rendered is not None:
                 parts.append(rendered)
         messages = [{"role": "system", "content": spec.prompt(verify_cadence)},
-                    {"role": "user", "content": "\n\n".join(parts)}]
+                    {"role": "user", "content": with_images("\n\n".join(parts), reference_images)}]
         # A retry seeds call_log with the failed attempt's records so a shape the
         # model reuses by name (rather than rebuilding) stays traceable by
         # codegen's reachability pass instead of silently dropping out of

@@ -32,18 +32,23 @@ that ends inside other material (a bar end buried in a ring, a cutter that
 pokes through) can be any round value that clearly overshoots."""
 
 # Runs in the child: stdin is the user snippet, already checked by _refusal.
-_RUNNER = r'''
+_RUNNER = f'''
 import ast, builtins, math, sys, traceback
+try:
+    import resource
+    resource.setrlimit(resource.RLIMIT_AS, ({_MEMORY_BYTES}, {_MEMORY_BYTES}))
+except Exception:
+    pass
 src = sys.stdin.read()
-safe = {n: getattr(builtins, n)
+safe = {{n: getattr(builtins, n)
         for n in ("abs", "min", "max", "round", "range", "len", "sum", "print",
                   "enumerate", "zip", "list", "dict", "tuple", "set", "sorted",
                   "reversed", "float", "int", "bool", "str", "any", "all", "map",
-                  "filter", "isinstance", "divmod", "pow")}
+                  "filter", "isinstance", "divmod", "pow")}}
 # `import math` is written by reflex; only math resolves, _refusal checked names.
 safe["__import__"] = lambda name, *a, **k: math
-ns = {"__builtins__": safe, "math": math}
-ns.update({k: v for k, v in vars(math).items() if not k.startswith("_")})
+ns = {{"__builtins__": safe, "math": math}}
+ns.update({{k: v for k, v in vars(math).items() if not k.startswith("_")}})
 try:
     tree = ast.parse(src, "<calc>")
     last = None
@@ -55,12 +60,12 @@ try:
         if value is not None:
             print(repr(value))
 except SyntaxError as e:
-    print(f"error: SyntaxError: {e.msg} (line {e.lineno})")
+    print(f"error: SyntaxError: {{e.msg}} (line {{e.lineno}})")
 except BaseException as e:
     line = next((f.lineno for f in reversed(traceback.extract_tb(e.__traceback__))
                  if f.filename == "<calc>"), None)
-    where = f" (line {line})" if line else ""
-    print(f"error: {type(e).__name__}: {e}{where}")
+    where = f" (line {{line}})" if line else ""
+    print(f"error: {{type(e).__name__}}: {{e}}{{where}}")
 '''
 
 
@@ -81,11 +86,6 @@ def _refusal(code: str) -> str | None:
     return None
 
 
-def _limit_memory():
-    import resource
-    resource.setrlimit(resource.RLIMIT_AS, (_MEMORY_BYTES, _MEMORY_BYTES))
-
-
 def run_calc(code: str, timeout: float = _TIMEOUT) -> str:
     """The snippet's output as the tool reply: printed text plus the last
     expression's repr, or one `error: ...` line. Never raises."""
@@ -96,8 +96,7 @@ def run_calc(code: str, timeout: float = _TIMEOUT) -> str:
         return refused
     try:
         proc = subprocess.run([sys.executable, "-I", "-c", _RUNNER], input=code,
-                              capture_output=True, text=True, timeout=timeout,
-                              preexec_fn=_limit_memory if sys.platform != "win32" else None)
+                              capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return f"error: timed out after {timeout:g} s"
     out = proc.stdout.rstrip("\n")

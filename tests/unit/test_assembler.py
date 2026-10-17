@@ -341,3 +341,18 @@ def test_an_amend_block_that_only_sets_up_an_earlier_mesh_renders_without_a_warn
         text = render_script(g, "r1")
     assert "mesh_1.Compute()" in text
     assert "match no built shape" not in caplog.text
+
+
+def test_find_object_prioritizes_shape_components_and_skips_removed():
+    import types
+    from salome_agent.nodes.assembler import _FIND_OBJECT
+
+    deleted = types.SimpleNamespace(GetAllAttributes=lambda: [], GetObject=lambda: "deleted")
+    live = types.SimpleNamespace(GetAllAttributes=lambda: ["attr"], GetObject=lambda: "live_shape")
+    study = types.SimpleNamespace(
+        FindObjectByName=lambda name, comp: [deleted, live] if comp == "SHAPERSTUDY" else []
+    )
+    ns = {"salome": types.SimpleNamespace(myStudy=study)}
+    exec(_FIND_OBJECT, ns)
+    assert ns["find_object"]("ext_1") == "live_shape"
+

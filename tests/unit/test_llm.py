@@ -1740,3 +1740,28 @@ def test_shown_url_drops_credentials_and_query():
     from salome_agent.llm import shown_url
 
     assert shown_url("https://u:pw@host:8443/v1?key=secret") == "https://host:8443/v1"
+
+
+def test_cancellable_stream_uses_single_worker_thread(monkeypatch):
+    import threading
+    real_thread = threading.Thread
+    spawned = []
+
+    def tracking_thread(*args, **kwargs):
+        spawned.append(kwargs.get("name"))
+        return real_thread(*args, **kwargs)
+
+    lines = [_THINK] * 50 + [
+        'data: {"choices": [{"delta": {"content": "{\\"stages\\": []}"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    monkeypatch.setattr("salome_agent.llm.threading.Thread", tracking_thread)
+    client = LLMClient("http://x/v1", "", "auto")
+    client.cancel = threading.Event()
+    out = client.chat(messages=[{"role": "user", "content": "plan"}])
+    assert out == {"stages": []}
+    # 1 thread for requests.post ("llm-io") + 1 thread for stream reading ("llm-stream")
+    assert spawned.count("llm-stream") == 1
+    assert len(spawned) == 2
+

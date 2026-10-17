@@ -76,11 +76,14 @@ class GuiBackend:
         self.namespace = build_namespace(True)
         self.name_prefix = ""
         self.geom_bindings: dict = {}
+        self._counters: dict[str, int] = {}
+        self._pinned: list[str] = []
         self._poisoned = False
 
     def begin_session(self, run_id):
         self.name_prefix = f"sa_{run_id}_" if run_id else ""
-        geom.reset_counters()
+        geom.reset_counters(self)
+        self._pinned.clear()
         self.geom_bindings.clear()
 
     def end_session(self):

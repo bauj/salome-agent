@@ -31,11 +31,17 @@ _GUI_INIT = """gg = salome.ImportComponentGUI("GEOM")
 # Only emitted when a stage actually looks an object up in the study by name
 # (a cross-stage / cross-module reference — codegen emits `find_object("x")`).
 _FIND_OBJECT = """def find_object(name):
+    for comp in ("GEOM", "SHAPERSTUDY"):
+        if hasattr(salome.myStudy, "FindObjectByName"):
+            hits = [s for s in (salome.myStudy.FindObjectByName(name, comp) or [])
+                    if not hasattr(s, "GetAllAttributes") or s.GetAllAttributes()]
+            if hits:
+                return hits[-1].GetObject()
     def walk(sobj):
         it = salome.myStudy.NewChildIterator(sobj)
         while it.More():
             child = it.Value()
-            if child.GetName() == name:
+            if child.GetName() == name and (not hasattr(child, "GetAllAttributes") or child.GetAllAttributes()):
                 return child.GetObject()
             found = walk(child)
             if found is not None:

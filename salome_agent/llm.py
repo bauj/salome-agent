@@ -628,6 +628,52 @@ class LLMClient:
             self._live.close()
             self._live = None
 
+    def _iter_lines(self, lines):
+        """Yield from `lines` using a single daemon worker thread per stream
+        when `self.cancel` is set (instead of spawning a new thread per line),
+        pulling one line at a time on demand so a silent stream gap is still
+        cancelled within `_CANCEL_POLL`."""
+        if self.cancel is None:
+            yield from lines
+            return
+        want = threading.Event()
+        got = threading.Event()
+        box: list = [True, _EOF]
+        stop = False
+
+        def worker():
+            while True:
+                want.wait()
+                want.clear()
+                if stop:
+                    return
+                try:
+                    box[0], box[1] = True, next(lines, _EOF)
+                except BaseException as e:  # noqa: BLE001 — re-raised in the caller
+                    box[0], box[1] = False, e
+                got.set()
+                if not box[0] or box[1] is _EOF:
+                    return
+
+        threading.Thread(target=worker, daemon=True, name="llm-stream").start()
+        try:
+            while True:
+                got.clear()
+                want.set()
+                while not got.wait(_CANCEL_POLL):
+                    if self.cancel.is_set():
+                        raise LLMCancelled("LLM call cancelled")
+                ok, value = box[0], box[1]
+                if not ok:
+                    raise value
+                if value is _EOF:
+                    return
+                self._check_cancel()
+                yield value
+        finally:
+            stop = True
+            want.set()
+
     def _consume_stream(self, resp, t0: float, prose: bool = False,
                         partial: dict | None = None, budget: float | None = None,
                         reasoning_budget: int = 0,
@@ -676,8 +722,7 @@ class LLMClient:
         # falls back to ISO-8859-1 for text/* and garbles every non-ASCII char.
         resp.encoding = "utf-8"
         lines = resp.iter_lines(chunk_size=None, decode_unicode=True)
-        while (raw := self._wait_on(lambda: next(lines, _EOF))) is not _EOF:
-            self._check_cancel()
+        for raw in self._iter_lines(lines):
             if time.monotonic() > deadline:
                 raise StreamBudgetExceeded(
                     f"LLM stream ran past the {budget:g}s total "

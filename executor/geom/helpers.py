@@ -30,20 +30,40 @@ _counters: dict[str, int] = {}
 _pinned: list[str] = []
 
 
-def reset_counters() -> None:
+def _executor_counters(executor=None) -> dict[str, int]:
+    if executor is not None and hasattr(executor, "_counters"):
+        return executor._counters
+    return _counters
+
+
+def _executor_pinned(executor=None) -> list[str]:
+    if executor is not None and hasattr(executor, "_pinned") and executor._pinned:
+        return executor._pinned
+    if _pinned:
+        return _pinned
+    if executor is not None and hasattr(executor, "_pinned"):
+        return executor._pinned
+    return _pinned
+
+
+def reset_counters(executor=None) -> None:
     _counters.clear()
+    if executor is not None and hasattr(executor, "_counters"):
+        executor._counters.clear()
 
 
 def _next_name(executor, prefix: str) -> str:
+    counters = _executor_counters(executor)
+    pinned = _executor_pinned(executor)
     stem = f"{executor.name_prefix}{prefix}_"
-    for i, name in enumerate(_pinned):
+    for i, name in enumerate(pinned):
         suffix = name[len(stem):]
         if name.startswith(stem) and suffix.isdigit():
-            del _pinned[i]
-            _counters[prefix] = max(_counters.get(prefix, 0), int(suffix))
+            del pinned[i]
+            counters[prefix] = max(counters.get(prefix, 0), int(suffix))
             return name
-    _counters[prefix] = _counters.get(prefix, 0) + 1
-    return f"{stem}{_counters[prefix]}"
+    counters[prefix] = counters.get(prefix, 0) + 1
+    return f"{stem}{counters[prefix]}"
 
 
 def _resolve(executor, arg: ArgRef):

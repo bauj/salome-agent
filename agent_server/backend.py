@@ -149,13 +149,16 @@ class HeadlessBackend:
         self.name_prefix = ""
         self.namespace = self._build(False)
         self.geom_bindings: dict = {}
+        self._counters: dict[str, int] = {}
+        self._pinned: list[str] = []
         self._poisoned = False
 
     def begin_session(self, run_id: str | None) -> None:
         # The study outlives the run on a --serve-forever server, so name by
         # run as GuiBackend does: forget-by-name must not reach another run's objects.
         self.name_prefix = f"sa_{run_id}_" if run_id else ""
-        geom.reset_counters()
+        geom.reset_counters(self)
+        self._pinned.clear()
         self.geom_bindings.clear()
 
     def end_session(self) -> None:
@@ -171,7 +174,25 @@ class HeadlessBackend:
         pass
 
     def run_tool(self, fn, timeout: float):
-        return fn()
+        if not timeout:
+            return fn()
+        box: dict = {}
+
+        def target():
+            try:
+                box["r"] = fn()
+            except BaseException as e:  # noqa: BLE001
+                box["e"] = e
+
+        t = threading.Thread(target=target, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            self._poisoned = True
+            raise TimeoutError(f"tool call exceeded {timeout}s")
+        if "e" in box:
+            raise box["e"]
+        return box.get("r")
 
     def forget(self, names: list) -> dict:
         return forget_names(self.namespace, self.geom_bindings, names)

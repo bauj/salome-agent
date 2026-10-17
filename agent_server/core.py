@@ -87,7 +87,8 @@ class Core:
                 return {"id": rid, "tools": pkg.list_tools(), "module": module}
             call = lambda: pkg.call_tool(b, req["name"], req["args"], pin=req.get("pin"))
             limit = getattr(pkg, "timeout_for", lambda n: None)(req["name"]) or TOOL_TIMEOUT
-            r = call() if module == "geom" else b.run_tool(call, limit)
+            run_tool = getattr(b, "run_tool", None)
+            r = run_tool(call, limit) if run_tool is not None else call()
             if r.get("ok"):
                 b.refresh(_REFRESH[module])
             return {"id": rid, **r}
@@ -97,7 +98,8 @@ class Core:
             if pkg is None:
                 return {"id": rid, "ok": False, "error": f"no tool module {module!r}"}
             call = lambda: pkg.check_results(b, req["names"])
-            r = call() if module == "geom" else b.run_tool(call, TOOL_TIMEOUT)
+            run_tool = getattr(b, "run_tool", None)
+            r = run_tool(call, TOOL_TIMEOUT) if run_tool is not None else call()
             return {"id": rid, "ok": True, "results": r}
         if cmd == "forget":
             r = b.forget(req["names"])

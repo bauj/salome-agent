@@ -681,3 +681,52 @@ def test_endpoint_fatal_4xx_names_the_url_it_posted_to():
     msg = _llm_endpoint_fatal(err)
     assert "HTTP 404 from https://api.x/v1/chat/completions/chat/completions)" in msg
     assert "key=s" not in msg
+
+
+def test_run_stage_replan_routes_to_plan_with_context(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+    def fake_run(self, *a, **kw):
+        return {"replan": "profile self-intersects; split into two stages"}
+
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
+    state = {
+        "user_request": "make a flange",
+        "stage_idx": 0,
+        "plan": [{"module": "geom", "intent": "flange", "params": {}, "inputs": []}],
+        "stages": {0: {"module": "geom", "status": "pending"}},
+        "config": {"policy": {"tool_iteration_cap": 5}},
+        "last_error": None,
+        "history": [],
+    }
+    cmd = graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
+                                                         "executor_client": None}})
+    assert cmd.goto == "plan"
+    assert "profile self-intersects" in cmd.update["replan_context"]
+
+
+def test_pass_images_to_specialists_forwards_reference_images(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+    captured = {}
+
+    def fake_run(self, *a, **kw):
+        captured.update(kw)
+        return {"call_log": [], "result_names": ["box_1"]}
+
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
+    state = {
+        "user_request": "make this part",
+        "reference_images": ["data:image/png;base64,AAA"],
+        "stage_idx": 0,
+        "plan": [{"module": "geom", "intent": "part", "params": {}, "inputs": []}],
+        "stages": {0: {"module": "geom", "status": "pending"}},
+        "config": {"policy": {"tool_iteration_cap": 5, "pass_images_to_specialists": True}},
+        "last_error": None,
+    }
+    graph._run_stage_node(state, {"configurable": {"llm_client": MagicMock(),
+                                                   "executor_client": None}})
+    assert captured.get("reference_images") == ["data:image/png;base64,AAA"]
+

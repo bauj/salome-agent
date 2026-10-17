@@ -18,6 +18,16 @@ def _pid_start(pid: int) -> int | None:
         return None
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
 def write(*, port: int, token: str, mode: str, log_path: str,
           salome_port: int | None = None) -> None:
     p = path()
@@ -47,12 +57,15 @@ def live_owner() -> dict | None:
     pid = data.get("pid")
     if not isinstance(pid, int) or pid == os.getpid():
         return None
-    live = _pid_start(pid)
-    if live is None:
-        return None                       # pid not running
-    stored = data.get("pid_start")
-    if stored is not None and stored != live:
-        return None                       # pid was reused by an unrelated process
+    if os.path.isdir("/proc"):
+        live = _pid_start(pid)
+        if live is None:
+            return None                   # pid not running
+        stored = data.get("pid_start")
+        if stored is not None and stored != live:
+            return None                   # pid was reused by an unrelated process
+    elif not _pid_alive(pid):
+        return None
     return data
 
 

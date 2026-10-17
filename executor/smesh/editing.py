@@ -65,13 +65,19 @@ def tool_convert_to_quadratic(executor, args: dict):
 def tool_export_mesh(executor, args: dict):
     m, fmt = args.get("mesh"), args.get("format")
     mesh_of(executor, m)
+    if not isinstance(m, str) or not m.isidentifier():
+        raise ValueError(f"invalid mesh identifier {m!r}")
     if fmt not in _FORMATS:
         raise ValueError(f"format must be one of {', '.join(_FORMATS)}")
     run_dir = getattr(executor, "run_dir", None) or os.getcwd()
     os.makedirs(run_dir, exist_ok=True)
-    path = os.path.join(run_dir, f"{m}.{fmt}")
-    run(state(executor), f"{m}.{_FORMATS[fmt].format(path=path)}")
     rel = f"{m}.{fmt}"
+    path = os.path.join(run_dir, rel)
+    real_dir = os.path.realpath(run_dir)
+    real_path = os.path.realpath(path)
+    if os.path.commonpath([real_dir, real_path]) != real_dir:
+        raise ValueError(f"export path {path!r} escapes run_dir {run_dir!r}")
+    run(state(executor), f"{m}.{_FORMATS[fmt].format(path=path)}")
     code = f"{m}.{_FORMATS[fmt].format(path=rel)}"
     return {"ok": True, "records": [record("Export", code, recv=m)], "mesh": m, "path": path,
             "note": f"written to {path}; result.py writes {rel} in the folder it runs from"}

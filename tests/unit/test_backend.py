@@ -57,3 +57,30 @@ def test_timeout_poisons_the_backend():
     assert r["ok"] is False and "timeout" in r["exception"].lower()
     assert b.poisoned() is True
 
+
+def test_run_tool_timeout_poisons_the_backend():
+    import time
+    import pytest
+
+    b = HeadlessBackend(build_namespace=lambda live: _fake_ns())
+    b.begin_session(None)
+    assert b.poisoned() is False
+    with pytest.raises(TimeoutError, match="exceeded"):
+        b.run_tool(lambda: time.sleep(2.0), timeout=0.1)
+    assert b.poisoned() is True
+
+
+def test_counters_are_isolated_per_backend_instance():
+    from executor.geom import helpers
+
+    b1 = HeadlessBackend(build_namespace=lambda live: _fake_ns())
+    b2 = HeadlessBackend(build_namespace=lambda live: _fake_ns())
+    b1.begin_session("r1")
+    b2.begin_session("r2")
+    assert helpers._next_name(b1, "box") == "sa_r1_box_1"
+    assert helpers._next_name(b1, "box") == "sa_r1_box_2"
+    assert helpers._next_name(b2, "box") == "sa_r2_box_1"
+    b2.begin_session("r2")
+    assert helpers._next_name(b1, "box") == "sa_r1_box_3"
+
+

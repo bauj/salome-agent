@@ -70,6 +70,9 @@ def call_tool(executor, name: str, args: dict, pin: list | None = None) -> dict:
     handler = TOOLS.get(name)
     if handler is None:
         return {"ok": False, "error": f"unknown tool {name!r}"}
+    exec_pinned = getattr(executor, "_pinned", None)
+    if exec_pinned is not None:
+        exec_pinned[:] = list(pin or [])
     _pinned[:] = list(pin or [])
     try:
         args = _coerce_args(name, args)
@@ -90,4 +93,6 @@ def call_tool(executor, name: str, args: dict, pin: list | None = None) -> dict:
     except Exception as e:
         return {"ok": False, "error": with_hint(str(e))}
     finally:
+        if exec_pinned is not None:
+            exec_pinned.clear()
         _pinned.clear()

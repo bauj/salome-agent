@@ -215,7 +215,11 @@ def _amend_node(state: dict, config: "RunnableConfig"):
 
 def route_after_run_stage(state: dict) -> str:
     stage = state["stages"][state["stage_idx"]]
-    return "advance" if stage["status"] == "ok" else "retry_gate"
+    if stage["status"] == "ok":
+        return "advance"
+    if stage["status"] == "replan":
+        return "plan"
+    return "retry_gate"
 
 
 def select_upstream(stage_plan: dict, stages: dict, idx: int) -> list[str]:
@@ -325,9 +329,13 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
         log.error("%s", msg)
         return Command(update={"fatal": msg}, goto="assemble")
     log.info("image spec:\n%s", json.dumps(spec, ensure_ascii=False, indent=1))
-    # only this node reads the images; the checkpointer would otherwise carry
-    # the base64 through every later step
-    update = {"image_spec": spec, "reference_images": None}
+    # By default only this node reads the images so the checkpointer does not
+    # carry the base64 through every later step; `policy.pass_images_to_specialists`
+    # keeps them for CAD specialists.
+    policy = ((state.get("config") or {}).get("policy") or {})
+    update = {"image_spec": spec}
+    if not policy.get("pass_images_to_specialists"):
+        update["reference_images"] = None
     if snap0 is not None:
         vt = _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0)
         log.info("  vision timing: wall=%.1fs llm=%.1fs", vt["wall"], vt["llm_s"])
@@ -468,13 +476,19 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         seed = None
         seed_calls = None
     policy = state["config"]["policy"]
+    extra_run = {}
+    if (module in ("geom", "shaper")
+            and policy.get("pass_images_to_specialists")
+            and state.get("reference_images")):
+        extra_run["reference_images"] = state["reference_images"]
     try:
         result = ToolSpecialist(spec).run(
             stage_plan, llm, client, cap, blocks=tuple(blocks),
             tool_selection=policy.get("tool_selection", "hints"),
             verify_cadence=policy.get("verify_cadence", "final"),
             retry=retry, seed_call_log=seed, seed_calls=seed_calls,
-            cancel=config["configurable"].get("cancel"), upstream=upstream)
+            cancel=config["configurable"].get("cancel"), upstream=upstream,
+            **extra_run)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -502,6 +516,16 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
                      module, len(result.get("calls") or []),
                      len(result.get("call_log") or []), spec.call_prefix.rstrip("."),
                      result["result_names"])
+        elif "replan" in result:
+            from salome_agent.build_graph import BuildGraph
+            from salome_agent.nodes.assembler import commit_stages
+            stage["status"] = "replan"
+            stages[idx] = stage
+            graph = commit_stages(BuildGraph.from_dict(state.get("build_graph")),
+                                  {**state, "stages": stages})
+            update["build_graph"] = graph.to_dict()
+            update["replan_context"] = _replan_context(state, graph, result["replan"])
+            log.info("  %s specialist -> replan: %s", module, result["replan"])
         else:
             stage["status"] = "failed"
             update["last_error"] = result.get("last_error")
