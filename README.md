@@ -80,6 +80,7 @@ cp config.example.json config.json
     "json_retries": 2,
     "vision_fix_retries": 2,
     "loop_retries": 3,
+    "text_tool_calls": true,
     "max_retries": 2,
     "reasoning_budget": 20000,
     "carry_reasoning": true,
@@ -121,6 +122,7 @@ Any OpenAI-compatible `/chat/completions` endpoint. Requests are streamed (SSE).
 | `max_retries` | `2` | Retries for transient failures — connection drop, truncated stream, HTTP 429 (honouring `Retry-After`), fast 502/503/504, a mid-stream error frame for a server-side failure (5xx/429 status, or type `server_error`/`api_error`) — with exponential backoff. Raise it for a flaky free-tier endpoint. |
 | `reasoning_budget` | `20000` | Specialist (tool-calling) calls only: approximate reasoning tokens (characters / 4) a model may spend before its first tool call. Past it the call is cut and re-asked once with the tail of its own reasoning and a "continue from it and act" nudge; a second cut in a row ends the stage. If the cut reasoning ends in a loop, it is handled as a loop (see `loop_retries`). `0` turns it off. |
 | `loop_retries` | `3` | Every call (planner, specialists, vision): when the streamed reasoning or answer starts repeating itself (the same sentences over and over, as small models do), the call is cut at once. A planner or specialist call is then re-asked with its text from before the loop and one repeated sentence, never the loop itself, up to this many cuts in a row; past that the stage ends (the plan fails). A vision call that loops ends the run. |
+| `text_tool_calls` | `true` | Specialist (tool-calling) calls only: a reply with no tool call is read for calls the model wrote as text (JSON, `<tool key="value"/>`, `<call:tool key=value/>`) and those run. Calls after other text in the reply (such as a result the model made up) are not run and the model is told so; a call whose exact text appears in a message the model was given (request, tool result) is never run. An echo the model reformats is not caught. `false` turns reading text calls off. Either way, the same reply with no tool call 3 times in a row ends the stage. |
 | `carry_reasoning` | `true` | Specialist (tool-calling) calls only: each turn's reasoning (`reasoning_content`) stays in the stage's history, so after a tool result (a `calc`, say) the model resumes its own thinking instead of starting over. Costs input tokens for the rest of the stage. Set `false` for a provider that rejects `reasoning_content` in requests. |
 | `extra_headers` | `{}` | Extra HTTP headers sent verbatim on every request. In a string value `{run_id}` is replaced with the run's id — for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`. |
 | `extra_body` | `{}` | Extra top-level fields merged into every request's JSON body, next to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider body params such as `{"reasoning_effort": "high"}`; whether the provider honours a field is up to the provider. |
