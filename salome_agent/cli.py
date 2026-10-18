@@ -160,7 +160,8 @@ def build_llm(config: dict, request_timeout: float | None = None,
                      modules=modules,
                      reasoning_budget=llm_config.get("reasoning_budget", 20000),
                      carry_reasoning=llm_config.get("carry_reasoning", True),
-                     loop_retries=llm_config.get("loop_retries", 3))
+                     loop_retries=llm_config.get("loop_retries", 3),
+                     text_tool_calls=llm_config.get("text_tool_calls", True))
 
 
 def main(argv: list[str] | None = None) -> int:

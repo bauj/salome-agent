@@ -26,6 +26,36 @@ _LOAD_TOOLS_DESCRIPTION = (
 _TEXT_CALL_NUDGE = ("You wrote a tool call as text in your reply; tools only run when "
                     "you make them as tool calls. Make the call now as a tool call.")
 
+# A model that keeps sending the same reply without a tool call (calls written
+# as text included) is stuck: end the stage instead of nudging it to the
+# iteration cap (task 395).
+_SAME_REPLY_LIMIT = 3
+
+
+def _not_run_note(n: int) -> str:
+    return (f"\n\nnot run: {n} more call(s) in your reply, written after results you had "
+            "not seen. Make them again if still needed.")
+
+
+def _drop_echoes(calls: list[dict], messages: list[dict], stage: str) -> tuple[list[dict], int]:
+    """Text calls up to the first whose exact text appears in a message the
+    model was given (request, tool result, nudge), and how many were left out:
+    a call copied from its input is not the model's own (task 395)."""
+    heard = [m["content"] if isinstance(m.get("content"), str)
+             else " ".join(p.get("text", "") for p in m.get("content") or []
+                           if isinstance(p, dict))
+             for m in messages if m.get("role") != "assistant"]
+    not_run = calls[-1].get("not_run", 0) if calls else 0
+    for k, c in enumerate(calls):
+        if any(c["text"] in h for h in heard):
+            log.warning("  %s stage: text call %s copies a message it was given; not run",
+                        stage, c["name"])
+            not_run += len(calls) - k
+            calls = calls[:k]
+            break
+    out = [{key: v for key, v in c.items() if key not in ("text", "not_run")} for c in calls]
+    return out, not_run
+
 
 _DISCARD_DESCRIPTION = (
     "Remove shapes you built in this stage for an attempt you abandoned (e.g. "
@@ -248,6 +278,7 @@ class ToolSpecialist:
                 return True
             return False
 
+        last_reply, same_replies = None, 0
         for i in range(iteration_cap):
             if cancelled():
                 return _with_calls(spec.on_exhausted(call_log, last_error), calls)
@@ -304,12 +335,25 @@ class ToolSpecialist:
                 log.debug("    LLM reasoning: %s", response["content"])
             tool_calls = response["tool_calls"]
             names = {d["name"] for d in tools} | set(all_defs)
-            if not tool_calls:
+            not_run = 0
+            content = None if tool_calls else (response["content"] or "")
+            same_replies = same_replies + 1 if content and content == last_reply else 1
+            last_reply = content
+            if same_replies >= _SAME_REPLY_LIMIT:
+                log.warning("  %s stage: the same reply with no tool call %d times in "
+                            "a row; ending the stage", spec.name, same_replies)
+                return _with_calls(spec.on_exhausted(call_log, {
+                    "phase": "llm", "message": "stage ended: the same reply with no "
+                    f"tool call {same_replies} times in a row"}), calls)
+            if not tool_calls and llm.text_tool_calls:
                 schemas = {n: d.get("parameters") for n, d in all_defs.items()}
                 schemas.update((d["name"], d.get("parameters")) for d in tools)
                 tool_calls = text_tool_calls(response["content"], names, schemas)
+                tool_calls, not_run = _drop_echoes(tool_calls, messages, spec.name)
                 if tool_calls:
-                    log.info("  %s stage: tool calls read from the reply text", spec.name)
+                    log.info("  %s stage: %d tool call(s) read from the reply text%s",
+                             spec.name, len(tool_calls),
+                             f", {not_run} after other text not run" if not_run else "")
             log.debug("    LLM -> %s", [(c["name"], c["args"]) for c in tool_calls])
             if not tool_calls:
                 # tool_choice="auto" — the model replied with prose and no call.
@@ -319,8 +363,8 @@ class ToolSpecialist:
                                  **reasoning_field(response.get("reasoning"),
                                                    response.get("raw_message"))})
                 content = response["content"] or ""
-                as_text = "```" in content or any(f'"{n}"' in content or f"<{n}" in content
-                                                  for n in names)
+                as_text = "```" in content or "<call:" in content or any(
+                    f'"{n}"' in content or f"<{n}" in content for n in names)
                 messages.append({"role": "user",
                                  "content": _TEXT_CALL_NUDGE if as_text else spec.no_tool_nudge})
                 continue
@@ -445,6 +489,9 @@ class ToolSpecialist:
                     content += _upstream_change_note(result.get("records"), upstream)
                 messages.append({"role": "tool", "tool_call_id": call_id,
                                  "content": content})
+            if not_run and finish_call is None and messages[-1]["role"] == "tool":
+                messages[-1] = {**messages[-1], "content": messages[-1]["content"]
+                                + _not_run_note(not_run)}
             # A later ok call in the same batch must not mask an earlier failure —
             # settle last_error once per turn from the batch outcome.
             last_error = batch_error

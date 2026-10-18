@@ -1,5 +1,5 @@
 {
-  "llm": { "base_url": "", "api_key": "", "model": "", "ssl_cert_file": "", "temperature": 0, "timeout": 120, "json_retries": 2, "max_retries": 2, "reasoning_budget": 20000, "carry_reasoning": true, "loop_retries": 3, "extra_headers": {}, "extra_body": {}, "module_extra_body": {}, "modules": {} },
+  "llm": { "base_url": "", "api_key": "", "model": "", "ssl_cert_file": "", "temperature": 0, "timeout": 120, "json_retries": 2, "max_retries": 2, "reasoning_budget": 20000, "carry_reasoning": true, "loop_retries": 3, "text_tool_calls": true, "extra_headers": {}, "extra_body": {}, "module_extra_body": {}, "modules": {} },
   "salome": {
     "root": "/path/to/your/SALOME"
   },
