@@ -53,7 +53,7 @@ def test_timeout_poisons_the_backend():
     b = HeadlessBackend(build_namespace=lambda live: _fake_ns())
     b.begin_session(None)
     assert b.poisoned() is False
-    r = b.run_code("while True: pass", timeout=1)
+    r = b.run_code("import time; time.sleep(3)", timeout=1)
     assert r["ok"] is False and "timeout" in r["exception"].lower()
     assert b.poisoned() is True
 
