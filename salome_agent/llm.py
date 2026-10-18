@@ -12,8 +12,9 @@ from salome_agent.logs import log
 from salome_agent.repetition import RepetitionWatch
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
-_TAG_RE = re.compile(r"<([A-Za-z_]\w*)((?:\s+[A-Za-z_]\w*\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*/?>")
-_ATTR_RE = re.compile(r"([A-Za-z_]\w*)\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
+_TAG_START_RE = re.compile(r"<(?:call:)?([A-Za-z_]\w*)")
+_KEY_RE = re.compile(r"[\s,]*([A-Za-z_]\w*)\s*=\s*")
+_BARE_RE = re.compile(r"[^\s,/>]+")
 _JSON_TYPES = {"string": str, "number": (int, float), "integer": int, "boolean": bool,
                "array": list, "object": dict}
 _CANCEL_POLL = 0.1
@@ -267,22 +268,27 @@ def _parse_json_content(content: str):
     """Real LLMs often wrap the JSON in ```json fences or add a sentence of
     prose around it — try the raw string first, then a fenced block, then the
     first balanced {...} span."""
+    return _json_span(content)[0]
+
+
+def _json_span(content: str):
+    """_parse_json_content's value and the exact text it was read from."""
     content = (content or "").strip()
     try:
-        return json.loads(content)
+        return json.loads(content), content
     except json.JSONDecodeError as e:
         first_err = e
     m = _FENCE_RE.search(content)
     if m:
         try:
-            return json.loads(m.group(1))
+            return json.loads(m.group(1)), m.group(1)
         except json.JSONDecodeError:
             pass
     start = content.find("{")
     end = content.rfind("}")
     if start != -1 and end > start:
         try:
-            return json.loads(content[start:end + 1])
+            return json.loads(content[start:end + 1]), content[start:end + 1]
         except json.JSONDecodeError:
             pass
     raise ValueError(
@@ -292,38 +298,124 @@ def _parse_json_content(content: str):
 def text_tool_calls(content: str | None, names, schemas: dict | None = None) -> list[dict]:
     """Tool calls a model wrote in its reply text instead of making them (seen
     with gemma4 on Ollama): as JSON -- [{"tool": {args}}], {"name": ...,
-    "arguments": ...}, or a list of these -- or as tags, <tool key="value" />.
-    Only names in `names` count; a tag's values are typed by `schemas` (tool
-    name -> parameters schema). [] when nothing parses."""
+    "arguments": ...}, or a list of these -- or as tags, <tool key="value" />
+    or <call:tool key=value, .../>. Only names in `names` count; a tag's values
+    are typed by `schemas` (tool name -> parameters schema). [] when nothing
+    parses.
+
+    Each call carries "text", the exact text it was read from. Tags are read
+    only while whitespace alone separates them: a model that writes a call,
+    then the result it expects, then the next call has not seen any real
+    result, so the calls after other text are not returned; the last returned
+    call carries "not_run", how many were left out."""
     if not content:
         return []
     for text in [m.group(1) for m in _FENCE_RE.finditer(content)] or [content]:
         try:
-            calls = _as_calls(_parse_json_content(text), names)
+            obj, src = _json_span(text)
+            calls = _as_calls(obj, names)
         except ValueError:
             continue
         if calls:
-            return calls
+            return [{**c, "text": src} for c in calls]
     return _tag_calls(content, names, schemas or {})
 
 
 def _tag_calls(content: str, names, schemas: dict) -> list[dict]:
     out = []
-    for m in _TAG_RE.finditer(content):
-        if m.group(1) not in names:
+    pos = 0
+    for m in _TAG_START_RE.finditer(content):
+        if m.start() < pos or m.group(1) not in names:
             continue
+        if out and content[pos:m.start()].strip():
+            later = sum(1 for t in _TAG_START_RE.finditer(content, m.start())
+                        if t.group(1) in names)
+            out[-1]["not_run"] = later
+            break
+        tag = _read_tag(content, m)
+        if tag is None:
+            if out:
+                out[-1]["not_run"] = sum(1 for t in _TAG_START_RE.finditer(content, m.start())
+                                         if t.group(1) in names)
+                break
+            continue
+        attrs, end = tag
         schema = schemas.get(m.group(1)) or {}
         props = schema.get("properties") or {}
         args = {}
-        for key, dq, sq in _ATTR_RE.findall(m.group(2)):
-            value = _typed(html.unescape(dq or sq), props.get(key) or {})
+        for key, raw in attrs:
+            value = _typed(raw, props.get(key) or {})
             if value is _NO_FIT:
                 return []
             args[key] = value
         if not set(schema.get("required") or ()) <= set(args):
             return []
-        out.append({"name": m.group(1), "args": args, "id": None})
+        out.append({"name": m.group(1), "args": args, "id": None,
+                    "text": content[m.start():end]})
+        pos = end
     return out
+
+
+def _read_tag(content: str, m) -> tuple[list, int] | None:
+    """The attributes of the tag `m` opens and the index past it (and past its
+    closing tag when one follows at once); None when it is not a whole tag.
+    A value is quoted, a balanced [...] or {...} span, or a bare word."""
+    attrs = []
+    i = m.end()
+    while True:
+        k = _KEY_RE.match(content, i)
+        if k is None:
+            break
+        i = k.end()
+        if i < len(content) and content[i] in "\"'":
+            close = content.find(content[i], i + 1)
+            if close == -1:
+                return None
+            attrs.append((k.group(1), html.unescape(content[i + 1:close])))
+            i = close + 1
+        elif i < len(content) and content[i] in "[{":
+            close = _balanced_end(content, i)
+            if close is None:
+                return None
+            attrs.append((k.group(1), content[i:close]))
+            i = close
+        else:
+            b = _BARE_RE.match(content, i)
+            if b is None:
+                return None
+            attrs.append((k.group(1), b.group(0)))
+            i = b.end()
+    end = re.compile(r"[\s,]*(/?)>").match(content, i)
+    if end is None:
+        return None
+    i = end.end()
+    if not end.group(1):
+        closing = re.compile(rf"\s*</(?:call:)?{m.group(1)}\s*>").match(content, i)
+        if closing:
+            i = closing.end()
+    return attrs, i
+
+
+def _balanced_end(s: str, i: int) -> int | None:
+    """Index past the bracket span opening at s[i], skipping quoted strings."""
+    depth, quote, j = 0, None, i
+    while j < len(s):
+        ch = s[j]
+        if quote:
+            if ch == "\\":
+                j += 1
+            elif ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return None
 
 
 _NO_FIT = object()
@@ -424,7 +516,8 @@ class LLMClient:
                  extra_body: dict | None = None, json_retries: int = 2,
                  module_extra_body: dict | None = None, max_retries: int = 2,
                  modules: dict | None = None, reasoning_budget: int = 0,
-                 carry_reasoning: bool = False, loop_retries: int = 3):
+                 carry_reasoning: bool = False, loop_retries: int = 3,
+                 text_tool_calls: bool = True):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -465,6 +558,9 @@ class LLMClient:
         # a call cut for looping is re-asked without the loop this many times
         # in a row before the stage (or the plan) gives up
         self.loop_retries = loop_retries
+        # Tool-calling calls only: a reply with no tool call is read for calls
+        # written as text (JSON or tags) and those run; False turns that off.
+        self.text_tool_calls = text_tool_calls
         # modules: {"<module>": {<config.MODULE_LLM_KEYS subset>}} — that module's calls
         # go to its own endpoint/model (e.g. a better drawing reader for vision);
         # keys left out keep the shared value. Its extra_body, when given, wins
