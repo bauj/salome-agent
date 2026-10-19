@@ -221,7 +221,7 @@ The agent will:
    `<run_id>/llm_trace.jsonl` (a call cut off, cancelled or dropped still gets a line,
    marked `incomplete`, with what it streamed). `-vv` also writes
    `<run_id>/llm_live.txt` as each call streams: `tail -f` it to watch the model's
-   reasoning while a call is in flight.
+   reasoning while a call is in flight, and the tool calls it ends with.
 3. Write output to `<work_dir>/<run_id>/`:
    - `result.py` — the standalone reproducible script
    - `report.md` — per-stage status, timing and LLM token usage (also printed at the end)
