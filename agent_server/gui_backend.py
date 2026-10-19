@@ -154,6 +154,25 @@ class GuiBackend:
             return r
         return self._invoker.run_on_main(_do, timeout=MAIN_THREAD_TIMEOUT)
 
+    def view_image(self):
+        """The active view as the user sees it, as a PNG data: URI."""
+        def _do():
+            import base64
+            import os
+            import tempfile
+            fd, path = tempfile.mkstemp(suffix=".png", prefix="sa_view_")
+            os.close(fd)
+            try:
+                if not SalomePyQt.SalomePyQt().dumpView(path):
+                    return {"ok": False, "error": "SALOME could not take a picture of the view"}
+                with open(path, "rb") as f:
+                    data = f.read()
+            finally:
+                os.remove(path)
+            return {"ok": True, "image": "data:image/png;base64,"
+                                         + base64.b64encode(data).decode("ascii")}
+        return self._invoker.run_on_main(_do, timeout=MAIN_THREAD_TIMEOUT)
+
     def find_object(self, name):
         def _do():
             fo = self.namespace["find_object"]

@@ -150,6 +150,9 @@ class ExecutorClient:
     def hide(self, names):
         return self._call("hide", MAIN_THREAD_TIMEOUT, names=names)
 
+    def view_image(self):
+        return self._call("view_image", MAIN_THREAD_TIMEOUT)
+
     def shutdown(self):
         return self._call("shutdown")
 
