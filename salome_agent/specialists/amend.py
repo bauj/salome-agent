@@ -63,6 +63,38 @@ DELETE_NODE_DEF = {
         "node": {"type": "string", "description": "node id, e.g. n4"}},
         "required": ["node"]}}
 
+REREAD_IMAGE_DEF = {
+    "name": "reread_image", "category": "amend",
+    "description": ("Read the user's reference image(s) again with their correction. "
+                    "Returns the new reading, which replaces the old one."),
+    "parameters": {"type": "object", "properties": {
+        "correction": {"type": "string",
+                       "description": "what the user says was misread, in their words"},
+        "turn": {"type": "integer",
+                 "description": "the turn the image came with; default the latest"}},
+        "required": ["correction"]}}
+
+LOOK_AT_VIEW_DEF = {
+    "name": "look_at_view", "category": "amend",
+    "description": ("Take a picture of the SALOME viewer as the user sees it now and ask "
+                    "the image-analysis agent a question about it. The reference "
+                    "image(s), if any, go with it for comparison."),
+    "parameters": {"type": "object", "properties": {
+        "question": {"type": "string"}},
+        "required": ["question"]}}
+
+REREAD_HELP = ("If the user says an attached image was read wrong, call reread_image with "
+               "what they say before changing the model; it returns the new reading.")
+LOOK_HELP = ("You only get measurements, not the picture the user sees. When the user says "
+             "something looks wrong, is missing or is extra in the viewer, call "
+             "look_at_view with a question about it before changing anything.")
+UNCHANGED_REFUSAL = ("Nothing in the model changed this turn (any edits were undone or "
+                     "failed). If that is what you meant, call finish_turn again and say in "
+                     "summary that nothing changed and why; otherwise make the change.")
+UNCHANGED_PREFIX = "No change to the model. "
+# calls that never change the model: an unchanged turn made only of these is an answer
+_LOOKS = frozenset({"load_tools", "reread_image", "look_at_view"})
+
 FINISH_TURN = Terminator(
     name="finish_turn",
     schema={"type": "object", "properties": {
@@ -103,8 +135,21 @@ class AmendSession:
     """`module` is the CAD module whose tools this turn adds shapes with; the
     SMESH tools come with it."""
 
-    def __init__(self, graph, client, turn: int, module: str = "geom"):
+    def __init__(self, graph, client, turn: int, module: str = "geom", *, llm=None,
+                 images=None, readings=None, view: bool = False, fix_retries: int = 2):
         self.graph = graph
+        self._start = graph.to_dict()
+        # turn index -> {"request", "images"}: reference images reread_image reads again
+        self.images = dict(images or {})
+        # turn index -> the latest reading of that turn's images
+        self.readings = dict(readings or {})
+        self.view = view
+        self.llm = llm
+        self.fix_retries = fix_retries
+        self.rereads: list[tuple[int, dict]] = []
+        self.tried_change = False
+        self._told_unchanged = False
+        self.tool_category: dict[str, str] = {}
         self.client = client
         self.turn = turn
         self.module = module
@@ -143,8 +188,64 @@ class AmendSession:
                     out.update(m.get("measurements") or {})
         return out or None
 
+    def unchanged(self) -> bool:
+        return self.graph.to_dict() == self._start
+
+    def gate(self, args, call_log, shape_infos) -> str | None:
+        """Refuses, once, a finish_turn after an attempted change that left the
+        model as it was."""
+        if args.get("question") or not self.tried_change or self._told_unchanged:
+            return None
+        if not self.unchanged():
+            return None
+        self._told_unchanged = True
+        return UNCHANGED_REFUSAL
+
+    def finish(self, args, call_log) -> dict:
+        summary = args.get("summary") or ""
+        question = args.get("question") or None
+        if not question and self.unchanged():
+            summary = UNCHANGED_PREFIX + summary
+        return {"summary": summary, "question": question}
+
+    def _reread(self, args: dict) -> dict:
+        from salome_agent.nodes.vision import describe_images
+        from salome_agent.nodes.vision_spec import amend_block
+        shown = args.get("turn")
+        try:
+            turn = max(self.images) if shown in (None, "") else int(shown) - 1
+        except (TypeError, ValueError):
+            turn = None
+        if turn not in self.images:
+            have = ", ".join(str(t + 1) for t in sorted(self.images))
+            return {"ok": False, "error": f"no image came with turn {shown}; images came "
+                                          f"with turn(s) {have}"}
+        src = self.images[turn]
+        spec = describe_images(src["request"], src["images"], self.llm,
+                               fix_retries=self.fix_retries,
+                               earlier=self.readings.get(turn),
+                               correction=args.get("correction") or "")
+        self.readings[turn] = spec
+        self.rereads.append((turn, spec))
+        return {"ok": True, "turn": turn + 1, "reading": amend_block(spec)}
+
+    def _look(self, args: dict) -> dict:
+        from salome_agent.nodes.vision import ask_about_view
+        r = self.client.view_image()
+        if not r.get("ok"):
+            return {"ok": False, "error": r.get("error") or "no picture of the view"}
+        refs = [u for t in sorted(self.images) for u in self.images[t]["images"]]
+        return {"ok": True, "answer": ask_about_view(args.get("question") or "",
+                                                     r["image"], refs, self.llm)}
+
     def execute(self, client, name: str, args: dict) -> dict:
         self._last_module = self.module
+        if name not in _LOOKS and self.tool_category.get(name) != "query":
+            self.tried_change = True
+        if name == "reread_image":
+            return self._reread(args)
+        if name == "look_at_view":
+            return self._look(args)
         try:
             if name == "edit_arg":
                 node, param = args["node"], args["param"]
@@ -228,7 +329,8 @@ def _smesh_howto() -> str:
             "not finish_stage):\n\n" + spec_for("smesh").prompt("final"))
 
 
-_AMEND_KEYS = ("node", "edited", "rebuilt", "deleted", "note", "measurements")
+_AMEND_KEYS = ("node", "edited", "rebuilt", "deleted", "note", "measurements", "turn",
+               "reading", "answer")
 
 
 def _render(result: dict) -> str:
@@ -273,8 +375,13 @@ def _snapshot(client, graph) -> str | None:
     return "Current study, measured now:\n" + "\n".join(lines) if lines else None
 
 
-def _prompt(module: str, cadence: str, meshed: bool = False) -> str:
+def _prompt(module: str, cadence: str, meshed: bool = False, reread: bool = False,
+            view: bool = False) -> str:
     text = AMEND_SYSTEM_PROMPT.format(module=module)
+    if reread:
+        text += "\n\n" + REREAD_HELP
+    if view:
+        text += "\n\n" + LOOK_HELP
     if module == "shaper":
         text += ("\n\nHow the SHAPER tools work (in this turn finish_turn ends it, "
                  "not finish_stage):\n\n" + spec_for("shaper").prompt(cadence))
@@ -301,13 +408,21 @@ def _spec(session: AmendSession) -> ModuleSpec:
             session.tool_module[n] = "smesh"
         defs["edit_arg"] = EDIT_ARG_DEF
         defs["delete_node"] = DELETE_NODE_DEF
+        if session.images:
+            defs["reread_image"] = REREAD_IMAGE_DEF
+        if session.view:
+            defs["look_at_view"] = LOOK_AT_VIEW_DEF
+        session.tool_category = {n: d.get("category") for n, d in defs.items()}
         return defs
 
     core = base.core_tools | (smesh.core_tools if session.meshed else frozenset())
     return ModuleSpec(
         name="amend",
-        prompt=lambda cadence: _prompt(session.module, cadence, session.meshed),
-        terminator=FINISH_TURN,
+        prompt=lambda cadence: _prompt(session.module, cadence, session.meshed,
+                                       bool(session.images), session.view),
+        terminator=Terminator(name=FINISH_TURN.name, schema=FINISH_TURN.schema,
+                              description=FINISH_TURN.description, handle=session.finish),
+        gate=session.gate,
         extra_terminators=(REPLAN,),
         execute=session.execute,
         render_result=session.render,
@@ -352,7 +467,10 @@ def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
         blocks.append("The model you are amending should match this description unless "
                       "the user says otherwise.")
     blocks.append(f"The user says: {text}")
-    stage_plan = {"module": "amend", "intent": text, "tools": ["edit_arg", "delete_node"]}
+    tools = ["edit_arg", "delete_node"]
+    tools += ["reread_image"] if session.images else []
+    tools += ["look_at_view"] if session.view else []
+    stage_plan = {"module": "amend", "intent": text, "tools": tools}
     outcome = ToolSpecialist(_spec(session)).run(
         stage_plan, llm, client, policy["tool_iteration_cap"], blocks=tuple(blocks),
         tool_selection=policy.get("tool_selection", "hints"),

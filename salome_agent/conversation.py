@@ -60,6 +60,9 @@ class Conversation:
         # what /undo took back, newest last: (graph, turn_idx, history)
         self._redo: list[tuple] = []
         self._stray: set[str] = set()
+        # turn index -> {"request", "images"}: kept for reread_image and look_at_view,
+        # outside the graph state so the base64 is not carried through every step
+        self._images: dict[int, dict] = {}
 
     def _event(self, on_event, kind, **data):
         on_event({"kind": kind, "run_id": self.run_id, "data": data})
@@ -92,8 +95,13 @@ class Conversation:
                             reference_images=list(images) if images else None)
         inp.update(build_graph=self.graph.to_dict(), turn_idx=n, selection=selection,
                    history=list(self.history))
+        if images:
+            self._images[n] = {"request": text, "images": list(images)}
+        else:
+            self._images.pop(n, None)
         cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": self.llm,
-                                "executor_client": self.client}}
+                                "executor_client": self.client,
+                                "turn_images": dict(self._images)}}
         shown: list[str] = []
 
         def on_stage_event(ev: dict) -> None:
@@ -114,8 +122,11 @@ class Conversation:
                 self._viewer("hide", consumed)
             show_results(self.client, self.graph.to_dict())
         outcome = final.get("turn_outcome") or {}
-        if final.get("image_spec") and result.status in ("ok", "needs_input"):
-            self.history.append({"event": "image", "turn": n, "spec": final["image_spec"]})
+        if result.status in ("ok", "needs_input"):
+            if final.get("image_spec"):
+                self.history.append({"event": "image", "turn": n, "spec": final["image_spec"]})
+            for t, spec in outcome.get("image_rereads") or ():
+                self.history.append({"event": "image", "turn": t, "spec": spec})
         self.history.append({"event": "turn", "turn": n, "text": text,
                              "status": result.status,
                              "summary": outcome.get("summary") or _built(final)})

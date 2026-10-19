@@ -222,3 +222,42 @@ def test_a_second_reasoning_cut_ends_the_vision_step():
 
 def test_the_vision_prompt_says_to_move_on_from_an_unclear_feature():
     assert "do not reopen it" in VISION_SYSTEM_PROMPT
+
+
+def test_a_re_read_carries_the_earlier_reading_and_the_correction():
+    llm = MagicMock()
+    llm.chat.return_value = box_spec()
+    earlier = {"summary": "two rings"}
+    describe_images("make this", ["data:image/png;base64,AAAA"], llm,
+                    earlier=earlier, correction="the bottom has two curved slots")
+    text = llm.chat.call_args.kwargs["messages"][1]["content"][0]["text"]
+    assert '"two rings"' in text
+    assert "The user says this reading is wrong: the bottom has two curved slots" in text
+    assert "whole corrected JSON spec" in text
+
+
+def test_ask_about_view_sends_the_view_first_then_the_references():
+    from salome_agent.nodes.vision import ask_about_view
+    llm = MagicMock()
+    llm.chat.return_value = {"answer": "the dome is not drawn"}
+    out = ask_about_view("is the dome there?", "data:image/png;base64,VV",
+                         ["data:image/png;base64,RR"], llm)
+    assert out == "the dome is not drawn"
+    kwargs = llm.chat.call_args.kwargs
+    assert kwargs["module"] == "vision"
+    content = kwargs["messages"][1]["content"]
+    assert "is the dome there?" in content[0]["text"]
+    assert "Image 1 is the SALOME viewer" in content[0]["text"]
+    assert "Image 2 is the user's reference" in content[0]["text"]
+    assert [c["image_url"]["url"] for c in content[1:]] == [
+        "data:image/png;base64,VV", "data:image/png;base64,RR"]
+
+
+def test_ask_about_view_without_references_or_answer():
+    from salome_agent.nodes.vision import ask_about_view
+    llm = MagicMock()
+    llm.chat.return_value = {"something": 1}
+    out = ask_about_view("what is drawn?", "data:image/png;base64,VV", [], llm)
+    text = llm.chat.call_args.kwargs["messages"][1]["content"][0]["text"]
+    assert "reference" not in text
+    assert out.startswith("The image-analysis agent gave no answer")

@@ -155,12 +155,18 @@ def _replan_context(state: dict, graph, reason: str = "") -> str:
             + _earlier_requests(state))
 
 
+def _readings(state: dict) -> dict:
+    """turn index -> the latest reading of that turn's images (reread_image adds
+    a newer one for the same turn)."""
+    return {e["turn"]: e["spec"] for e in state.get("history") or []
+            if e.get("event") == "image"}
+
+
 def _earlier_images(state: dict) -> list:
-    """(turn number, amend block) of every image reading of an earlier turn: a
-    later image can be a picture of the result, so none replaces the others."""
+    """(turn number, amend block) of every earlier turn's image reading: a later
+    image can be a picture of the result, so none replaces the others."""
     from salome_agent.nodes.vision_spec import amend_block
-    return [(e["turn"] + 1, amend_block(e["spec"])) for e in state.get("history") or []
-            if e.get("event") == "image"]
+    return [(t + 1, amend_block(spec)) for t, spec in sorted(_readings(state).items())]
 
 
 def _amend_node(state: dict, config: "RunnableConfig"):
@@ -176,7 +182,16 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     log.info("amend turn %d: %s", turn + 1, state["user_request"])
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
-    session = amend.AmendSession(graph, client, turn, _amend_module(state, graph))
+    readings = _readings(state)
+    if state.get("image_spec"):
+        readings[turn] = state["image_spec"]
+    images = {t: v for t, v in (config["configurable"].get("turn_images") or {}).items()
+              if t in readings}
+    retries = ((state.get("config") or {}).get("llm") or {}).get("vision_fix_retries", 2)
+    session = amend.AmendSession(graph, client, turn, _amend_module(state, graph), llm=llm,
+                                 images=images, readings=readings,
+                                 view=getattr(client, "mode", None) == "gui",
+                                 fix_retries=retries)
     extra = {}
     earlier = _earlier_images(state)
     if earlier:
@@ -201,6 +216,8 @@ def _amend_node(state: dict, config: "RunnableConfig"):
         log.error("  %s", msg)
         return Command(update={"fatal": msg, "build_graph": session.graph.to_dict()},
                        goto="assemble")
+    if session.rereads:
+        outcome = {**outcome, "image_rereads": session.rereads}
     update = {"build_graph": session.graph.to_dict(), "turn_outcome": outcome,
               "history": session.events}
     if "fatal" in outcome:
