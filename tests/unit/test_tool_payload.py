@@ -63,8 +63,9 @@ def test_geom_tool_payload_is_pinned():
         "properties": {
             "result_names": {"type": "array", "items": {"type": "string"}},
             "built": {"type": "string", "description": (
-                "One sentence: what this stage built, with its main sizes (e.g. "
-                "'revolved vase body, wall 2 mm, rim filleted 0.5 mm').")},
+                "One sentence: what this stage built, with its main sizes, naming every "
+                "feature it made, also those beyond this stage's job (e.g. 'revolved vase "
+                "body, wall 2 mm, rim filleted 0.5 mm').")},
         },
         "required": ["result_names", "built"],
     }
