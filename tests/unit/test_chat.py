@@ -96,3 +96,39 @@ def test_ended_conversation_exits_1():
 def test_redo_command():
     conv, out, _ = _run(["/redo"])
     assert conv.redone == 1 and "/redo" in out
+
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 8
+
+
+def _png(path):
+    path.write_bytes(_PNG)
+    return str(path)
+
+
+def test_image_command_attaches_images_to_that_turn(tmp_path):
+    a, b = _png(tmp_path / "a.png"), _png(tmp_path / "b.png")
+    conv, _, _ = _run([f"/image {a},{b} the bars are missing", "next", "/quit"])
+    assert conv.turns == ["a house", "the bars are missing", "next"]
+    assert [len(i) if i else i for i in conv.images] == [None, 2, None]
+    assert conv.images[1][0].startswith("data:image/png;base64,")
+
+
+def test_image_command_takes_a_quoted_path_with_spaces(tmp_path):
+    (tmp_path / "my shots").mkdir()
+    p = _png(tmp_path / "my shots" / "view 1.png")
+    conv, _, _ = _run([f'/image "{p}" this is what I got', "/quit"])
+    assert conv.turns[1] == "this is what I got"
+    assert len(conv.images[1]) == 1
+
+
+def test_image_command_without_text_asks_to_build_what_the_image_shows(tmp_path):
+    conv, _, _ = _run([f"/image {_png(tmp_path / 'a.png')}", "/quit"])
+    assert conv.turns[1] == "Build what the attached image(s) show."
+
+
+def test_image_command_with_a_bad_path_is_an_error_line_not_a_turn(tmp_path):
+    conv, out, code = _run([f"/image {tmp_path / 'nope.png'} hi", "/image", "/quit"])
+    assert conv.turns == ["a house"]
+    assert "nope.png" in out and "usage: /image" in out
+    assert code == 0

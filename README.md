@@ -321,6 +321,7 @@ Commands:
 | `/show` | print the build graph |
 | `/result` | print `result.py` |
 | `/rebuild` | rebuild the whole study from the model (after a failed rollback) |
+| `/image PATH[,PATH] [request]` | a request with reference image(s), as `--images` gives the first turn; quote a path with spaces; with no request, "Build what the attached image(s) show." |
 | `/quit` | leave (Ctrl-D too) |
 
 One executor connection and one LLM session serve the whole conversation. An edit
