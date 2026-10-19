@@ -171,6 +171,7 @@ def test_cut_that_misses_is_refused_and_undone(agent_client):
                 through_all=True)
     assert cut["ok"] is False
     assert "nothing was removed" in cut["error"] and "[0.0, 0.0, 1.0]" in cut["error"]
+    assert "does not reach" in cut["error"]
     # the target is not concealed by the undone cut
     hole = _call(agent_client, "create_sketch", plane="XOY")
     _call(agent_client, "sketch_add", sketch=hole["sketch"], entities=[
@@ -179,6 +180,29 @@ def test_cut_that_misses_is_refused_and_undone(agent_client):
     cut = _call(agent_client, "extrude_cut", base=hole["sketch"], target=ext["name"],
                 through_all=True)
     assert cut["ok"] is True, cut.get("error")
+
+
+def test_cut_inside_an_existing_hole_says_there_is_no_material(agent_client):
+    name, r = _plate(agent_client)
+    _call(agent_client, "close_sketch", sketch=name)
+    outer = next(g["index"] for g in r["regions"] if round(g["area"], 2) == 721.46)
+    face = _call(agent_client, "make_face", sketch=name, regions=[outer])
+    ext = _call(agent_client, "extrude", base=face["name"], size=10)
+    inner = _call(agent_client, "create_sketch", plane="XOY")
+    _call(agent_client, "sketch_add", sketch=inner["sketch"], entities=[
+        {"id": "C", "type": "circle", "center": [20, 10], "radius": 2}])
+    _call(agent_client, "close_sketch", sketch=inner["sketch"])
+    for extent in ({"size": 10}, {"through_all": True}):
+        cut = _call(agent_client, "extrude_cut", base=inner["sketch"], target=ext["name"],
+                    **extent)
+        assert cut["ok"] is False
+        assert "has no material" in cut["error"] and "does not reach" not in cut["error"]
+    names = {o["name"] for o in _call(agent_client, "list_study_objects")["objects"]}
+    assert not any(n.endswith("_probe") for n in names)
+    box = _call(agent_client, "make_box", center=[20, 10, 5], dx=4, dy=4, dz=20)
+    cut = _call(agent_client, "cut", objects=[ext["name"]], tools=[box["name"]])
+    assert cut["ok"] is True, cut.get("error")
+    assert "has no material" in cut["delta"]
 
 
 def test_xoz_sketch_normal_is_minus_y_and_a_cut_along_it_misses(agent_client):
