@@ -1,7 +1,9 @@
+import math
+
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
     CONSTRUCTION, PUBLISH_LINE, construction_info, forget, measure, new_name, publish_study,
-    record, sketch_frame, sketch_of, state, tool, transaction,
+    raw_box, record, sketch_frame, sketch_of, state, tool, transaction,
 )
 
 _AXES = ("OX", "OY", "OZ")
@@ -242,11 +244,53 @@ def _boolean_extrusion(executor, args: dict, op: str) -> dict:
                 if base in st.sketches:
                     n = [round(c, 6) + 0.0 for c in sketch_frame(st.sketches[base])[3]]
                     along += f" {n}"
-            return {"ok": False, "error": (
-                f"addExtrusion{op}: nothing was {what} — the extrusion of {base} along "
-                f"{along} does not reach {target}, so it was undone. Give direction, or "
-                f"from_size to extrude the other way.")}
+            head = f"addExtrusion{op}: nothing was {what} — the extrusion of {base} along {along}"
+            box = _extrusion_box(executor, name, sels, refs, direction, args, target)
+            if box is None:
+                why = (f"left {target} unchanged, so it was undone (where the extrusion "
+                       f"lies could not be checked).")
+            elif not _boxes_overlap(box, out["measure"]["bbox"]):
+                why = (f"does not reach {target}, so it was undone. Give direction, or "
+                       f"from_size to extrude the other way.")
+            elif op == "Cut":
+                why = (f"lies only where {target} has no material (for example a hole or "
+                       f"cut-out already there), so it was undone. Measure {target} and "
+                       f"compare it with what you expect before cutting again.")
+            else:
+                why = (f"lies only inside {target}'s material, so it was undone. Measure "
+                       f"{target} and compare it with what you expect before adding again.")
+            return {"ok": False, "error": f"{head} {why}"}
     return out
+
+
+def _extrusion_box(executor, name: str, sels: list, refs: list, direction: str,
+                   args: dict, target: str) -> list | None:
+    """Bounding box of the plain extrusion a boolean extrusion swept, built and
+    removed again; through_all is swept far enough to cross the whole target."""
+    if args.get("through_all"):
+        try:
+            boxes = [raw_box(executor, n) for n in [*refs, target]]
+        except Exception:  # noqa: BLE001
+            return None
+        lo = [min(b[i] for b in boxes) for i in range(3)]
+        hi = [max(b[i + 3] for b in boxes) for i in range(3)]
+        size, back = math.dist(lo, hi) + 1.0, 0
+    else:
+        size, back = _size(args)
+    probe = f"{name}_probe"
+    code = (f"{probe} = model.addExtrusion(shaper_doc, [{', '.join(sels)}], "
+            f"{direction}, {size!r}, {back!r})")
+    built = _build(executor, probe, "addExtrusion", code, refs, "solid")
+    if not built["ok"]:
+        return None
+    forget(executor, [probe])
+    return built["measure"]["bbox"]
+
+
+def _boxes_overlap(a: list, b: list) -> bool:
+    """Boxes as [xmin, xmax, ymin, ymax, zmin, zmax] share some volume, not
+    just a face."""
+    return all(min(a[i + 1], b[i + 1]) - max(a[i], b[i]) > 1e-6 for i in (0, 2, 4))
 
 
 @tool("extrude_cut", category="swept",
@@ -309,13 +353,19 @@ def _boolean(executor, args: dict, op: str) -> dict:
         code = f"{name} = model.addFuse(shaper_doc, [{', '.join(objs)}], True)"
         return _build(executor, name, "addFuse", code, refs, "boolean")
     tools, trefs = _operands(executor, args.get("tools"), "tools")
-    before = _amount([measure(executor, n) for n in refs])
+    infos = [measure(executor, n) for n in refs]
+    before = _amount(infos)
+    tool_boxes = [measure(executor, n)["bbox"] for n in trefs] if op == "Cut" else []
     code = f"{name} = model.add{op}(shaper_doc, [{', '.join(objs)}], [{', '.join(tools)}])"
     out = _build(executor, name, f"add{op}", code, refs + trefs, "boolean")
     if out["ok"] and op == "Cut":
         if abs(_amount([out["measure"]]) - before) <= 1e-6 * max(1.0, before):
-            out["delta"] = (f"{name}: nothing was removed — {', '.join(trefs)} does not "
-                            f"overlap {', '.join(refs)}")
+            if any(_boxes_overlap(t, m["bbox"]) for t in tool_boxes for m in infos):
+                why = (f"{', '.join(trefs)} lies only where {', '.join(refs)} has no "
+                       f"material (for example a hole or cut-out already there)")
+            else:
+                why = f"{', '.join(trefs)} does not overlap {', '.join(refs)}"
+            out["delta"] = f"{name}: nothing was removed — {why}"
     return out
 
 
