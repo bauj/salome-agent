@@ -379,3 +379,30 @@ def test_the_geom_refusal_names_objects_without_the_run_prefix():
     state = {"turn_idx": 1, "user_request": "add a rib in SHAPER", "build_graph": g.to_dict(),
              "session": {"name_prefix": "sa_r1_"}}
     assert "(box_1)" in _cross_module(state)
+
+
+def test_amend_session_gets_the_stored_images_their_readings_and_the_view(tmp_path,
+                                                                          monkeypatch):
+    from types import SimpleNamespace
+    from salome_agent.specialists import amend as amend_mod
+
+    seen = {}
+
+    def fake_run_amend(text, graph, llm, client, turn, policy, session=None, **kw):
+        seen["session"] = session
+        return session, {"summary": "ok", "question": None}
+
+    monkeypatch.setattr(amend_mod, "run_amend", fake_run_amend)
+    state = _state(tmp_path, _graph(), "you misread it", turn=2)
+    state["history"] = [{"event": "image", "turn": 0, "spec": {"summary": "rings"}},
+                        {"event": "image", "turn": 0, "spec": {"summary": "slots"}}]
+    stored = {0: {"request": "like this", "images": ["data:image/png;base64,A"]},
+              1: {"request": "undone", "images": ["data:image/png;base64,B"]}}
+    client = SimpleNamespace(mode="gui")
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": client, "turn_images": stored}}
+    build_graph(batch=True).invoke(state, config=cfg)
+    s = seen["session"]
+    assert s.images == {0: stored[0]}
+    assert s.readings == {0: {"summary": "slots"}}
+    assert s.view is True

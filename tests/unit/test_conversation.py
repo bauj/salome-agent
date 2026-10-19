@@ -328,3 +328,25 @@ def test_a_planned_turn_records_what_its_stages_built(conv, monkeypatch):
         2: {"status": "ok", "built": "four slots"}}})
     conv.turn("like this", on_event=lambda e: None, on_gate=None)
     assert conv.history[-1]["summary"] == "a plate of diameter 100; four slots"
+
+
+def test_images_stay_with_the_conversation_and_a_reread_replaces_the_reading(conv, monkeypatch):
+    seen = []
+    finals = iter([
+        {"build_graph": _graph_with(1).to_dict(), "image_spec": {"summary": "rings"}},
+        {"build_graph": _graph_with(1).to_dict(),
+         "turn_outcome": {"summary": "re-read", "image_rereads": [(0, {"summary": "slots"})]}},
+    ])
+
+    def fake(app, inp, cfg, mapper, llm, on_event, on_gate, cancel):
+        seen.append(cfg["configurable"]["turn_images"])
+        return {**inp, **next(finals)}
+
+    monkeypatch.setattr(conv_mod, "drive", fake)
+    conv.turn("this plate", images=["data:image/png;base64,AAAA"], on_event=lambda e: None,
+              on_gate=None)
+    conv.turn("you misread it", on_event=lambda e: None, on_gate=None)
+    assert seen[1] == {0: {"request": "this plate", "images": ["data:image/png;base64,AAAA"]}}
+    from salome_agent.graph import _earlier_images, _readings
+    assert _readings({"history": conv.history}) == {0: {"summary": "slots"}}
+    assert len(_earlier_images({"history": conv.history})) == 1

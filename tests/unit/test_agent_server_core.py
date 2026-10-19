@@ -45,6 +45,9 @@ class FakeBackend:
     def poisoned(self):
         return self._poisoned
 
+    def view_image(self):
+        return {"ok": True, "image": "data:image/png;base64,AA"}
+
 
 def test_hello_begins_session_and_returns_prefix():
     b = FakeBackend()
@@ -86,6 +89,17 @@ def test_unknown_command():
     resp = Core(FakeBackend()).handle({"id": 3, "cmd": "frobnicate"})
     assert resp["ok"] is False
     assert "unknown" in resp["exception"]
+
+
+def test_view_image_answers_with_the_backend_picture():
+    resp = Core(FakeBackend()).handle({"id": 4, "cmd": "view_image"})
+    assert resp == {"id": 4, "ok": True, "image": "data:image/png;base64,AA"}
+
+
+def test_headless_backend_has_no_view():
+    from agent_server.backend import HeadlessBackend
+    r = HeadlessBackend.view_image(None)
+    assert r["ok"] is False and "no viewer" in r["error"]
 
 
 class FakeToolModule:

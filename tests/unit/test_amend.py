@@ -410,8 +410,8 @@ def test_a_finish_turn_written_as_a_tag_ends_the_turn():
     llm = MagicMock()
     llm.chat.side_effect = [{"tool_calls": [], "content": GEMMA_TAG, "raw_message": None}]
     _, outcome = run_amend("use smesh for that", _graph(), llm, FakeClient(), 1, POLICY)
-    assert outcome["summary"] == ("No changes made as meshing tools are not available in the "
-                                  "current toolset.")
+    assert outcome["summary"] == ("No change to the model. No changes made as meshing tools "
+                                  "are not available in the current toolset.")
     assert llm.chat.call_count == 1
 
 
@@ -432,3 +432,112 @@ def test_an_unreadable_tag_gets_the_text_call_nudge():
     run_amend("move it", _graph(), llm, FakeClient(), 1, POLICY)
     nudge = llm.chat.call_args_list[1].kwargs["messages"][-1]["content"]
     assert "You wrote a tool call as text" in nudge
+
+
+def _png_turns():
+    return {0: {"request": "this plate", "images": ["data:image/png;base64,IMG"]}}
+
+
+def _tool_names(llm):
+    return {t["name"] for t in llm.chat.call_args.kwargs["tools"]}
+
+
+def test_reread_and_look_are_offered_only_when_they_can_work():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("finish_turn", {"summary": "ok"}))]
+    run_amend("t", _graph(), llm, FakeClient(), 1, POLICY)
+    assert not {"reread_image", "look_at_view"} & _tool_names(llm)
+    assert "reread_image" not in llm.chat.call_args.kwargs["messages"][0]["content"]
+    llm.chat.side_effect = [_resp(("finish_turn", {"summary": "ok"}))]
+    session = AmendSession(_graph(), FakeClient(), 1, images=_png_turns(), view=True, llm=llm)
+    run_amend("t", session.graph, llm, session.client, 1, POLICY, session=session)
+    assert {"reread_image", "look_at_view"} <= _tool_names(llm)
+    system = llm.chat.call_args.kwargs["messages"][0]["content"]
+    assert "call reread_image" in system and "call look_at_view" in system
+
+
+def test_reread_image_reads_again_with_the_earlier_reading_and_the_correction(monkeypatch):
+    from salome_agent.nodes import vision
+    from tests.unit.test_vision_spec import box_spec
+    seen = {}
+
+    def fake_describe(request, images, llm, fix_retries=2, on_progress=None, earlier=None,
+                      correction=None):
+        seen.update(request=request, images=images, earlier=earlier, correction=correction)
+        return box_spec()
+
+    monkeypatch.setattr(vision, "describe_images", fake_describe)
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("reread_image", {"correction": "slots, not rings"})),
+                            _resp(("finish_turn", {"summary": "re-read"}))]
+    session = AmendSession(_graph(), FakeClient(), 1, images=_png_turns(),
+                           readings={0: {"summary": "rings"}}, llm=llm)
+    session, outcome = run_amend("you misread it", session.graph, llm, session.client, 1,
+                                 POLICY, session=session)
+    assert seen == {"request": "this plate", "images": ["data:image/png;base64,IMG"],
+                    "earlier": {"summary": "rings"}, "correction": "slots, not rings"}
+    assert session.rereads == [(0, box_spec())]
+    assert session.readings[0] == box_spec()
+    reply = llm.chat.call_args.kwargs["messages"][-1]["content"]
+    assert "'turn': 1" in reply and "Reference image spec" in reply
+    # reading again changes nothing in the model: an answer, not a refused finish
+    assert outcome["summary"] == "No change to the model. re-read"
+
+
+def test_reread_image_of_a_turn_without_images_is_an_error():
+    session = AmendSession(_graph(), FakeClient(), 1, images=_png_turns(), llm=MagicMock())
+    r = session.execute(None, "reread_image", {"correction": "x", "turn": 3})
+    assert r["ok"] is False and "turn(s) 1" in r["error"]
+
+
+def test_look_at_view_sends_the_view_and_the_references(monkeypatch):
+    from salome_agent.nodes import vision
+    seen = {}
+
+    def fake_ask(question, view, references, llm):
+        seen.update(question=question, view=view, references=references)
+        return "the dome is missing"
+
+    monkeypatch.setattr(vision, "ask_about_view", fake_ask)
+    client = FakeClient()
+    client.view_image = lambda: {"ok": True, "image": "data:image/png;base64,VIEW"}
+    session = AmendSession(_graph(), client, 1, images=_png_turns(), view=True,
+                           llm=MagicMock())
+    r = session.execute(client, "look_at_view", {"question": "is the dome there?"})
+    assert r == {"ok": True, "answer": "the dome is missing"}
+    assert seen == {"question": "is the dome there?", "view": "data:image/png;base64,VIEW",
+                    "references": ["data:image/png;base64,IMG"]}
+    client.view_image = lambda: {"ok": False, "error": "no viewer"}
+    assert session.execute(client, "look_at_view", {"question": "q"}) == {
+        "ok": False, "error": "no viewer"}
+
+
+def test_an_attempted_change_that_left_the_model_as_it_was_is_refused_once():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("edit_arg", {"node": "n1", "param": "dz", "value": "3"})),
+        _resp(("edit_arg", {"node": "n1", "param": "dz", "value": "1"})),
+        _resp(("finish_turn", {"summary": "forced a rebuild"})),
+        _resp(("finish_turn", {"summary": "nothing changed: dz is back to 1"}))]
+    _, outcome = run_amend("the dome is missing", _graph(), llm, FakeClient(), 1, POLICY)
+    refusal = llm.chat.call_args_list[3].kwargs["messages"][-1]["content"]
+    assert "Nothing in the model changed this turn" in refusal
+    assert outcome["summary"] == "No change to the model. nothing changed: dz is back to 1"
+
+
+def test_an_unchanged_turn_that_asks_a_question_is_neither_refused_nor_prefixed():
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("edit_arg", {"node": "n9", "param": "dz", "value": "3"})),
+        _resp(("finish_turn", {"summary": "nothing", "question": "which box?"}))]
+    _, outcome = run_amend("make it taller", _graph(), llm, FakeClient(), 1, POLICY)
+    assert outcome == {"summary": "nothing", "question": "which box?"}
+
+
+def test_a_turn_that_only_measured_is_not_refused():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("measure", {"names": ["box_1"]})),
+                            _resp(("finish_turn", {"summary": "it is 1 mm tall"}))]
+    _, outcome = run_amend("how tall is it?", _graph(), llm, FakeClient(), 1, POLICY)
+    assert outcome["summary"] == "No change to the model. it is 1 mm tall"
+    assert llm.chat.call_count == 2
