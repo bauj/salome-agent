@@ -123,7 +123,7 @@ class Conversation:
             show_results(self.client, self.graph.to_dict())
         outcome = final.get("turn_outcome") or {}
         if result.status in ("ok", "needs_input"):
-            if final.get("image_spec"):
+            if images and final.get("image_spec"):
                 self.history.append({"event": "image", "turn": n, "spec": final["image_spec"]})
             for t, spec in outcome.get("image_rereads") or ():
                 self.history.append({"event": "image", "turn": t, "spec": spec})
