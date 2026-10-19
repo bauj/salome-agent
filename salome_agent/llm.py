@@ -703,8 +703,8 @@ class LLMClient:
         except OSError as e:
             log.warning("could not open %s: %s", path, e)
             return
-        self._live_write(f"\n=== {time.strftime('%H:%M:%S')} {module or 'call'} "
-                         f"attempt {attempt} ===\n")
+        retry = f" retry {attempt - 1}" if attempt > 1 else ""
+        self._live_write(f"\n=== {time.strftime('%H:%M:%S')} {module or 'call'}{retry} ===\n")
 
     def _live_write(self, text: str, channel: str | None = None) -> None:
         if self._live is None:
@@ -718,6 +718,18 @@ class LLMClient:
         except (OSError, ValueError) as e:
             log.warning("could not write llm_live.txt: %s", e)
             self._live = None
+
+    def _live_tool_calls(self, message: dict) -> None:
+        """Tool calls stream as fragments, not text: written once assembled."""
+        lines = []
+        for call in message.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            args = fn.get("arguments")
+            if not isinstance(args, str):
+                args = json.dumps(args, ensure_ascii=False)
+            lines.append(f"{fn.get('name')} {args}\n")
+        if lines:
+            self._live_write("".join(lines), "tool calls")
 
     def _live_close(self) -> None:
         if self._live is not None:
@@ -973,6 +985,7 @@ class LLMClient:
                     raise
                 self._pause(_backoff_seconds(attempt))
                 t0 = time.monotonic()
+        self._live_tool_calls(message)
         self._live_write(f"\n=== finish={finish}, {time.monotonic() - t0:.1f}s ===\n")
         self._live_close()
         self.usage["llm_seconds"] += time.monotonic() - t0
