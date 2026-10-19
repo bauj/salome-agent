@@ -83,7 +83,10 @@ agent read it from the user's reference image(s): one entry per part, each with
 an id (P1, P2, ...). Shape your stages around those parts and give every stage
 that builds one of them a "parts" list of their ids, e.g. "parts": ["P1"]; that
 stage is handed the part's exact data. Never restate a part's numbers in intent
-or params -- refer to it by id. Several views described together are ONE object,
+or params -- refer to it by id. Do not describe a listed part's shape either (no
+"rectangular", "round", "L-shaped"): write "the main plate (P1)" and let the
+stage build it from its data. A stage that adds features to a listed part (its
+holes, slots, pockets) lists that part too. Several views described together are ONE object,
 not separate parts. Explicit numeric dimensions in the text request still win:
 put those in params. Mention listed uncertainties or conflicts in a stage's
 params rather than inventing detail."""
