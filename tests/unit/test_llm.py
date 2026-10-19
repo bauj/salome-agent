@@ -1402,6 +1402,25 @@ def test_dropped_attempt_is_traced_then_the_retry(tmp_path, monkeypatch):
     assert partial["tool_calls"][0]["function"] == {"name": "mk", "arguments": '{"a"'}
     assert "incomplete" not in second["response"]
     assert second["response"]["message"]["content"] == "ok"
+    assert " call retry 1 ===" in (tmp_path / "llm_live.txt").read_text()
+
+
+def test_live_file_lists_the_tool_calls_before_the_finish_line(tmp_path, monkeypatch):
+    lines = [_THINK,
+             'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", '
+             '"function": {"name": "extrude", "arguments": "{\\"height\\": 10}"}}]}}]}',
+             'data: {"choices": [{"delta": {"tool_calls": [{"index": 1, "id": "c2", '
+             '"function": {"name": "finish_stage", "arguments": "{}"}}]}, '
+             '"finish_reason": "tool_calls"}]}',
+             "data: [DONE]"]
+    monkeypatch.setattr("salome_agent.llm.requests.post", _sse_post(lines))
+    client = LLMClient("http://x/v1", "", "auto", trace_path=str(tmp_path / "llm_trace.jsonl"))
+    client.chat(messages=[{"role": "user", "content": "x"}], module="shaper",
+                tools=[{"name": "extrude", "parameters": {"type": "object"}},
+                       {"name": "finish_stage", "parameters": {"type": "object"}}])
+    live = (tmp_path / "llm_live.txt").read_text()
+    assert '--- tool calls ---\nextrude {"height": 10}\nfinish_stage {}\n' in live
+    assert live.index("--- tool calls ---") < live.index("finish=tool_calls")
 
 
 def test_live_file_gets_reasoning_and_content_as_they_stream(tmp_path, monkeypatch):
@@ -1413,7 +1432,7 @@ def test_live_file_gets_reasoning_and_content_as_they_stream(tmp_path, monkeypat
     client = LLMClient("http://x/v1", "", "auto", trace_path=str(tmp_path / "llm_trace.jsonl"))
     client.chat(messages=[{"role": "user", "content": "x"}], module="planner")
     live = (tmp_path / "llm_live.txt").read_text()
-    assert "planner" in live and "attempt 1" in live
+    assert "=== " in live and " planner ===" in live and "retry" not in live
     assert "hmm hmm " in live and '{"stages": []}' in live
     assert live.index("hmm") < live.index("stages")
     assert "finish=stop" in live
