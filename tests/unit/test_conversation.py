@@ -321,6 +321,21 @@ def test_an_image_reading_reaches_later_turns_until_undone(conv, monkeypatch):
     assert seen[2] == []
 
 
+def test_a_replanned_turn_without_images_records_no_reading_of_its_own(conv, monkeypatch):
+    # a replan carries an earlier turn's reading in image_spec; it is not this turn's
+    finals = iter([{"image_spec": {"summary": "a plate"}}, {"image_spec": {"summary": "a plate"}}])
+
+    def fake(app, inp, cfg, mapper, llm, on_event, on_gate, cancel):
+        return {**inp, "build_graph": _graph_with(1).to_dict(), **next(finals)}
+
+    monkeypatch.setattr(conv_mod, "drive", fake)
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    conv.turn("like this", images=["data:image/png;base64,AAAA"], on_event=lambda e: None,
+              on_gate=None)
+    conv.turn("start over", on_event=lambda e: None, on_gate=None)
+    assert [e["turn"] for e in conv.history if e["event"] == "image"] == [0]
+
+
 def test_a_planned_turn_records_what_its_stages_built(conv, monkeypatch):
     _fake_drive(monkeypatch, {"build_graph": _graph_with(1).to_dict(), "stages": {
         0: {"status": "ok", "built": "a plate of diameter 100"},

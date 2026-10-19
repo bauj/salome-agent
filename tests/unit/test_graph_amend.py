@@ -212,6 +212,49 @@ def _replan_seen(tmp_path, monkeypatch, history):
     return seen["request"]
 
 
+def _replan_image_seen(tmp_path, monkeypatch, history, outcome=None):
+    from salome_agent.specialists import amend as amend_mod
+    from salome_agent.nodes import planner as planner_mod
+
+    monkeypatch.setattr(amend_mod, "run_amend",
+                        lambda *a, **k: (k["session"], outcome or {"replan": "start over"}))
+    seen = {}
+
+    def fake_plan(request, llm, detail="balanced", image_spec=None, **kw):
+        seen["image_spec"] = image_spec
+        raise RuntimeError("stop after planning")
+
+    monkeypatch.setattr(planner_mod, "plan", fake_plan)
+    state = _state(tmp_path, BuildGraph(), "the plate does not look like the drawing", turn=2)
+    state["history"] = history
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": None}}
+    build_graph(batch=True).invoke(state, config=cfg)
+    return seen["image_spec"]
+
+
+IMAGE_HISTORY = [
+    {"event": "image", "turn": 0, "spec": {"summary": "a plate"}},
+    {"event": "image", "turn": 0, "spec": {"summary": "a plate with two slots"}},
+    {"event": "image", "turn": 1, "spec": {"summary": "a picture of the result"}}]
+
+
+def test_replan_from_an_amend_turn_plans_from_the_first_image_reading(tmp_path, monkeypatch):
+    # the latest reading (a reread) of the first image turn, not a later picture
+    assert _replan_image_seen(tmp_path, monkeypatch, IMAGE_HISTORY) == {
+        "summary": "a plate with two slots"}
+
+
+def test_replan_follows_the_image_turn_the_user_named(tmp_path, monkeypatch):
+    assert _replan_image_seen(tmp_path, monkeypatch, IMAGE_HISTORY,
+                              {"replan": "use the second one", "image_turn": 2}) == {
+        "summary": "a picture of the result"}
+
+
+def test_replan_without_any_image_plans_without_a_reading(tmp_path, monkeypatch):
+    assert _replan_image_seen(tmp_path, monkeypatch, []) is None
+
+
 def test_replan_tells_the_planner_the_earlier_requests(tmp_path, monkeypatch):
     request = _replan_seen(tmp_path, monkeypatch, [
         {"event": "turn", "turn": 0, "text": "A small car with 4 torus wheels",

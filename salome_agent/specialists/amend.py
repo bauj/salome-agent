@@ -109,11 +109,17 @@ FINISH_TURN = Terminator(
 
 REPLAN = Terminator(
     name="replan",
-    schema={"type": "object", "properties": {"reason": {"type": "string"}},
-            "required": ["reason"]},
+    schema={"type": "object", "properties": {
+        "reason": {"type": "string"},
+        "image_turn": {"type": "integer",
+                       "description": "only if the user said which turn's reference image "
+                                      "the new plan should follow"}},
+        "required": ["reason"]},
     description=("Hand this request to the planner because it is too big for edits. "
                  "Call it before changing anything."),
-    handle=lambda args, call_log: {"replan": args.get("reason") or ""})
+    handle=lambda args, call_log: {"replan": args.get("reason") or "",
+                                   **({"image_turn": args["image_turn"]}
+                                      if args.get("image_turn") is not None else {})})
 
 
 def _literal(value):
