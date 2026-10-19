@@ -208,12 +208,14 @@ def _ask(llm, messages: list[dict]) -> dict:
 
 
 def describe_images(request: str, images: list[str], llm, fix_retries: int = 2,
-                    on_progress=None) -> dict:
+                    on_progress=None, earlier: dict | None = None,
+                    correction: str | None = None) -> dict:
     """Run the vision agent: one multimodal call that turns the reference image(s)
     into a structured spec, re-asked with the validator's errors up to
     fix_retries times; errors still left are attached as conflicts.
     `on_progress(kind, **data)`: vision_start / vision_check / vision_done, for a
-    front end to show the step while it runs."""
+    front end to show the step while it runs.
+    `earlier` + `correction`: a re-read, with the reading the user says is wrong."""
     t0 = time.monotonic()
 
     def progress(kind, **data):
@@ -234,6 +236,11 @@ def describe_images(request: str, images: list[str], llm, fix_retries: int = 2,
     sizes = [f"image {i}: {s[0]} x {s[1]} px" for i, s in enumerate(dims, 1) if s]
     if sizes:
         text += "\n\nImage size (width x height): " + "; ".join(sizes) + "."
+    if earlier is not None:
+        text += ("\n\nYour earlier reading of these image(s):\n"
+                 + json.dumps(earlier, ensure_ascii=False)
+                 + f"\n\nThe user says this reading is wrong: {correction}\n"
+                   "Read the image(s) again and answer with the whole corrected JSON spec.")
     if on_progress is not None:
         progress("vision_start", images=len(images),
                  sizes=[f"{s[0]}x{s[1]}" for s in dims if s],
@@ -261,3 +268,26 @@ def describe_images(request: str, images: list[str], llm, fix_retries: int = 2,
                   "whole corrected JSON spec only."}]
         spec = _ask(llm, messages)
     return spec
+
+
+VIEW_SYSTEM_PROMPT = """You look at a picture of the SALOME viewer for a CAD
+assistant and answer one question about it. Say only what you can see in the
+picture; when something cannot be told from it, say so. Answer as JSON:
+{"answer": "..."}"""
+
+
+def ask_about_view(question: str, view: str, references: list[str], llm) -> str:
+    """The vision agent's answer to `question` about the viewer picture `view`,
+    with the user's reference images after it for comparison."""
+    text = f"Question: {question}\n\nImage 1 is the SALOME viewer now."
+    if len(references) == 1:
+        text += " Image 2 is the user's reference image for the model being built."
+    elif references:
+        text += (f" Images 2-{len(references) + 1} are the user's reference images "
+                 "for the model being built.")
+    messages = [{"role": "system", "content": VIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": with_images(text, [view, *references])}]
+    answer = _ask(llm, messages).get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        return "The image-analysis agent gave no answer about the view."
+    return answer.strip()

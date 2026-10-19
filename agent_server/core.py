@@ -118,6 +118,8 @@ class Core:
         if cmd == "hide":
             r = b.hide(req["names"])
             return {"id": rid, **r, "hidden": r["hidden"] + _show_side_modules(b, req["names"], False)}
+        if cmd == "view_image":
+            return {"id": rid, **b.view_image()}
         if cmd == "shutdown":
             b.end_session()
             return {"id": rid, "ok": True}
