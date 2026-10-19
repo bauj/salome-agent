@@ -169,6 +169,20 @@ def _earlier_images(state: dict) -> list:
     return [(t + 1, amend_block(spec)) for t, spec in sorted(_readings(state).items())]
 
 
+def _replan_reading(readings: dict, turn: int, named) -> dict | None:
+    """The image reading a replan builds from: the turn the user named, else this
+    turn's own images, else the first image turn (later images can be pictures
+    of the result)."""
+    try:
+        named = int(named) - 1
+    except (TypeError, ValueError):
+        named = None
+    for t in (named, turn):
+        if t in readings:
+            return readings[t]
+    return readings[min(readings)] if readings else None
+
+
 def _amend_node(state: dict, config: "RunnableConfig"):
     from langgraph.types import Command
     from salome_agent.build_graph import BuildGraph
@@ -225,6 +239,9 @@ def _amend_node(state: dict, config: "RunnableConfig"):
         return Command(update=update, goto="assemble")
     if "replan" in outcome:
         update["replan_context"] = _replan_context(state, session.graph, outcome["replan"])
+        spec = _replan_reading(session.readings, turn, outcome.get("image_turn"))
+        if spec:
+            update["image_spec"] = spec
         log.info("  amend -> replan: %s", outcome["replan"])
         return Command(update=update, goto="plan")
     return Command(update=update, goto="assemble")
