@@ -148,12 +148,6 @@ def _check_outline(outline, plane, where, err):
     return extent
 
 
-def outline_extent(outline, plane):
-    if not isinstance(outline, dict) or plane not in PLANE_AXES:
-        return None
-    return _check_outline(outline, plane, "", lambda m: None)
-
-
 def _box(points):
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
@@ -663,6 +657,23 @@ def _json(v) -> str:
     return json.dumps(v, ensure_ascii=False)
 
 
+def _outline_makeup(prof: dict) -> str:
+    """What the outline is drawn with ("4 lines and 4 arcs"), not its size: the
+    planner restated a bounding box as a rectangle."""
+    segs = prof.get("segments")
+    if not isinstance(segs, list) or not segs:
+        return ""
+    counts = {"line": 0, "arc": 0, "curve": 0}
+    for seg in segs:
+        if not isinstance(seg, dict):
+            return ""
+        kind = ("arc" if seg.get("center") is not None or seg.get("through") is not None
+                else "curve" if seg.get("via") is not None else "line")
+        counts[kind] += 1
+    words = [f"{n} {k}{'s' if n > 1 else ''}" for k, n in counts.items() if n]
+    return " and ".join(words) if len(words) < 3 else f"{words[0]}, {words[1]} and {words[2]}"
+
+
 def _part_line(p) -> str:
     base = p.get("base") if isinstance(p.get("base"), dict) else {}
     kind = base.get("kind")
@@ -676,10 +687,9 @@ def _part_line(p) -> str:
         else:
             desc += ", flat face"
         prof = base.get("profile") if isinstance(base.get("profile"), dict) else {}
-        pts = outline_extent(prof, base.get("plane"))
-        if pts:
-            x0, y0, x1, y1 = _box(pts)
-            desc += f", {x1 - x0:g} x {y1 - y0:g}"
+        makeup = _outline_makeup(prof)
+        if makeup:
+            desc += f", outline of {makeup}"
         holes = len(prof.get("holes") or [])
         if holes:
             desc += f", {holes} hole{'s' if holes > 1 else ''}"
@@ -736,7 +746,8 @@ def parts_block(spec: dict, ids: list[str]) -> str:
     chosen = [p for p in _parts(spec) if p.get("id") in ids]
     lines = ["Reference image spec for this stage's part(s), read from the user's "
              "image(s) by an image-analysis agent (you do not see the images). "
-             "The JSON is what you build; the summary, dimensions, uncertainties and "
+             "The JSON is what you build, also where this stage's intent or params "
+             "describe the part differently; the summary, dimensions, uncertainties and "
              "conflicts are context. Where they disagree with the JSON, build the JSON "
              "as given and say in one sentence what you assumed -- do not try to "
              "reconcile them before your first tool call:"]

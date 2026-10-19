@@ -218,8 +218,21 @@ def test_compact_spec_summarises_each_part_without_its_numbers():
     text = compact_spec(p1_spec())
     assert text.startswith("Reference image spec")
     assert "Target: 2D in the XY plane" in text
-    assert "- P1 plate: profile in XY, flat face, 192 x 230, 7 holes" in text
-    assert "55.426" not in text
+    assert "- P1 plate: profile in XY, flat face, outline of 4 lines and 2 arcs, 7 holes" in text
+    assert "55.426" not in text and "192" not in text
+
+
+def test_compact_spec_names_curves_in_an_outline():
+    spec = p1_spec()
+    prof = spec["parts"][0]["base"]["profile"]
+    prof["segments"] = [{"to": "10,0,0"}, {"to": "0,10,0", "via": ["8,8,0"]},
+                        {"to": "0,0,0", "center": "0,5,0"}]
+    assert "outline of 1 line, 1 arc and 1 curve" in compact_spec(spec)
+
+
+def test_parts_block_puts_the_json_over_the_stage_brief():
+    assert ("The JSON is what you build, also where this stage's intent or params "
+            "describe the part differently") in parts_block(box_spec(), ["P1"])
 
 
 def test_compact_spec_flags_an_assumed_2d_target():
