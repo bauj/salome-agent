@@ -11,8 +11,33 @@ _HELP = """commands:
   /show      print the build graph
   /result    print result.py
   /rebuild   rebuild the whole study from the model (after a failed rollback)
+  /image PATH[,PATH] [request]
+             a request with reference image(s); quote a path with spaces
   /quit      leave (Ctrl-D too)
 anything else is a request to the agent. Ctrl-C cancels the running turn."""
+
+
+IMAGE_ONLY_REQUEST = "Build what the attached image(s) show."
+_IMAGE_USAGE = "usage: /image PATH[,PATH] [request] — quote a path with spaces"
+
+
+def _image_turn(rest: str) -> tuple[str, list[str]]:
+    """`/image` arguments as (request, data: URIs); ValueError / OSError on a
+    missing or unreadable image, as --images gives."""
+    from salome_agent import cli
+
+    rest = rest.strip()
+    if rest[:1] in ("'", '"'):
+        end = rest.find(rest[0], 1)
+        if end < 0:
+            raise ValueError(f"no closing {rest[0]} — {_IMAGE_USAGE}")
+        raw, text = rest[1:end], rest[end + 1:]
+    else:
+        raw, _, text = rest.partition(" ")
+    paths = [os.path.expanduser(p) for p in cli.parse_image_paths(raw)]
+    if not paths:
+        raise ValueError(_IMAGE_USAGE)
+    return text.strip() or IMAGE_ONLY_REQUEST, cli.load_reference_images(paths)
 
 
 def _print_event(stream):
@@ -85,6 +110,13 @@ def repl(conv, first_request, *, images=None, read=input, stream=sys.stderr,
             _say(stream, conv.redo())
         elif cmd == "/rebuild":
             _say(stream, conv.rebuild())
+        elif cmd == "/image":
+            try:
+                text, uris = _image_turn(line[len(cmd):])
+            except (ValueError, OSError) as e:
+                stream.write(f"{str(e).removeprefix('--images: ')}\n")
+            else:
+                _say(stream, run_turn(conv, text, gate, stream, images=uris))
         elif cmd == "/result":
             path = os.path.join(conv.run_dir, "result.py")
             stream.write(f"{path}\n")
