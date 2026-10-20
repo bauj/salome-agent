@@ -216,6 +216,7 @@ def test_cancel_before_the_gate_answers_ends_aborted_without_resuming(tmp_path, 
     assert res.final_state["aborted"] is True
     assert res.exit_code == 1
     assert llm.chat.call_count == 1          # planner only, no specialist turn
+    assert not (tmp_path / "r1" / "report.md").exists()   # stopped at the plan gate
 
 
 def test_cancel_during_a_stage_stops_its_tool_loop(tmp_path, monkeypatch):
@@ -240,6 +241,10 @@ def test_cancel_during_a_stage_stops_its_tool_loop(tmp_path, monkeypatch):
     assert res.final_state["aborted"] is True
     assert llm.chat.call_count == 2          # planner + one specialist turn
     client.call_tool.assert_not_called()
+    report = (tmp_path / "r1" / "report.md").read_text()
+    assert "**Stopped by you** during stage 1/1." in report
+    assert "- stage 1/1 (geom): failed" in report
+    assert not (tmp_path / "r1" / "result.py").exists()
 
 
 def test_cancel_while_the_planner_streams_ends_aborted(tmp_path, monkeypatch):
@@ -261,6 +266,8 @@ def test_cancel_while_the_planner_streams_ends_aborted(tmp_path, monkeypatch):
     assert [e["kind"] for e in events] == ["aborted"]
     assert res.final_state["aborted"] is True
     assert res.exit_code == 1
+    report = (tmp_path / "r1" / "report.md").read_text()
+    assert "**Stopped by you** before the plan was ready." in report
 
 
 def test_drive_relays_streamed_reasoning_as_events(tmp_path, monkeypatch):

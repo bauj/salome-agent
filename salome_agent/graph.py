@@ -595,29 +595,50 @@ def _assemble_node(state: dict):
                            "build_graph": graph.to_dict()}, goto="report")
 
 
+def _run_dir(state: dict) -> str:
+    import os
+
+    work_dir = os.path.expanduser(state["config"].get("work_dir") or ".")
+    return os.path.join(work_dir, state["run_id"] or "run")
+
+
+def write_report_file(state: dict, llm, stopped: str | None = None) -> str:
+    """Write the run's report.md; `stopped` says where the user stopped the run.
+    A chat conversation shares one run dir, so a later turn, or a turn after a
+    stopped one, appends its own section."""
+    import os
+
+    from salome_agent.nodes.report import write_report
+
+    report_text = write_report(state, usage=getattr(llm, "usage", None),
+                               endpoints=llm.endpoints() if hasattr(llm, "endpoints") else None,
+                               stopped=stopped)
+    run_dir = _run_dir(state)
+    os.makedirs(run_dir, exist_ok=True)
+    path = os.path.join(run_dir, "report.md")
+    turn = state.get("turn_idx") or 0
+    exists = os.path.exists(path)
+    with open(path, "a" if exists else "w") as f:
+        if exists or turn > 0:
+            f.write(f"\n\n# Turn {turn + 1}{' (stopped)' if stopped else ''}\n\n")
+        f.write(report_text)
+    return report_text
+
+
 def _report_node(state: dict, config: "RunnableConfig"):
     import json
     import os
 
     from langgraph.graph import END
     from langgraph.types import Command
-    from salome_agent.nodes.report import write_report
 
-    llm = config["configurable"].get("llm_client")
-    report_text = write_report(state, usage=getattr(llm, "usage", None),
-                               endpoints=llm.endpoints() if hasattr(llm, "endpoints") else None)
-    work_dir = os.path.expanduser(state["config"].get("work_dir") or ".")
-    run_dir = os.path.join(work_dir, state["run_id"] or "run")
-    os.makedirs(run_dir, exist_ok=True)
+    report_text = write_report_file(state, config["configurable"].get("llm_client"))
+    run_dir = _run_dir(state)
     with open(os.path.join(run_dir, "result.py"), "w") as f:
         f.write(state.get("final_script") or "")
     if state.get("build_graph") is not None:
         with open(os.path.join(run_dir, "build_graph.json"), "w") as f:
             json.dump(state["build_graph"], f, indent=1)
-    turn = state.get("turn_idx") or 0
-    mode = "a" if turn > 0 else "w"
-    with open(os.path.join(run_dir, "report.md"), mode) as f:
-        f.write(f"\n\n# Turn {turn + 1}\n\n{report_text}" if turn > 0 else report_text)
     return Command(update={"report": report_text}, goto=END)
 
 
