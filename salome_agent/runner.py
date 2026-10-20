@@ -177,6 +177,7 @@ def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
     llm.on_stream = ReasoningRelay(mapper, on_event)
 
     stopped = False
+    pending = None
     try:
         while True:
             pending = None
@@ -209,10 +210,26 @@ def drive(app, inp, cfg, mapper, llm, on_event, on_gate, cancel) -> dict:
         llm.on_stream = None
 
     final = dict(app.get_state(cfg).values)
+    # a stop at the plan gate built nothing: no report, as for a rejected plan
+    if stopped and not final.get("report") and not (pending or {}).get("plan"):
+        from salome_agent.graph import write_report_file
+        from salome_agent.logs import log
+        try:
+            write_report_file(final, llm, stopped=_stop_point(final))
+        except Exception as e:  # noqa: BLE001 — a report problem must not hide the stop
+            log.warning("could not write the report of the stopped run: %s", e)
     if stopped and not final.get("aborted"):
         final["aborted"] = True
         on_event(mapper.event("aborted"))
     return final
+
+
+def _stop_point(state: dict) -> str:
+    plan = state.get("plan") or []
+    if plan:
+        idx = min(state.get("stage_idx") or 0, len(plan) - 1)
+        return f"during stage {idx + 1}/{len(plan)}"
+    return "during this turn" if state.get("turn_idx") else "before the plan was ready"
 
 
 def run_request(request: str, config: dict, *, client, on_event, on_gate,
