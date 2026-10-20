@@ -115,10 +115,13 @@ class GuiBackend:
         # salome.sg does not exist on this build (Phase 0 spike, 2026-08-31);
         # SALOMEGUI_Swig().updateObjBrowser() does, and runs a direct inline
         # Execute() on the session thread — which is where this already is,
-        # having been marshalled by run_on_main.
+        # having been marshalled by run_on_main. SHAPER redraws a changed (not
+        # new) result without repainting the viewer, so repaint it here.
         def _do():
             import libSALOME_Swig
-            libSALOME_Swig.SALOMEGUI_Swig().updateObjBrowser()
+            sg = libSALOME_Swig.SALOMEGUI_Swig()
+            sg.updateObjBrowser()
+            sg.UpdateView()
         try:
             self._invoker.run_on_main(_do, timeout=REFRESH_TIMEOUT)
         except Exception:
