@@ -37,6 +37,42 @@ def _not_run_note(n: int) -> str:
             "not seen. Make them again if still needed.")
 
 
+def _kind(info: dict | None) -> tuple | None:
+    """What an object is, wherever it stands: its sorted size (a quarter turn
+    swaps the axes), plus volume and face count when the module measures them."""
+    size = (info or {}).get("size")
+    if not size:
+        return None
+    return (tuple(sorted(round(v, 3) for v in size)),
+            round(info["volume"], 2) if info.get("volume") is not None else None,
+            info.get("faces"))
+
+
+def _rebuild_note(made: dict, sets: list[dict], gone: set) -> str:
+    """Seen live: a stage rebuilt its four wheels sixteen times, each turn
+    deciding the placement afresh (task 409). A turn whose objects from one
+    tool are the same kinds as an earlier turn's set from that tool, or one
+    object rebuilt where an earlier one stood, is shown the earlier sets."""
+    notes = []
+    for tool, objs in made.items():
+        kinds = sorted(o["kind"] for o in objs)
+        earlier = [s for s in sets if s["tool"] == tool and s["kinds"] == kinds
+                   and (len(objs) > 1 or s["centres"] == [o["centre"] for o in objs])]
+        if not earlier:
+            continue
+        # discarded sets are counted, not named: a long loop would list dozens
+        shown = [f"{', '.join(live)} (still in the study)" for s in earlier
+                 if (live := [n for n in s["names"] if n not in gone])]
+        dead = sum(1 for s in earlier if all(n in gone for n in s["names"]))
+        if dead:
+            shown.append(f"{dead} earlier set{'s' if dead > 1 else ''} (discarded)")
+        n = len(objs)
+        notes.append(f"This stage already built {n} object{'s' if n > 1 else ''} with "
+                     f"{tool}: {'; '.join(shown)}. Unless a measured number shows they are "
+                     "wrong, keep one set: discard the others, then do the rest of this stage.")
+    return "".join(f"\n\n{n}" for n in notes)
+
+
 def _drop_echoes(calls: list[dict], messages: list[dict], stage: str) -> tuple[list[dict], int]:
     """Text calls up to the first whose exact text appears in a message the
     model was given (request, tool result, nudge), and how many were left out:
@@ -251,6 +287,8 @@ class ToolSpecialist:
         # loop, up to llm.loop_retries cuts in a row (task 317).
         cuts = 0
         shape_infos: dict[str, dict] = {}
+        built_sets: list[dict] = []
+        discarded: set = set()
         n_seed_calls = len(calls)
         # Per-stage tool retrieval: offer CORE_TOOLS + the planner's hints, not the
         # whole registry (which was ~66% of a run's input tokens). The model widens
@@ -381,6 +419,7 @@ class ToolSpecialist:
                                                 response.get("reasoning")))
             batch_error = None
             finish_call = None
+            made: dict[str, list] = {}
             for k, c in enumerate(tool_calls):
                 if cancelled():
                     return _with_calls(spec.on_exhausted(call_log, batch_error), calls)
@@ -429,6 +468,7 @@ class ToolSpecialist:
                             n_seed_calls -= sum(1 for g in gone if g < n_seed_calls)
                             for n in names:
                                 shape_infos.pop(n, None)
+                            discarded |= set(names)
                             obs = f"discarded: {', '.join(names)} — removed from the study"
                         else:
                             obs = f"discard failed: {r.get('error') or 'forget failed'}"
@@ -472,6 +512,11 @@ class ToolSpecialist:
                     log.debug("    tool %s ok", name)
                     if result.get("result_shape") and result.get("shape_info"):
                         shape_infos[result["result_shape"]] = result["shape_info"]
+                        kind = _kind(result["shape_info"])
+                        if kind is not None:
+                            made.setdefault(name, []).append({
+                                "name": result["result_shape"], "kind": kind,
+                                "centre": result["shape_info"].get("centre")})
                     if isinstance(result.get("measurements"), dict):
                         shape_infos.update({n: v for n, v in result["measurements"].items() if v})
                     if spec.risky_categories:
@@ -492,6 +537,15 @@ class ToolSpecialist:
             if not_run and finish_call is None and messages[-1]["role"] == "tool":
                 messages[-1] = {**messages[-1], "content": messages[-1]["content"]
                                 + _not_run_note(not_run)}
+            if made and finish_call is None and messages[-1]["role"] == "tool":
+                note = _rebuild_note(made, built_sets, discarded)
+                if note:
+                    log.info("  %s stage: a turn rebuilt objects of an earlier turn", spec.name)
+                    messages[-1] = {**messages[-1], "content": messages[-1]["content"] + note}
+            built_sets += [{"tool": t, "names": [o["name"] for o in objs],
+                            "kinds": sorted(o["kind"] for o in objs),
+                            "centres": [o["centre"] for o in objs]}
+                           for t, objs in made.items()]
             # A later ok call in the same batch must not mask an earlier failure —
             # settle last_error once per turn from the batch outcome.
             last_error = batch_error
