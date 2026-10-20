@@ -386,6 +386,23 @@ def test_a_stage_ended_by_an_llm_fatal_keeps_its_timing_and_status(monkeypatch):
     assert stage["timing"]["turns"] == 7 and stage["timing"]["llm_s"] == 480.0
 
 
+def test_a_stage_ended_by_an_endpoint_error_keeps_the_calls_it_made(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+    def fake_run(self, *a, **k):
+        e = requests.ConnectTimeout("down")
+        e.stage_calls = {"call_log": [{"out_vars": ["box_1"]}], "calls": [{"tool": "make_box"}]}
+        raise e
+
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
+    cmd = graph._run_stage_node(_geom_state(), {"configurable": {"llm_client": _FakeLLM(),
+                                                                 "executor_client": None}})
+    stage = cmd.update["stages"][0]
+    assert stage["status"] == "failed" and stage["calls"] == [{"tool": "make_box"}]
+    assert stage["call_log"] == [{"out_vars": ["box_1"]}]
+
+
 def test_a_stage_ended_by_a_fatal_result_keeps_its_timing_and_status(monkeypatch):
     from salome_agent import graph
     from salome_agent.specialists.tool_specialist import ToolSpecialist

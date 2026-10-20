@@ -234,12 +234,18 @@ class ToolSpecialist:
             seed_call_log=None, seed_calls=None, cancel=None, upstream=()) -> dict:
         if client is None and self.spec.needs_session:
             return {"fatal": f"a {self.spec.name} stage needs a SALOME agent server"}
+        # what the stage built so far, for a stage that ends on an error: its
+        # report, retry and rollback still see those calls
+        self._so_far = dict
         try:
             return self._run(stage_plan, llm, client, iteration_cap, blocks,
                              tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
                              cancel, frozenset(upstream))
         except (SessionDied, SessionPoisoned) as e:
-            return {"fatal": f"SALOME agent server unavailable: {e}"}
+            return {"fatal": f"SALOME agent server unavailable: {e}", **self._so_far()}
+        except Exception as e:
+            e.stage_calls = self._so_far()
+            raise
 
     def _run(self, stage_plan, llm, client, iteration_cap, blocks,
              tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
@@ -260,6 +266,7 @@ class ToolSpecialist:
         # result.py (GH #38).
         call_log: list[dict] = list(seed_call_log) if seed_call_log else []
         calls: list[dict] = list(seed_calls) if seed_calls else []
+        self._so_far = lambda: {"call_log": call_log, "calls": calls}
         terms = {spec.terminator.name: spec.terminator,
                  **{t.name: t for t in spec.extra_terminators}}
         extra_defs = [{"name": t.name, "parameters": t.schema, "description": t.description}
