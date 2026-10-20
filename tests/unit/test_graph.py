@@ -366,6 +366,46 @@ def test_run_stage_node_records_per_stage_timing(monkeypatch):
     assert tm["core_s"] == round(tm["wall"] - 20.0, 2)
 
 
+def test_a_stage_ended_by_an_llm_fatal_keeps_its_timing_and_status(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.llm import StreamBudgetExceeded
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+    llm = _FakeLLM()
+
+    def fake_run(self, *a, **k):
+        llm.burn(calls=7, in_tok=30000, out_tok=9000, seconds=480.0)
+        raise StreamBudgetExceeded("over budget")
+
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
+    cmd = graph._run_stage_node(_geom_state(), {"configurable": {"llm_client": llm,
+                                                                 "executor_client": None}})
+    assert cmd.goto == "assemble" and "llm.timeout" in cmd.update["fatal"]
+    stage = cmd.update["stages"][0]
+    assert stage["status"] == "failed"
+    assert stage["timing"]["turns"] == 7 and stage["timing"]["llm_s"] == 480.0
+
+
+def test_a_stage_ended_by_a_fatal_result_keeps_its_timing_and_status(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.specialists.tool_specialist import ToolSpecialist
+
+    llm = _FakeLLM()
+
+    def fake_run(self, *a, **k):
+        llm.burn(calls=2, in_tok=4000, out_tok=300, seconds=6.0)
+        return {"fatal": "SALOME agent server unavailable: gone", "call_log": [],
+                "calls": [{"tool": "make_box"}]}
+
+    monkeypatch.setattr(ToolSpecialist, "run", fake_run)
+    cmd = graph._run_stage_node(_geom_state(), {"configurable": {"llm_client": llm,
+                                                                 "executor_client": None}})
+    assert cmd.goto == "assemble"
+    stage = cmd.update["stages"][0]
+    assert stage["status"] == "failed" and stage["timing"]["turns"] == 2
+    assert stage["calls"] == [{"tool": "make_box"}]
+
+
 def test_run_stage_node_timing_accumulates_across_a_retry(monkeypatch):
     from salome_agent import graph
     from salome_agent.specialists.tool_specialist import ToolSpecialist
