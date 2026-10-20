@@ -604,3 +604,40 @@ def test_the_note_says_which_earlier_sets_were_discarded():
         "This stage already built 2 objects with work: t3, t4 (still in the study); 1 "
         "earlier set (discarded). Unless a measured number shows they are wrong, keep one set: "
         "discard the others, then do the rest of this stage.")
+
+
+def _built(name):
+    return {"ok": True, "records": [{"fn": "F", "args": [], "out_vars": [name],
+                                     "publish": [name]}]}
+
+
+def test_an_endpoint_error_mid_stage_carries_the_calls_already_made():
+    import pytest
+    import requests
+
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {"a": 1})), requests.ConnectTimeout("down")]
+    with pytest.raises(requests.ConnectTimeout) as err:
+        ToolSpecialist(_spec(execute=lambda c, n, a: _built("box_1"))).run(
+            {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert [c["tool"] for c in err.value.stage_calls["calls"]] == ["work"]
+    assert err.value.stage_calls["call_log"][0]["out_vars"] == ["box_1"]
+
+
+def test_a_server_death_mid_stage_returns_the_calls_with_the_fatal():
+    from salome_agent.executor_client import SessionDied
+
+    results = iter([_built("box_1")])
+
+    def execute(client, name, args):
+        try:
+            return next(results)
+        except StopIteration:
+            raise SessionDied("socket closed") from None
+
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {})), _resp(("work", {}))]
+    result = ToolSpecialist(_spec(execute=execute)).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=3)
+    assert result["fatal"].startswith("SALOME agent server unavailable")
+    assert [c["tool"] for c in result["calls"]] == ["work"]
