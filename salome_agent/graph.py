@@ -513,7 +513,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         msg = _llm_endpoint_fatal(e)
         if msg is None:
             raise
-        result = {"fatal": msg}
+        result = {"fatal": msg, **getattr(e, "stage_calls", {})}
     if "fatal" in result:
         # the report still lists the stage that ended the run, with what it spent
         log.error("  %s", result["fatal"])
