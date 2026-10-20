@@ -513,12 +513,16 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
         msg = _llm_endpoint_fatal(e)
         if msg is None:
             raise
-        log.error("  %s", msg)
-        return Command(update={"fatal": msg}, goto="assemble")
+        result = {"fatal": msg}
     if "fatal" in result:
+        # the report still lists the stage that ended the run, with what it spent
         log.error("  %s", result["fatal"])
-        return Command(update={"fatal": result["fatal"]}, goto="assemble")
-    if "script" in result:
+        stage["status"] = "failed"
+        if result.get("calls") is not None:
+            stage["call_log"] = result.get("call_log")
+            stage["calls"] = result["calls"]
+        update["fatal"] = result["fatal"]
+    elif "script" in result:
         stage["script"] = result["script"]
         if result.get("warning"):
             log.warning("  %s specialist: %s", module, result["warning"])
@@ -547,6 +551,8 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0))
     stages[idx] = stage
     update["stages"] = stages
+    if "fatal" in update:
+        return Command(update=update, goto="assemble")
     goto = route_after_run_stage({**state, "stages": stages})
     return Command(update=update, goto=goto)
 
