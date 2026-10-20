@@ -721,3 +721,26 @@ def test_endpoint_fatal_4xx_names_the_url_it_posted_to():
     msg = _llm_endpoint_fatal(err)
     assert "HTTP 404 from https://api.x/v1/chat/completions/chat/completions)" in msg
     assert "key=s" not in msg
+
+
+def test_a_turn_after_a_stopped_one_keeps_the_stopped_report(tmp_path):
+    from salome_agent.graph import write_report_file
+
+    state = {"run_id": "r1", "user_request": "car", "config": {"work_dir": str(tmp_path)},
+             "plan": [], "stages": {}, "turn_idx": 0}
+    write_report_file(state, None, stopped="before the plan was ready")
+    write_report_file(state, None)
+    report = (tmp_path / "r1" / "report.md").read_text()
+    assert report.startswith("# Report: r1")
+    assert "**Stopped by you** before the plan was ready." in report
+    assert "\n\n# Turn 1\n\n# Report: r1" in report
+
+
+def test_a_stopped_later_turn_is_headed_as_stopped(tmp_path):
+    from salome_agent.graph import write_report_file
+
+    state = {"run_id": "r1", "user_request": "wider", "config": {"work_dir": str(tmp_path)},
+             "plan": [], "stages": {}, "turn_idx": 1}
+    write_report_file(state, None, stopped="during this turn")
+    assert (tmp_path / "r1" / "report.md").read_text().startswith(
+        "\n\n# Turn 2 (stopped)\n\n# Report: r1")

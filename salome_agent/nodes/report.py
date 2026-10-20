@@ -95,10 +95,12 @@ def _image_lines(state: dict) -> list[str]:
 
 
 def write_report(state: dict, usage: dict | None = None,
-                 endpoints: list | None = None) -> str:
+                 endpoints: list | None = None, stopped: str | None = None) -> str:
     lines = [f"# Report: {state['run_id']}", "",
              f"Request: {state['user_request']}", ""]
-    if state.get("fatal"):
+    if stopped:
+        lines += ["## Outcome", "", f"**Stopped by you** {stopped}.", ""]
+    elif state.get("fatal"):
         lines += ["## Outcome", "", f"**Run aborted:** {state['fatal']}", ""]
     sess = state.get("session") or {}
     if sess.get("mode") == "gui":
