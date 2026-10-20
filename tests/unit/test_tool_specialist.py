@@ -531,3 +531,76 @@ def test_a_failing_result_check_lets_the_finish_through():
     result = ToolSpecialist(_finish_spec(checks_results=True)).run(
         {"module": "toy"}, llm, client, iteration_cap=2)
     assert result["out"] == "f1"
+
+
+def _made(name, size, centre, volume=None):
+    info = {"size": size, "centre": centre}
+    if volume is not None:
+        info["volume"] = volume
+    return {"ok": True, "result_shape": name, "shape_info": info,
+            "records": [{"fn": "F", "args": [], "out_vars": [name], "publish": [name]}]}
+
+
+def _run_turns(turns, results, **spec_over):
+    """turns: the tool calls of each LLM turn; results: what each call returns, in order."""
+    llm = MagicMock()
+    llm.chat.side_effect = ([_resp(*[("work", {"i": i}) for i in range(n)]) for n in turns]
+                            + [_resp(("done", {}))])
+    it = iter(results)
+    ToolSpecialist(_spec(execute=lambda c, n, a: next(it), **spec_over)).run(
+        {"module": "toy"}, llm, MagicMock(), iteration_cap=len(turns) + 2)
+    return _tool_messages(llm)
+
+
+def _wheels(first, centres, size=(6.0, 26.0, 26.0)):
+    return [_made(f"t{first + k}", list(size), c, volume=1776.53) for k, c in enumerate(centres)]
+
+
+_CORNERS = [[-53, 25, -2], [53, 25, -2], [-53, -25, -2], [53, -25, -2]]
+_OUTSIDE = [[-63, 28, -2], [63, 28, -2], [-63, -28, -2], [63, -28, -2]]
+
+
+def test_a_turn_that_rebuilds_an_earlier_set_is_told_about_it():
+    msgs = _run_turns([4, 4], _wheels(1, _CORNERS)
+                      + _wheels(5, _OUTSIDE, size=(26.0, 6.0, 26.0)))
+    assert not any("already built" in m for m in msgs[:4])
+    assert msgs[-1].endswith(
+        "\n\nThis stage already built 4 objects with work: t1, t2, t3, t4 (still in "
+        "the study). Unless a measured number shows they are wrong, keep one set: "
+        "discard the others, then do the rest of this stage.")
+
+
+def test_a_turn_making_different_objects_gets_no_note():
+    msgs = _run_turns([4, 4], _wheels(1, _CORNERS)
+                      + _wheels(5, _OUTSIDE, size=(8.0, 30.0, 30.0)))
+    assert not any("already built" in m for m in msgs)
+
+
+def test_one_object_repeats_only_when_rebuilt_in_place():
+    legs = _run_turns([1, 1], _wheels(1, [[0, 0, 0]]) + _wheels(2, [[50, 0, 0]]))
+    assert not any("already built" in m for m in legs)
+    in_place = _run_turns([1, 1], _wheels(1, [[0, 0, 0]])
+                          + _wheels(2, [[0, 0, 0]], size=(26.0, 6.0, 26.0)))
+    assert in_place[-1].endswith("This stage already built 1 object with work: t1 (still in "
+                                 "the study). Unless a measured number shows they are wrong, "
+                                 "keep one set: discard the others, then do the rest of this "
+                                 "stage.")
+
+
+def test_the_note_says_which_earlier_sets_were_discarded():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("work", {}), ("work", {})),
+                            _resp(("discard", {"names": ["t1", "t2"]})),
+                            _resp(("work", {}), ("work", {})),
+                            _resp(("work", {}), ("work", {})),
+                            _resp(("done", {}))]
+    it = iter(_wheels(1, _CORNERS[:2]) + _wheels(3, _OUTSIDE[:2]) + _wheels(5, _CORNERS[2:]))
+    client = MagicMock()
+    client.forget.return_value = {"ok": True}
+    ToolSpecialist(_spec(execute=lambda c, n, a: next(it), forgets=True)).run(
+        {"module": "toy"}, llm, client, iteration_cap=6)
+    msgs = _tool_messages(llm)
+    assert msgs[-1].endswith(
+        "This stage already built 2 objects with work: t3, t4 (still in the study); 1 "
+        "earlier set (discarded). Unless a measured number shows they are wrong, keep one set: "
+        "discard the others, then do the rest of this stage.")
