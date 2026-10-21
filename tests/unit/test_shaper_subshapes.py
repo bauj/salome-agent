@@ -125,3 +125,14 @@ def test_fillet_meeting_an_earlier_fillet_is_refused():
     msg = meets_earlier(3, [("E54", "F12", 0.25)])
     assert "earlier fillet F12" in msg and "below 0.2375" in msg
     assert meets_earlier(3, [("E54", "F12", 0.0)]) is None
+
+
+def test_cut_face_refusal_names_the_narrowest_width():
+    from executor.shaper.subshapes import cuts_face
+    assert cuts_face(3, [], []) is None
+    msg = cuts_face(3, [("F10", "E12", "E54", 0.75354), ("F3", "E20", "E7", 2.0)], [])
+    assert "on E12 ran across F10 and cut it in two" in msg
+    assert "between E12 and E54" in msg and "radius below 0.7535" in msg
+    assert "also cut F3" in msg and "also rounds" not in msg
+    msg = cuts_face(3, [("F10", "E60", "E12", 0.75354)], ["E60", "E61"])
+    assert "SHAPER also rounds E60, E61" in msg

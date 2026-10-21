@@ -286,7 +286,7 @@ def test_fillet_reports_the_edges_shaper_rounds_with_the_picked_ones(agent_clien
     top = _edges_at(agent_client, body, _TOP_SIDE)
     slopes = _edges_at(agent_client, body, _SLOPE_SIDE)
     assert len(top) == 2 and len(slopes) == 4
-    f = _ok(agent_client, "fillet_edges", shape=body, radius=3, edges=top)
+    f = _ok(agent_client, "fillet_edges", shape=body, radius=0.5, edges=top)
     assert sorted(f["also_rounded"]) == sorted(slopes)
 
 
@@ -297,4 +297,25 @@ def test_fillet_meeting_an_earlier_fillet_through_its_chain_is_refused(agent_cli
     top = _edges_at(agent_client, rimmed, _TOP_SIDE)
     r = _call(agent_client, "fillet_edges", shape=rimmed, radius=3, edges=top)
     assert r["ok"] is False and "earlier fillet" in r["error"], r
+    assert "also rounds" in r["error"]
+
+
+def test_fillet_that_cuts_a_face_in_two_is_refused_with_the_width(agent_client):
+    # The trace's rim fillet: r=3 rolls past the 0.75 mm of wall above the arch
+    # and cuts the side face in two, so every later fillet next to it failed.
+    body = _car_lower_body(agent_client)
+    rim = _edges_at(agent_client, body, _RIM)
+    r = _call(agent_client, "fillet_edges", shape=body, radius=3, edges=rim)
+    assert r["ok"] is False and "cut it in two" in r["error"], r
+    assert "radius below 0.7535" in r["error"]
+    f = _ok(agent_client, "fillet_edges", shape=body, radius=0.7, edges=rim)
+    assert f["edges"] == rim
+
+
+def test_fillet_cut_through_an_added_edge_names_the_added_edges(agent_client):
+    body = _car_lower_body(agent_client)
+    top = _edges_at(agent_client, body, _TOP_SIDE)
+    r = _call(agent_client, "fillet_edges", shape=body, radius=3, edges=top)
+    assert r["ok"] is False and "cut it in two" in r["error"], r
+    assert "radius below 0.7535" in r["error"]
     assert "also rounds" in r["error"]

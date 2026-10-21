@@ -236,6 +236,24 @@ def meets_earlier(radius: float, pairs: list):
     return None
 
 
+def cuts_face(radius: float, cuts: list, added: list):
+    """The refusal for a built fillet of `radius` that cut faces in two, for
+    (face id, chain edge id, nearest other edge id, distance), or None."""
+    if not cuts:
+        return None
+    f, a, b, d = min(cuts, key=lambda c: c[3])
+    more = sorted({c[0] for c in cuts} - {f})
+    msg = (f"the fillet of radius {radius:g} on {a} ran across {f} and cut it in two: "
+           f"{f} is only {d:.4g} mm wide between {a} and {b} there, and fillets next to "
+           f"a cut face fail later; nothing was built, use a radius below {d:.4g}")
+    if more:
+        msg += f" (it also cut {', '.join(more)})"
+    if a in added:
+        msg += (f". SHAPER also rounds {', '.join(added)} with the picked edges: they go "
+                f"on from them at under {math.degrees(_G1):.1f} degrees")
+    return msg
+
+
 def _angle(a, b) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(y * y for y in b))
@@ -462,6 +480,58 @@ def _earlier_fillets(chain: list, on: dict) -> tuple[list, bool]:
     return out, unsure
 
 
+def _elementary(face) -> bool:
+    import GeomAPI
+    g = GeomAPI.GeomAPI_Face(face)
+    return g.isPlanar() or any(x is not None for x in (
+        g.getCylinder(), g.getSphere(), g.getTorus(), g.getCone()))
+
+
+def _within(piece, face, tol: float = 1e-5) -> bool:
+    """Whether the boundary of `piece` lies on `face`."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    from GeomAlgoAPI import GeomAlgoAPI_PointBuilder as PB
+    for e in piece.subShapes(GeomAPI.GeomAPI_Shape.EDGE):
+        if GeomAPI.GeomAPI_Edge(e).isDegenerated():
+            continue
+        if any(T.minimalDistance(face, PB.vertex(*q)) > tol for q in _edge_points(e, 3)):
+            return False
+    return True
+
+
+def _touch(a, b) -> bool:
+    import GeomAPI
+    V = GeomAPI.GeomAPI_Shape.VERTEX
+    return any(v.isSame(w) for v in a.subShapes(V) for w in b.subShapes(V))
+
+
+def _cut_faces(chain: list, edges: list, on: dict, shapes: list) -> tuple[list, list]:
+    """(face id, chain edge id, nearest edge id, distance) for each face of a
+    chain edge that comes out of the fillet result `shapes` as several faces,
+    with the nearest edge of that face that does not touch the chain edge; and
+    the ids of faces that could not be checked."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    out_faces = [f for s in shapes for f in s.subShapes(GeomAPI.GeomAPI_Shape.FACE)]
+    cuts, unsure = [], []
+    for f in {f.id: f for u in chain for f in on[u.id]}.values():
+        if not _elementary(f.shape):
+            unsure.append(f.id)
+            continue
+        g = GeomAPI.GeomAPI_Face(f.shape)
+        pieces = [p for p in out_faces if g.isSameGeometry(p) and _within(p, f.shape)]
+        if len(pieces) < 2:
+            continue
+        mine = [u for u in chain if any(x.id == f.id for x in on[u.id])]
+        rest = [e for e in edges if any(x.id == f.id for x in on[e.id])]
+        near = [(u.id, e.id, T.minimalDistance(u.shape, e.shape)) for u in mine
+                for e in rest if not _touch(u.shape, e.shape)]
+        if near:
+            cuts.append((f.id, *min(near, key=lambda n: n[2])))
+    return cuts, unsure
+
+
 def _face_pairs(executor, name: str, picked: list) -> list:
     """(id, id, distance) for each two picked edges that bound one face and do
     not touch."""
@@ -481,8 +551,9 @@ def _face_pairs(executor, name: str, picked: list) -> list:
 
 
 def _fillet_check(executor, name: str, edges: list, picked: list, radius: float):
-    """The edges SHAPER rounds besides `picked`, and a note when that could not
-    be told everywhere; raises when the fillets would meet."""
+    """The edges SHAPER rounds besides `picked`, a note when that could not be
+    told everywhere, the chain of rounded edges and the faces of each edge;
+    raises when the fillets would meet."""
     faces = subshapes(executor, name, "face")
     ends, at, smooth, fading, on = _edge_graph(edges, faces)
     by_id = {u.id: u for u in edges}
@@ -503,27 +574,36 @@ def _fillet_check(executor, name: str, edges: list, picked: list, radius: float)
     if unsure_earlier:
         notes.append("could not tell where an earlier fillet rolls on a face next to "
                      "these edges")
-    if not notes:
-        return added, None
-    return added, "; ".join(notes) + " (curved faces): not checked for fillets meeting"
+    note = "; ".join(notes) + " (curved faces): not checked for fillets meeting" \
+        if notes else None
+    return added, note, chain, on
 
 
 def _edge_feature(executor, args: dict, prefix: str, fn: str, call, radius=None) -> dict:
     name = _shape_name(executor, args)
     edges = subshapes(executor, name, "edge")
     picked = _pick(executor, name, "edge", args.get("edges"), args.get("where"), edges)
-    added, note = [], None
+    added, notes, check = [], [], None
     if radius is not None:
-        added, note = _fillet_check(executor, name, edges, picked, radius)
+        added, note, chain, on = _fillet_check(executor, name, edges, picked, radius)
+        notes += [note] if note else []
+
+        def check(feat):
+            shapes = [r.shape() for r in feat.results() if r.shape() is not None]
+            cuts, unsure = _cut_faces(chain, edges, on, shapes)
+            if unsure:
+                notes.append(f"{', '.join(unsure)} not a plane, cylinder, cone, sphere or "
+                             "torus: not checked for being cut in two by the fillet")
+            return cuts_face(radius, cuts, added)
     out = new_name(executor, prefix)
     code = f"{out} = model.{fn}(shaper_doc, [{_sels('edge', picked)}], {call})"
-    r = _build(executor, out, fn, code, [name], "solid")
+    r = _build(executor, out, fn, code, [name], "solid", check=check)
     if r["ok"]:
         r["edges"] = [u.id for u in picked]
         if added:
             r["also_rounded"] = added
-        if note:
-            r["note"] = note
+        if notes:
+            r["note"] = "; ".join(notes)
     return r
 
 
