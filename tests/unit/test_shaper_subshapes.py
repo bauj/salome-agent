@@ -136,3 +136,12 @@ def test_cut_face_refusal_names_the_narrowest_width():
     assert "also cut F3" in msg and "also rounds" not in msg
     msg = cuts_face(3, [("F10", "E60", "E12", 0.75354)], ["E60", "E61"])
     assert "SHAPER also rounds E60, E61" in msg
+
+
+def test_no_corner_refusal_names_the_faces():
+    from executor.shaper.subshapes import no_corner
+    assert no_corner([], {}) is None
+    msg = no_corner(["E2"], {"E2": ["F7", "F12"]})
+    assert msg.startswith("E2 has no corner to round: its faces F7 and F12 meet smoothly")
+    assert "seam of F3" in no_corner(["E4"], {"E4": ["F3", "F3"]})
+    assert no_corner(["E2", "E5"], {}).startswith("E2, E5 have no corner to round")

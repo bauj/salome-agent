@@ -2,7 +2,7 @@ import math
 
 from executor.shaper.features import _build, _operands
 from executor.shaper.primitives import _num
-from executor.shaper.state import (SUB_TYPES, forget, new_name, results_of, state,
+from executor.shaper.state import (SUB_TYPES, Sub, forget, new_name, results_of, state,
                                    subshapes, tool)
 
 _MAX_EXPLODE = 50
@@ -143,7 +143,10 @@ def _sels(sub_type: str, picked: list) -> str:
                    "`where` narrows them: by a centre coordinate, by size, or by a plane "
                    "-- state \"on\" keeps only those lying in it, e.g. a rim circle and not "
                    "the seams that cross it. Pass the ids to fillet_edges, chamfer_edges, "
-                   "make_thick_solid, get_subshape, or create_sketch (a face)."),
+                   "make_thick_solid, get_subshape, or create_sketch (a face). An edge "
+                   "whose two faces meet smoothly, with no corner (e.g. where a fillet "
+                   "ends), has \"smooth\": true (null: could not tell); fillet_edges and "
+                   "chamfer_edges cannot round it."),
       schema={"type": "object", "properties": {
           "shape": {"type": "string"},
           "sub_type": {"type": "string", "enum": list(SUB_TYPES)},
@@ -156,8 +159,24 @@ def tool_get_subshapes(executor, args: dict):
     name = _shape_name(executor, args)
     subs = subshapes(executor, name, args.get("sub_type"))
     picked = select(subs, args.get("where", "all"), _points)
-    return {"ok": True, "records": [], "shape": name,
-            "subshapes": [{"id": u.id, "centre": u.centre, "size": u.size} for u in picked]}
+    out = [{"id": u.id, "centre": u.centre, "size": u.size} for u in picked]
+    if args.get("sub_type") == "edge":
+        smooth = _edge_graph(subs, _faces(executor, name))[2]
+        for d in out:
+            if smooth[d["id"]] is True or smooth[d["id"]] is None:
+                d["smooth"] = smooth[d["id"]]
+    return {"ok": True, "records": [], "shape": name, "subshapes": out}
+
+
+def _faces(executor, name: str) -> list:
+    """The faces of `name` as Subs without ids or names, for _edge_graph."""
+    import GeomAPI
+    out = []
+    for res in results_of(executor, name):
+        for f in res.shape().subShapes(GeomAPI.GeomAPI_Shape.FACE):
+            if not any(f.isSame(u.shape) for u in out):
+                out.append(Sub(None, f, "", None, None))
+    return out
 
 
 @tool("get_subshape", category="feature",
@@ -234,6 +253,22 @@ def meets_earlier(radius: float, pairs: list):
                     f"{g} across the {d:.4g} mm of face between them, which SHAPER "
                     f"cannot build; use a radius below {_MEET * d:.4g}")
     return None
+
+
+def no_corner(ids: list, on: dict):
+    """The refusal for picked edges whose faces meet smoothly, given each edge's
+    face ids, or None."""
+    if not ids:
+        return None
+    tail = ("; pick edges where faces meet at an angle (get_subshapes marks the "
+            "smooth ones)")
+    if len(ids) == 1:
+        fs = list(dict.fromkeys(on[ids[0]]))
+        where = (f"its faces {fs[0]} and {fs[1]} meet smoothly there (as where an "
+                 f"earlier fillet ends)" if len(fs) == 2 else f"it is a seam of {fs[0]}")
+        return f"{ids[0]} has no corner to round: {where}{tail}"
+    return (f"{', '.join(ids)} have no corner to round: the two faces of each meet "
+            f"smoothly there (as where an earlier fillet ends){tail}")
 
 
 def cuts_face(radius: float, cuts: list, added: list):
@@ -550,12 +585,11 @@ def _face_pairs(executor, name: str, picked: list) -> list:
     return out
 
 
-def _fillet_check(executor, name: str, edges: list, picked: list, radius: float):
+def _fillet_check(executor, name: str, edges: list, picked: list, radius: float, graph):
     """The edges SHAPER rounds besides `picked`, a note when that could not be
     told everywhere, the chain of rounded edges and the faces of each edge;
     raises when the fillets would meet."""
-    faces = subshapes(executor, name, "face")
-    ends, at, smooth, fading, on = _edge_graph(edges, faces)
+    ends, at, smooth, fading, on = graph
     by_id = {u.id: u for u in edges}
     added, unsure = fillet_chain([u.id for u in picked], ends, at, smooth, fading)
     chain = picked + [by_id[i] for i in added]
@@ -583,9 +617,25 @@ def _edge_feature(executor, args: dict, prefix: str, fn: str, call, radius=None)
     name = _shape_name(executor, args)
     edges = subshapes(executor, name, "edge")
     picked = _pick(executor, name, "edge", args.get("edges"), args.get("where"), edges)
+    graph = _edge_graph(edges, subshapes(executor, name, "face"))
+    smooth, on = graph[2], graph[4]
+    # OCC skips edges without a corner when others have one, and fails silently
+    # when none has
+    flat = [u.id for u in picked if smooth[u.id] is True]
+    if len(flat) == len(picked):
+        raise ValueError(no_corner(flat, {i: [f.id for f in on[i]] for i in flat}))
+    skipped = [i for i in flat if not on[i][0].shape.isSame(on[i][-1].shape)]
+    unknown = [u.id for u in picked if smooth[u.id] is None]
+    nothing = ("SHAPER found no corner to round at the picked edges"
+               + (f": the faces of {', '.join(unknown)} may meet smoothly there"
+                  if unknown else "") + "; pick edges where faces meet at an angle")
     added, notes, check = [], [], None
+    if skipped:
+        notes.append(f"SHAPER skipped {', '.join(skipped)}: the faces there meet "
+                     "smoothly, with no corner to round")
     if radius is not None:
-        added, note, chain, on = _fillet_check(executor, name, edges, picked, radius)
+        added, note, chain, on = _fillet_check(
+            executor, name, edges, [u for u in picked if u.id not in flat], radius, graph)
         notes += [note] if note else []
 
         def check(feat):
@@ -597,7 +647,7 @@ def _edge_feature(executor, args: dict, prefix: str, fn: str, call, radius=None)
             return cuts_face(radius, cuts, added)
     out = new_name(executor, prefix)
     code = f"{out} = model.{fn}(shaper_doc, [{_sels('edge', picked)}], {call})"
-    r = _build(executor, out, fn, code, [name], "solid", check=check)
+    r = _build(executor, out, fn, code, [name], "solid", check=check, nothing=nothing)
     if r["ok"]:
         r["edges"] = [u.id for u in picked]
         if added:

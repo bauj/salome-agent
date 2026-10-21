@@ -319,3 +319,33 @@ def test_fillet_cut_through_an_added_edge_names_the_added_edges(agent_client):
     assert r["ok"] is False and "cut it in two" in r["error"], r
     assert "radius below 0.7535" in r["error"]
     assert "also rounds" in r["error"]
+
+
+def test_fillet_on_an_edge_where_faces_meet_smoothly_is_refused(agent_client):
+    # The edges along which a fillet meets its faces have no corner: SHAPER fails
+    # on them without saying why (run e84dd3a265b7: "the operation produced nothing").
+    box = _box(agent_client)
+    first = _ok(agent_client, "fillet_edges", shape=box, radius=5,
+                where={"sorted_by": "z", "take": "max", "count": 1})["name"]
+    edges = _ok(agent_client, "get_subshapes", shape=first, sub_type="edge")["subshapes"]
+    smooth = [u["id"] for u in edges if u.get("smooth") is True]
+    corners = [u["id"] for u in edges if "smooth" not in u]
+    assert len(smooth) == 2, edges
+    r = _call(agent_client, "fillet_edges", shape=first, radius=1, edges=smooth[:1])
+    assert r["ok"] is False and "has no corner to round" in r["error"], r
+    r = _call(agent_client, "chamfer_edges", shape=first, d1=1, edges=smooth)
+    assert r["ok"] is False and "have no corner to round" in r["error"], r
+    f = _ok(agent_client, "fillet_edges", shape=first, radius=1,
+            edges=[corners[0], smooth[0]])
+    assert f"SHAPER skipped {smooth[0]}" in f["note"], f
+
+
+def test_fillet_all_edges_of_a_cylinder_skips_its_seam(agent_client):
+    cyl = lambda: _ok(agent_client, "make_cylinder", radius=4, height=20,
+                      origin=[0, 0, 0])["name"]
+    _ok(agent_client, "fillet_edges", shape=cyl(), radius=1, edges="all")
+    cyl = cyl()
+    seam = [u["id"] for u in _ok(agent_client, "get_subshapes", shape=cyl,
+                                 sub_type="edge")["subshapes"] if u.get("smooth")]
+    r = _call(agent_client, "fillet_edges", shape=cyl, radius=1, edges=seam)
+    assert r["ok"] is False and "seam" in r["error"], r
