@@ -254,3 +254,47 @@ def test_fillets_meeting_across_a_rim_are_refused_not_run(agent_client):
     assert r["ok"] is False and "would meet" in r["error"] and "below 0.95" in r["error"]
     f = _ok(agent_client, "fillet_edges", shape=vase, radius=0.9, edges=rim)
     assert f["measure"]["valid"] is True
+
+
+def _car_lower_body(client):
+    # Lower body of run llm_trace_3 (stage 4 input): side profile extruded 80 mm
+    # across, four r=18 wheel arches cut out; 0.75 mm of side wall is left above
+    # each arch, under the top edges that slope 3.5 degrees down from the middle.
+    sk = _ok(client, "create_sketch", plane={"base": "XOZ", "offset": -40})["sketch"]
+    _ok(client, "sketch_add", sketch=sk, entities=[{"id": "P1", "type": "polyline", "closed": True,
+        "points": [[-60, 20], [60, 20], [60, 24], [53, 33], [20, 35], [-20, 35], [-53, 33],
+                   [-60, 24]]}])
+    _ok(client, "close_sketch", sketch=sk)
+    body = _ok(client, "extrude", base=sk, size=80, direction="OY")["name"]
+    cyls = [_ok(client, "make_cylinder", radius=18, height=20, origin=[x, y, 15],
+                axis="OY")["name"] for x in (40, -40) for y in (22, -42)]
+    return _ok(client, "cut", objects=[body], tools=cyls)["name"]
+
+
+def _edges_at(client, shape, test):
+    return [u["id"] for u in _ok(client, "get_subshapes", shape=shape, sub_type="edge")
+            ["subshapes"] if test(u["centre"])]
+
+
+_TOP_SIDE = lambda c: c[0] == 0 and abs(c[1]) == 40 and c[2] == 35
+_SLOPE_SIDE = lambda c: abs(c[0]) == 36.5 and abs(c[1]) == 40
+_RIM = lambda c: abs(c[1]) == 40 and abs(c[0]) in (31.3542, 48.6458)
+
+
+def test_fillet_reports_the_edges_shaper_rounds_with_the_picked_ones(agent_client):
+    body = _car_lower_body(agent_client)
+    top = _edges_at(agent_client, body, _TOP_SIDE)
+    slopes = _edges_at(agent_client, body, _SLOPE_SIDE)
+    assert len(top) == 2 and len(slopes) == 4
+    f = _ok(agent_client, "fillet_edges", shape=body, radius=3, edges=top)
+    assert sorted(f["also_rounded"]) == sorted(slopes)
+
+
+def test_fillet_meeting_an_earlier_fillet_through_its_chain_is_refused(agent_client):
+    body = _car_lower_body(agent_client)
+    rimmed = _ok(agent_client, "fillet_edges", shape=body, radius=0.5,
+                 edges=_edges_at(agent_client, body, _RIM))["name"]
+    top = _edges_at(agent_client, rimmed, _TOP_SIDE)
+    r = _call(agent_client, "fillet_edges", shape=rimmed, radius=3, edges=top)
+    assert r["ok"] is False and "earlier fillet" in r["error"], r
+    assert "also rounds" in r["error"]
