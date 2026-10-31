@@ -108,6 +108,7 @@ def test_a_failed_batch_removes_what_it_already_created(fake_model):
         doc.features.append(feat)
         return SimpleNamespace(feature=lambda: feat)
     ex.shaper_state.ns["add"] = add
+    ex.shaper_state.ns["_remove"] = lambda *objs: [doc.removeFeature(o.feature()) for o in objs]
     records = [{"code": "a = add('a')", "out_vars": ["a"]},
                {"code": "b = add('b')", "out_vars": ["b"]},
                {"code": "c = add('c')\n1 / 0", "out_vars": ["c"]}]
@@ -197,3 +198,48 @@ def test_sketch_ids_may_use_underscores(id_):
 def test_sketch_ids_that_could_clash_are_refused(id_, text):
     with pytest.raises(ValueError, match=text):
         state_mod.check_id(id_, "entity")
+
+
+class _SketchFeature:
+    def __init__(self, exec_state, error=""):
+        self._state, self._error = exec_state, error
+
+    def data(self):
+        return SimpleNamespace(execState=lambda: self._state)
+
+    def error(self):
+        return self._error
+
+
+def _sketch_in_state(exec_state, solver="", error=""):
+    feat = _SketchFeature(exec_state, error)
+    api = SimpleNamespace(feature=lambda: feat,
+                          solverError=lambda: SimpleNamespace(value=lambda: solver))
+    return SimpleNamespace(name="sk", api=api)
+
+
+def _status(monkeypatch, sk):
+    monkeypatch.setattr(state_mod, "snapshot", lambda sk: {})
+    monkeypatch.setattr(state_mod, "dof", lambda sk: 3)
+    monkeypatch.setattr(state_mod, "loose_ends", lambda sk, geos: [])
+    monkeypatch.setattr(state_mod, "regions",
+                        lambda executor, sk: [{"index": 0, "area": 683.1416}])
+    return state_mod.status(None, sk)
+
+
+def test_a_sketch_that_rebuilds_reports_its_regions_and_no_error(monkeypatch):
+    out = _status(monkeypatch, _sketch_in_state(0))
+    assert out["regions"] == [{"index": 0, "area": 683.1416}]
+    assert "rebuild_error" not in out
+
+
+def test_a_sketch_that_does_not_rebuild_reports_why_and_no_stale_region(monkeypatch):
+    out = _status(monkeypatch, _sketch_in_state(
+        3, solver="<b>The constraint is conflicting with others.</b>"))
+    assert out["regions"] == []
+    assert out["rebuild_error"] == "The constraint is conflicting with others."
+
+
+def test_a_failed_rebuild_without_a_solver_message_still_says_so(monkeypatch):
+    out = _status(monkeypatch, _sketch_in_state(2))
+    assert out["regions"] == [] and out["rebuild_error"]

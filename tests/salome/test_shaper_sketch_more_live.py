@@ -284,3 +284,79 @@ def test_projection_of_a_circle_seen_edge_on(agent_client):
     _ok(agent_client, "sketch_add", sketch=face_on, entities=[
         {"id": "P", "type": "projection", "edge": ring, "of": cyl}])
     assert _ok(agent_client, "sketch_status", sketch=face_on)["entities"]["P"]["type"] == "circle"
+
+
+def test_removing_a_fillet_arc_removes_its_constraints(agent_client):
+    # run 8f881213a1e5: removing the arc alone left its coincidences and tangencies
+    # pointing to nothing, and the next fillet on that corner crashed SALOME
+    sk = _sketch(agent_client, plane="XOZ")
+    pts = [[20, 0], [60, 0], [60, 12], [30, 12], [30, 32], [20, 32]]
+    lines = [{"id": f"L{i + 1}", "type": "line", "start": pts[i], "end": pts[(i + 1) % 6]}
+             for i in range(6)]
+    assert _ok(agent_client, "sketch_add", sketch=sk, entities=lines)["dof"] == 24
+    _ok(agent_client, "sketch_fillet", sketch=sk, at="L3.end", radius=2, id="A1")
+    r = _ok(agent_client, "sketch_remove", sketch=sk, ids=["A1"])
+    assert r["dof"] == 24 and "rebuild_error" not in r
+    r = _ok(agent_client, "sketch_remove", sketch=sk, ids=[e["id"] for e in lines])
+    assert r["dof"] == 0 and r["regions"] == []
+    _ok(agent_client, "sketch_add", sketch=sk, entities=lines)
+    r = _ok(agent_client, "sketch_fillet", sketch=sk, at="L3.end", radius=2, id="A1")
+    assert _areas(r) == pytest.approx([680 + 4 - math.pi], abs=1e-3)
+    assert "rebuild_error" not in r
+
+
+def test_removing_a_mirrored_source_takes_the_mirror_with_it(agent_client):
+    sk = _sketch(agent_client)
+    _ok(agent_client, "sketch_add", sketch=sk, entities=[
+        {"id": "C", "type": "circle", "center": [10, 0], "radius": 2},
+        {"id": "A", "type": "line", "start": [0, -20], "end": [0, 20], "construction": True}])
+    _ok(agent_client, "sketch_copy", sketch=sk, op="mirror", of=["C"], axis="A", id="M")
+    r = _ok(agent_client, "sketch_remove", sketch=sk, ids=["C"])
+    assert "rebuild_error" not in r
+    left = _ok(agent_client, "sketch_status", sketch=sk)["entities"]
+    assert "C" not in left
+
+
+def test_result_py_replays_a_removed_fillet(agent_client, tmp_path):
+    import re
+    import subprocess
+
+    from salome_agent.nodes.assembler import assemble
+
+    from .conftest import _salome_subprocess_env
+
+    calls = []
+
+    def call(name, **args):
+        r = _ok(agent_client, name, **args)
+        calls.append({"tool": name, "tool_args": args, "records": r["records"]})
+        return r
+
+    sk = call("create_sketch", plane="XOZ")["sketch"]
+    pts = [[20, 0], [60, 0], [60, 12], [30, 12], [30, 32], [20, 32]]
+    lines = [{"id": f"L{i + 1}", "type": "line", "start": pts[i], "end": pts[(i + 1) % 6]}
+             for i in range(6)]
+    call("sketch_add", sketch=sk, entities=lines)
+    call("sketch_fillet", sketch=sk, at="L3.end", radius=2, id="A1")
+    call("sketch_remove", sketch=sk, ids=["A1", *[e["id"] for e in lines]])
+    call("sketch_add", sketch=sk, entities=lines)
+    call("sketch_fillet", sketch=sk, at="L3.end", radius=2, id="A1")
+    call("close_sketch", sketch=sk)
+    body = call("revolve", base=sk, axis="OZ", angle=360)
+    live = body["measure"]["volume"]
+    log = [rec for c_ in calls for rec in c_["records"]]
+    script = assemble({"stages": {0: {"module": "shaper", "status": "ok", "script": None,
+                                      "result_names": [body["name"]], "call_log": log,
+                                      "calls": calls}},
+                       "run_id": "t", "user_request": "flange", "plan": []})
+    assert "_remove(" in script
+    script += ("from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as _T\n"
+               f"print('VOLUME', _T.volume({body['name']}.feature().firstResult().shape()))\n")
+    path = tmp_path / "result.py"
+    path.write_text(script)
+    out = subprocess.run([f"{SALOME_ROOT}/salome", "shell", "--", "python3", str(path)],
+                         env=_salome_subprocess_env(), capture_output=True, text=True,
+                         timeout=240)
+    m = re.search(r"VOLUME ([0-9.eE+-]+)", out.stdout)
+    assert m, out.stdout[-2000:] + out.stderr[-2000:]
+    assert float(m.group(1)) == pytest.approx(live, abs=1e-3)
