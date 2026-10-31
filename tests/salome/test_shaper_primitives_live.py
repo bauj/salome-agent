@@ -233,7 +233,11 @@ def test_cut_flags_a_tool_that_stops_exactly_at_the_objects_faces(agent_client):
                axis="OY")["name"]
     clear = _ok(agent_client, "make_cylinder", radius=20, height=70, origin=[30, -10, 35],
                 axis="OY")["name"]
+    # run 4d67010c0a9b: a cutter exactly as long as the body is wide is a clean
+    # through-cut; its flat ends lie on the side faces
+    flush = _ok(agent_client, "make_cylinder", radius=10, height=50, origin=[170, 0, 35],
+                axis="OY")["name"]
     tools = {t["name"]: t for t in
-             _ok(agent_client, "cut", objects=[body], tools=[arch, clear])["tools"]}
+             _ok(agent_client, "cut", objects=[body], tools=[arch, clear, flush])["tools"]}
     assert tools[arch]["touches"] == ["z_min", "z_max"]
-    assert "touches" not in tools[clear]
+    assert "touches" not in tools[clear] and "touches" not in tools[flush]
