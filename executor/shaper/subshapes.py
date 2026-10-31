@@ -2,7 +2,7 @@ import math
 
 from executor.shaper.features import _build, _operands
 from executor.shaper.primitives import _num
-from executor.shaper.state import (SUB_TYPES, Sub, forget, new_name, results_of, state,
+from executor.shaper.state import (SUB_TYPES, Sub, forget, new_name, raw_box, results_of, state,
                                    subshapes, tool)
 
 _MAX_EXPLODE = 50
@@ -271,6 +271,33 @@ def no_corner(ids: list, on: dict):
             f"smoothly there (as where an earlier fillet ends){tail}")
 
 
+def zero_wall(walls: list) -> str:
+    """The refusal for picked edges that end where two faces touch back to back,
+    for (edge id, point, face of the edge id, other face id)."""
+    e, p, f, g = walls[0]
+    at = ", ".join(f"{c:.4g}" for c in p)
+    msg = (f"cannot round {e}: at ({at}) it ends on {g}, which touches {f} back to back "
+           f"there, so the wall between them has zero thickness and SHAPER's fillet fails "
+           f"without a reason; move or resize the shape that made {g} so its face does "
+           f"not touch {f}, or leave {e} sharp")
+    more = list(dict.fromkeys(w[0] for w in walls[1:] if w[0] != e))
+    if more:
+        msg += f" ({', '.join(more)} end on such a wall too)"
+    return msg
+
+
+def silent_fail(corners: list, unknown: list) -> str:
+    """What to say when SHAPER builds nothing and gives no error."""
+    if corners:
+        return (f"SHAPER failed without giving a reason on {', '.join(corners)}; their "
+                f"faces meet at a corner, so this is not a smooth edge. Check that each "
+                f"edge's ends do not touch another face (a wall of zero thickness), or "
+                f"try a smaller radius or fewer edges at once")
+    return ("SHAPER found no corner to round at the picked edges"
+            + (f": the faces of {', '.join(unknown)} may meet smoothly there"
+               if unknown else "") + "; pick edges where faces meet at an angle")
+
+
 def cuts_face(radius: float, cuts: list, added: list):
     """The refusal for a built fillet of `radius` that cut faces in two, for
     (face id, chain edge id, nearest other edge id, distance), or None."""
@@ -490,6 +517,64 @@ def _surface_normal(face, p):
     return n if dot(n, n) > 1e-18 else None
 
 
+def _outside(solids: list, p: list, tol: float) -> bool | None:
+    """Whether the point p lies outside every solid (None if not told)."""
+    import GeomAPI
+    from GeomAlgoAPI import GeomAlgoAPI_PointBuilder, GeomAlgoAPI_ShapeTools as T
+    v = GeomAlgoAPI_PointBuilder.vertex(GeomAPI.GeomAPI_Pnt(*p))
+    ds = [T.minimalDistance(v, s) for s in solids]
+    if any(d is None or d < 0 for d in ds):
+        return None
+    return all(d > tol for d in ds)
+
+
+def _step(box: list) -> float:
+    """A step small against a shape of bounding box [xmin, ymin, zmin, xmax,
+    ymax, zmax]: 1e-4 of its diagonal."""
+    return max(math.dist(box[:3], box[3:]) * 1e-4, 1e-5)
+
+
+def _zero_walls(picked: list, faces: list, on: dict, solids: list,
+                step: float) -> tuple[list, list]:
+    """(edge id, point, face of the edge id, other face id) for each end of a
+    picked edge where another face is tangent to one of the edge's faces and
+    there is no material on either side of them (a wall of zero thickness); and
+    the ids of edges whose ends could not be checked (a normal not known).
+    Face orientation is not used: SHAPER's plane normals are oriented, its
+    curved ones (as _surface_normal gives them) are not."""
+    import GeomAPI
+    S = GeomAPI.GeomAPI_Shape
+    verts = {f.id: f.shape.subShapes(S.VERTEX) for f in faces}
+    walls, unchecked = [], []
+    for u in picked:
+        own = on[u.id]
+        unsure = False
+        for v in u.shape.subShapes(S.VERTEX):
+            q = GeomAPI.GeomAPI_Vertex(v).point()
+            p = [q.x(), q.y(), q.z()]
+            others = [f for f in faces if not any(f.shape.isSame(o.shape) for o in own)
+                      and any(v.isSame(w) for w in verts[f.id])]
+            for f in others:
+                nf = _surface_normal(f.shape, p)
+                for o in own:
+                    no = _surface_normal(o.shape, p)
+                    if nf is None or no is None:
+                        unsure = True
+                        continue
+                    if min(_angle(nf, no), math.pi - _angle(nf, no)) > 1e-6:
+                        continue
+                    r = math.sqrt(sum(c * c for c in no))
+                    sides = [_outside(solids, [p[i] + k * step * no[i] / r for i in range(3)],
+                                      step / 10) for k in (1, -1)]
+                    if None in sides:
+                        unsure = True
+                    elif all(sides):
+                        walls.append((u.id, p, o.id, f.id))
+        if unsure and not any(w[0] == u.id for w in walls):
+            unchecked.append(u.id)
+    return walls, unchecked
+
+
 def _earlier_fillets(chain: list, on: dict) -> tuple[list, bool]:
     """(edge id, fillet face id, distance) from each chain edge to the line along
     which an earlier fillet face rolls on one of the chain edge's faces (where it
@@ -625,11 +710,19 @@ def _edge_feature(executor, args: dict, prefix: str, fn: str, call, radius=None)
     if len(flat) == len(picked):
         raise ValueError(no_corner(flat, {i: [f.id for f in on[i]] for i in flat}))
     skipped = [i for i in flat if not on[i][0].shape.isSame(on[i][-1].shape)]
+    real = [u for u in picked if u.id not in flat]
+    solids = [r.shape() for r in results_of(executor, name) if r.shape() is not None]
+    walls, unchecked = _zero_walls(real, subshapes(executor, name, "face"), on, solids,
+                                   _step(raw_box(executor, name)))
+    if walls:
+        raise ValueError(zero_wall(walls))
     unknown = [u.id for u in picked if smooth[u.id] is None]
-    nothing = ("SHAPER found no corner to round at the picked edges"
-               + (f": the faces of {', '.join(unknown)} may meet smoothly there"
-                  if unknown else "") + "; pick edges where faces meet at an angle")
+    corners = [u.id for u in real if smooth[u.id] is False]
+    nothing = silent_fail(corners, unknown)
     added, notes, check = [], [], None
+    if unchecked:
+        notes.append(f"could not check the ends of {', '.join(unchecked)} for a wall of "
+                     "zero thickness (curved faces)")
     if skipped:
         notes.append(f"SHAPER skipped {', '.join(skipped)}: the faces there meet "
                      "smoothly, with no corner to round")

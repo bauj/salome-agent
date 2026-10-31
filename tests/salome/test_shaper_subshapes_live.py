@@ -349,3 +349,35 @@ def test_fillet_all_edges_of_a_cylinder_skips_its_seam(agent_client):
                                  sub_type="edge")["subshapes"] if u.get("smooth")]
     r = _call(agent_client, "fillet_edges", shape=cyl, radius=1, edges=seam)
     assert r["ok"] is False and "seam" in r["error"], r
+
+
+def _arch_body(client):
+    # run 68f0c1abce7d: a wheel arch whose circle touches the top and bottom faces
+    box = _ok(client, "make_box", dx=200, dy=50, dz=70, center=[100, 25, 35])["name"]
+    cyl = _ok(client, "make_cylinder", radius=35, height=70, origin=[100, -10, 35],
+              axis="OY")["name"]
+    return _ok(client, "cut", objects=[box], tools=[cyl])["name"]
+
+
+def test_fillet_on_an_arch_rim_ending_on_a_zero_thick_wall_is_refused(agent_client):
+    body = _arch_body(agent_client)
+    edges = _ok(agent_client, "get_subshapes", shape=body, sub_type="edge")["subshapes"]
+    rims = [u["id"] for u in edges if u["centre"][1] in (pytest.approx(0), pytest.approx(50))
+            and 65 < u["centre"][0] < 135 and 0 < u["centre"][2] < 70]
+    assert rims, edges
+    r = _call(agent_client, "fillet_edges", shape=body, radius=2, edges=rims[:1])
+    assert r["ok"] is False and "zero thickness" in r["error"], r
+    assert "cannot round " + rims[0] in r["error"]
+    far = [u["id"] for u in edges if u["centre"][0] == pytest.approx(200)]
+    _ok(agent_client, "fillet_edges", shape=body, radius=2, edges=far)
+
+
+def test_vertical_edge_after_an_earlier_top_fillet_still_builds(agent_client):
+    first = _ok(agent_client, "fillet_edges", shape=_box(agent_client), radius=3,
+                where={"sorted_by": "z", "take": "max", "count": 1})["name"]
+    edges = _ok(agent_client, "get_subshapes", shape=first, sub_type="edge")["subshapes"]
+    vertical = [u["id"] for u in edges
+                if u["size"] > 20 and u["centre"][2] == pytest.approx(13.5, abs=2)]
+    assert vertical, edges
+    f = _ok(agent_client, "fillet_edges", shape=first, radius=1, edges=vertical)
+    assert "zero thickness" not in (f.get("note") or "")
