@@ -374,25 +374,6 @@ def _boolean(executor, args: dict, op: str) -> dict:
 _SIDES = ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max")
 
 
-def _flat_at(shapes: list, k: int, value: float) -> bool:
-    """Whether a planar face of `shapes` lies in the plane where coordinate
-    k // 2 (x, y, z) equals `value`."""
-    import GeomAPI
-    axis = k // 2
-    for s in shapes:
-        for f in s.subShapes(GeomAPI.GeomAPI_Shape.FACE):
-            g = GeomAPI.GeomAPI_Face(f)
-            if not g.isPlanar():
-                continue
-            pl = g.getPlane()
-            d, o = pl.direction(), pl.location()
-            n = [d.x(), d.y(), d.z()]
-            at = [o.x(), o.y(), o.z()][axis]
-            if abs(abs(n[axis]) - 1) <= 1e-9 and abs(at - value) <= 1e-6:
-                return True
-    return False
-
-
 def _tool_report(executor, refs: list, trefs: list, infos: list, tinfos: list) -> list:
     """For each solid tool of a cut: the share of its volume inside the objects,
     and how far it reaches past their bounding box on each side."""
@@ -417,17 +398,9 @@ def _tool_report(executor, refs: list, trefs: list, infos: list, tinfos: list) -
         beyond = {_SIDES[k]: round(box[k] - b[k] if k % 2 == 0 else b[k] - box[k], 4)
                   for k in range(6)
                   if (box[k] - b[k] if k % 2 == 0 else b[k] - box[k]) > 1e-6}
-        # a side where the tool's curved face meets the objects' box leaves a
-        # wall of zero thickness; a flat end lying there is a clean through-cut.
-        # Only the outer box is checked.
-        tshapes = [r.shape() for r in results_of(executor, t)]
-        touches = [_SIDES[k] for k in range(6)
-                   if abs(box[k] - b[k]) <= 1e-6 and not _flat_at(tshapes, k, b[k])]
         entry = {"name": t, "inside": round(min(inside / vol, 1.0), 4)}
         if beyond:
             entry["beyond"] = beyond
-        if touches:
-            entry["touches"] = touches
         out.append(entry)
     return out
 
@@ -457,10 +430,8 @@ def tool_fuse(executor, args: dict):
 @tool("cut", category="boolean",
       description=("Remove the faces or solids `tools` from the faces or solids `objects`. "
                    "The reply gives each solid tool's share of its volume inside `objects` "
-                   "(`inside`, 0-1), how far it reaches past their bounding box on each "
-                   "side (`beyond`, mm), and the sides where its curved side only "
-                   "touches the objects' outer face (`touches`), which leaves a wall of "
-                   "zero thickness there."),
+                   "(`inside`, 0-1) and how far it reaches past their bounding box on each "
+                   "side (`beyond`, mm)."),
       schema=_BOOL_SCHEMA)
 def tool_cut(executor, args: dict):
     return _boolean(executor, args, "Cut")

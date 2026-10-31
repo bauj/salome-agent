@@ -223,21 +223,3 @@ def test_cut_reports_how_much_of_each_tool_is_inside(agent_client):
     assert tools[out]["inside"] == 0 and tools[out]["beyond"]["y_max"] == 500
     assert 0.8 < tools[half]["inside"] < 1
     assert tools[half]["beyond"] == {"z_min": 50, "z_max": 100}
-
-
-def test_cut_flags_a_tool_that_stops_exactly_at_the_objects_faces(agent_client):
-    # Run 68f0c1abce7d: arch circles touched the top and bottom faces, and
-    # every fillet on the arch rims then failed without a reason.
-    body = _ok(agent_client, "make_box", dx=200, dy=50, dz=70, center=[100, 25, 35])["name"]
-    arch = _ok(agent_client, "make_cylinder", radius=35, height=70, origin=[100, -10, 35],
-               axis="OY")["name"]
-    clear = _ok(agent_client, "make_cylinder", radius=20, height=70, origin=[30, -10, 35],
-                axis="OY")["name"]
-    # run 4d67010c0a9b: a cutter exactly as long as the body is wide is a clean
-    # through-cut; its flat ends lie on the side faces
-    flush = _ok(agent_client, "make_cylinder", radius=10, height=50, origin=[170, 0, 35],
-                axis="OY")["name"]
-    tools = {t["name"]: t for t in
-             _ok(agent_client, "cut", objects=[body], tools=[arch, clear, flush])["tools"]}
-    assert tools[arch]["touches"] == ["z_min", "z_max"]
-    assert "touches" not in tools[clear] and "touches" not in tools[flush]
