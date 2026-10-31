@@ -207,3 +207,21 @@ def test_review_fixes_refuse_bad_input(agent_client):
     r = _call(agent_client, "basic_properties", shape=pl)
     assert r["ok"] is False and "no size" in r["error"]
     assert _ok(agent_client, "min_distance", shape1=pt, shape2=box)["distance"] == 0
+
+
+def test_colour_carries_onto_the_result_of_an_operation(agent_client):
+    # Run 0c3302778f3f: the body was coloured red, then an extrude_fuse made a
+    # new, grey result.
+    box = _ok(agent_client, "make_box", dx=10, dy=10, dz=10, center=[5, 5, 5])["name"]
+    _ok(agent_client, "set_color", shape=box, red=255, green=0, blue=0)
+    sk = _ok(agent_client, "create_sketch", plane={"base": "XOY", "offset": 10})["sketch"]
+    _ok(agent_client, "sketch_add", sketch=sk, entities=[
+        {"id": "C", "type": "circle", "center": [5, 5], "radius": 2}])
+    _ok(agent_client, "close_sketch", sketch=sk)
+    fused = _ok(agent_client, "extrude_fuse", base=sk, target=box, size=5)
+    assert any("setColor(255, 0, 0)" in r["code"] for r in fused["records"]), fused
+    blue = _ok(agent_client, "make_box", dx=2, dy=2, dz=2, center=[20, 0, 0])["name"]
+    _ok(agent_client, "set_color", shape=blue, red=0, green=0, blue=255)
+    both = _ok(agent_client, "fuse", objects=[fused["name"], blue])
+    assert "different colours" in both.get("note", ""), both
+    assert not any("setColor" in r["code"] for r in both["records"])

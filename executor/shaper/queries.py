@@ -137,8 +137,8 @@ def _display(executor, name, fn: str, call: str) -> dict:
 
 
 @tool("set_color", category="display",
-      description=("Set the colour of `shape` (red/green/blue 0-255). Apply it last, on "
-                   "the final shape: a later operation makes a new shape."),
+      description=("Set the colour of `shape` (red/green/blue 0-255). A later operation "
+                   "keeps it when all its coloured inputs share one colour."),
       schema={"type": "object", "properties": {
           "shape": {"type": "string"},
           "red": {"type": "integer", "minimum": 0, "maximum": 255},

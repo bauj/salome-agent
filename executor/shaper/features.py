@@ -3,7 +3,7 @@ import math
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
     CONSTRUCTION, PUBLISH_LINE, construction_info, forget, measure, new_name, publish_study,
-    raw_box, record, sketch_frame, sketch_of, state, tool, transaction,
+    raw_box, record, run, sketch_frame, sketch_of, state, tool, transaction,
 )
 
 _AXES = ("OX", "OY", "OZ")
@@ -97,10 +97,11 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
             err = check(feat)
     except Exception as e:  # noqa: BLE001
         err = str(e) or type(e).__name__
-    info = None
+    info, recs, note = None, [rec], None
     if not err:
         st.objects[name] = kind
         try:
+            recs, note = _carry_colour(st, name, refs, recs)
             publish_study(executor)
             info = (construction_info(executor, name) if kind in CONSTRUCTION
                     else measure(executor, name))
@@ -113,8 +114,41 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
                 if var in st.ns:
                     st.ns["shaper_doc"].removeFeature(st.ns.pop(var).feature())
         return {"ok": False, "error": f"{fn}: {err}"}
-    return {"ok": True, "records": [rec], "name": name, "measure": info,
-            "result_shape": name, "shape_info": info}
+    out = {"ok": True, "records": recs, "name": name, "measure": info,
+           "result_shape": name, "shape_info": info}
+    if note:
+        out["note"] = note
+    return out
+
+
+def _colours(st, names) -> set:
+    """The colours set on the results of the features `names`."""
+    out = set()
+    for n in names:
+        obj = st.ns.get(n)
+        if obj is None or not hasattr(obj, "feature"):
+            continue
+        for r in obj.feature().results():
+            c = r.data().intArray("Color")
+            if c is not None and c.isInitialized() and c.size() == 3:
+                out.add(tuple(c.value(i) for i in range(3)))
+    return out
+
+
+def _carry_colour(st, name: str, refs: list, recs: list) -> tuple[list, str | None]:
+    """Give the new feature `name` the colour its inputs share: SHAPER makes a
+    new, uncoloured result. Inputs of different colours leave it uncoloured."""
+    colours = _colours(st, refs)
+    if len(colours) > 1:
+        return recs, ("the inputs had different colours, so the result has none: "
+                      "set_color it")
+    if not colours:
+        return recs, None
+    rgb = ", ".join(map(str, colours.pop()))
+    code = f"for _r in {name}.results():\n    _r.setColor({rgb})"
+    with transaction():
+        run(st, code)
+    return recs + [record("setColor", code, refs=[name], recv=name)], None
 
 
 def _size(args: dict) -> tuple:
