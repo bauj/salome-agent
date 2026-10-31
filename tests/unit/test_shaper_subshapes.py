@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from executor.shaper.state import Sub
@@ -67,3 +69,105 @@ def test_fillets_meeting_across_a_face_are_refused():
         msg = fillets_meet(r, rim)
         assert "E4 and E5 would meet" in msg and "below 0.95" in msg
     assert fillets_meet(5.0, [("E1", "E2", 0.0)]) is None   # edges that touch
+
+
+def _car_top(crease_deg=3.47, back=False):
+    # Top side edge E54 of run llm_trace_3: at vertex 1 it meets the slope edge S
+    # (a crease) and the top/slope crease C; at vertex 2 the slope edge meets the
+    # nose edge N and the slope/nose crease C2, both real creases.
+    a = math.radians(crease_deg)
+    t_s = [-math.cos(a), 0, math.sin(a)] if back else [math.cos(a), 0, -math.sin(a)]
+    ends = {"E54": [(0, [1, 0, 0]), (1, [-1, 0, 0])], "S": [(1, t_s), (2, [-1, 0, 0])],
+            "C": [(1, [0, 1, 0])], "N": [(2, [0, 0, -1])], "C2": [(2, [0, 1, 0])],
+            "B0": [(0, [0, 1, 0])], "A0": [(0, [-1, 0, 0])]}
+    at = {0: ["E54", "B0", "A0"], 1: ["E54", "S", "C"], 2: ["S", "N", "C2"]}
+    smooth = {"E54": False, "S": False, "C": crease_deg < math.degrees(0.1), "N": False,
+              "C2": False, "B0": False, "A0": False}
+    return ends, at, smooth
+
+
+def test_fillet_goes_on_along_an_edge_met_at_a_shallow_crease():
+    from executor.shaper.subshapes import fillet_chain
+    ends, at, smooth = _car_top()
+    assert fillet_chain(["E54"], ends, at, smooth, lambda e, v: False) == (["S"], [])
+
+
+def test_fillet_stops_at_a_crease_over_the_smoothness_limit():
+    from executor.shaper.subshapes import fillet_chain
+    ends, at, smooth = _car_top(crease_deg=6.0)
+    assert fillet_chain(["E54"], ends, at, smooth, lambda e, v: False) == ([], [])
+
+
+def test_fillet_does_not_turn_back():
+    from executor.shaper.subshapes import fillet_chain
+    ends, at, smooth = _car_top(back=True)
+    assert fillet_chain(["E54"], ends, at, smooth, lambda e, v: False) == ([], [])
+
+
+def test_fillet_on_faces_meeting_tangentially_needs_a_straight_run():
+    from executor.shaper.subshapes import fillet_chain
+    ends, at, smooth = _car_top()
+    assert fillet_chain(["E54"], ends, at, smooth, lambda e, v: True) == ([], [])
+    ends["S"][0] = (1, [1, 0, 0])
+    assert fillet_chain(["E54"], ends, at, smooth, lambda e, v: True) == (["S"], [])
+
+
+def test_an_undecided_edge_stops_the_walk_and_is_reported():
+    from executor.shaper.subshapes import fillet_chain
+    ends, at, smooth = _car_top()
+    smooth["C"] = None
+    assert fillet_chain(["E54"], ends, at, smooth, lambda e, v: False) == ([], [1])
+
+
+def test_fillet_meeting_an_earlier_fillet_is_refused():
+    from executor.shaper.subshapes import meets_earlier
+    assert meets_earlier(0.2, [("E54", "F12", 0.25)]) is None
+    msg = meets_earlier(3, [("E54", "F12", 0.25)])
+    assert "earlier fillet F12" in msg and "below 0.2375" in msg
+    assert meets_earlier(3, [("E54", "F12", 0.0)]) is None
+
+
+def test_cut_face_refusal_names_the_narrowest_width():
+    from executor.shaper.subshapes import cuts_face
+    assert cuts_face(3, [], []) is None
+    msg = cuts_face(3, [("F10", "E12", "E54", 0.75354), ("F3", "E20", "E7", 2.0)], [])
+    assert "on E12 ran across F10 and cut it in two" in msg
+    assert "between E12 and E54" in msg and "radius below 0.7535" in msg
+    assert "also cut F3" in msg and "also rounds" not in msg
+    msg = cuts_face(3, [("F10", "E60", "E12", 0.75354)], ["E60", "E61"])
+    assert "SHAPER also rounds E60, E61" in msg
+
+
+def test_no_corner_refusal_names_the_faces():
+    from executor.shaper.subshapes import no_corner
+    assert no_corner([], {}) is None
+    msg = no_corner(["E2"], {"E2": ["F7", "F12"]})
+    assert msg.startswith("E2 has no corner to round: its faces F7 and F12 meet smoothly")
+    assert "seam of F3" in no_corner(["E4"], {"E4": ["F3", "F3"]})
+    assert no_corner(["E2", "E5"], {}).startswith("E2, E5 have no corner to round")
+
+
+def test_zero_wall_refusal_names_the_edge_point_faces_and_the_others():
+    from executor.shaper.subshapes import zero_wall
+    msg = zero_wall([("E9", [100.0, 0.0, 70.0], "F2", "F7"),
+                     ("E9", [100.0, 0.0, 0.0], "F2", "F8"),
+                     ("E12", [100.0, 50.0, 70.0], "F4", "F7")])
+    assert msg.startswith("cannot round E9: at (100, 0, 70) it ends on F7, which touches "
+                          "F2 back to back there, so the wall between them has zero thickness")
+    assert "leave E9 sharp" in msg and msg.endswith("(E12 end on such a wall too)")
+    assert "end on such" not in zero_wall([("E1", [0, 0, 0], "F1", "F2")])
+
+
+def test_silent_fail_says_shaper_gave_no_reason_on_real_corners():
+    from executor.shaper.subshapes import silent_fail
+    msg = silent_fail(["E3", "E5"], [])
+    assert msg.startswith("SHAPER failed without giving a reason on E3, E5")
+    assert "zero thickness" in msg and "no corner" not in msg
+
+
+def test_silent_fail_without_known_corners_keeps_the_smooth_reading():
+    from executor.shaper.subshapes import silent_fail
+    assert silent_fail([], ["E4"]) == ("SHAPER found no corner to round at the picked edges: "
+                                       "the faces of E4 may meet smoothly there; pick edges "
+                                       "where faces meet at an angle")
+    assert silent_fail([], []).startswith("SHAPER found no corner to round at the picked edges;")

@@ -76,9 +76,12 @@ def _direction(direction) -> str:
 
 
 def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
-           helpers: tuple = ()) -> dict:
+           helpers: tuple = (), check=None,
+           nothing: str = "the operation produced nothing") -> dict:
     """Create one feature from `code`; on a SHAPER error remove it again and fail.
-    `helpers` are features `code` makes before `name`, named `<name>_...`."""
+    `helpers` are features `code` makes before `name`, named `<name>_...`.
+    `check(feature)` may return a reason to remove a feature that did build;
+    `nothing` is the error when SHAPER fails without saying why."""
     st = state(executor)
     # Recompute first: a selection by name is resolved when the feature is
     # created, and result.py runs the whole history in one transaction.
@@ -89,7 +92,9 @@ def _build(executor, name: str, fn: str, code: str, refs: list, kind: str,
         feat = st.ns[name].feature()
         err = feat.error()
         if not err and not any(r.shape() is not None for r in feat.results()):
-            err = "the operation produced nothing"
+            err = nothing
+        if not err and check is not None:
+            err = check(feat)
     except Exception as e:  # noqa: BLE001
         err = str(e) or type(e).__name__
     info = None
