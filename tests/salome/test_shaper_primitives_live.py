@@ -227,6 +227,50 @@ def test_colour_carries_onto_the_result_of_an_operation(agent_client):
     assert not any("setColor" in r["code"] for r in both["records"])
 
 
+_SUB_LOOKS = """
+import ModelAPI
+ps = ModelAPI.ModelAPI_Session.get().moduleDocument()
+part = [f for f in ps.allFeatures() if f.getKind() == "Part"][-1]
+doc = ModelAPI.modelAPI_ResultPart(part.firstResult()).partDoc()
+for f in doc.allFeatures():
+    if f.data().name() != {name!r}:
+        continue
+    for r in f.results():
+        b = ModelAPI.modelAPI_ResultBody(r)
+        for s in [r] + [b.subResult(i) for i in range(b.numberOfSubs())]:
+            c = s.data().intArray("Color")
+            t = s.data().real("Transparency")
+            print("look", [c.value(i) for i in range(c.size())] if c.isInitialized() else None,
+                  t.value() if t is not None and t.isInitialized() else None)
+"""
+
+
+def _looks(client, name) -> list:
+    out = client.run(_SUB_LOOKS.format(name=name), timeout=10)
+    assert out["ok"] is True, out
+    return [line.split(" ", 1)[1] for line in out["stdout"].splitlines()
+            if line.startswith("look ")]
+
+
+def test_colour_and_transparency_reach_every_copy_of_a_pattern(agent_client):
+    # Run 43a344be3879: four torus wheels from multi_translate were coloured
+    # black, but only the compound got the colour; the viewer draws its copies,
+    # which stayed SHAPER's default grey.
+    wheel = _ok(agent_client, "make_torus", radius_major=7, radius_minor=3,
+                origin=[0, 0, 0], axis="OY")["name"]
+    _ok(agent_client, "set_color", shape=wheel, red=0, green=0, blue=0)
+    four = _ok(agent_client, "multi_translate", shape=wheel, vector="OX", step=40, count=2,
+               vector2="OY", step2=36, count2=2)["name"]
+    looks = _looks(agent_client, four)
+    assert len(looks) == 5 and all(l.startswith("[0, 0, 0]") for l in looks), looks
+    _ok(agent_client, "set_color", shape=four, red=10, green=20, blue=30)
+    _ok(agent_client, "set_transparency", shape=four, transparency=0.5)
+    assert _looks(agent_client, four) == ["[10, 20, 30] 0.5"] * 5
+    box = _ok(agent_client, "make_box", dx=1, dy=1, dz=1, center=[0, 0, 50])["name"]
+    _ok(agent_client, "set_color", shape=box, red=255, green=0, blue=0)
+    assert _looks(agent_client, box) == ["[255, 0, 0] None"]
+
+
 def test_cut_reports_how_much_of_each_tool_is_inside(agent_client):
     # Run 0c3302778f3f: arch cylinders broke through the top of the body, and
     # one side's cylinders started at the side face and stayed outside it.

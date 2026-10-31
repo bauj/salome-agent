@@ -145,7 +145,7 @@ def _carry_colour(st, name: str, refs: list, recs: list) -> tuple[list, str | No
     if not colours:
         return recs, None
     rgb = ", ".join(map(str, colours.pop()))
-    code = f"for _r in {name}.results():\n    _r.setColor({rgb})"
+    code = f"for _r in _looks({name}):\n    _r.setColor({rgb})"
     with transaction():
         run(st, code)
     return recs + [record("setColor", code, refs=[name], recv=name)], None

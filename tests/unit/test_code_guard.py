@@ -10,12 +10,13 @@ _model = types.ModuleType("salome.shaper.model")
 _model.os = os
 _model.addBox = lambda *a: None
 NS = {"model": _model, "shaper_doc": object(), "box_1": object(), "math": math,
-      "_name": lambda *a: None}
+      "_name": lambda *a: None, "_looks": lambda o: []}
 
 
 @pytest.mark.parametrize("code", [
     "box_2 = model.addBox(shaper_doc, 10, 20, 30)\n_name(box_2, 'box_2')",
     "for _r in box_1.results():\n    _r.setColor(255, 0, 0)",
+    "for _r in _looks(box_1):\n    _r.setColor(255, 0, 0)",
     "pts = [p for p in range(3)]\nn = len(pts)",
     "f = lambda a: a + 1\nf(2)",
 ])
