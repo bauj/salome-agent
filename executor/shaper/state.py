@@ -45,6 +45,26 @@ def _unjoin(sk, a, b):
             sk.feature().document().removeFeature(f)
 
 
+def _remove(*objs):
+    """Remove sketch entities with every sketch constraint that refers to them or to
+    their points: removeFeature alone leaves those constraints pointing to nothing,
+    and the sketch solver crashes on them later."""
+    import ModelAPI
+    feats = [o.feature() if hasattr(o, "feature") else o for o in objs]
+    doc = feats[0].document()
+    gone = {f.data().name() for f in feats}
+    refs = {}
+    for f in feats:
+        for d in [f.data()] + [r.data() for r in f.results()]:
+            for a in d.refsToMe():
+                o = ModelAPI.objectToFeature(a.owner())
+                if (o is not None and o.getKind().startswith("SketchConstraint")
+                        and o.data().name() not in gone):
+                    refs[o.data().name()] = o
+    for f in [*refs.values(), *feats]:
+        doc.removeFeature(f)
+
+
 def _wrap(ent):
     """A sketch entity SHAPER made itself (a fillet arc, a mirrored copy) as its API object."""
     f = ent if hasattr(ent, "getKind") else ent.feature()
@@ -540,10 +560,27 @@ def regions(executor, sk: Sketch) -> list:
     return out
 
 
+def rebuild_error(sk: Sketch) -> str:
+    """Why the sketch no longer rebuilds, or "" when it does. Its last good result
+    stays in place meanwhile, so its regions would describe a sketch that is gone."""
+    try:
+        feat = sk.api.feature()
+        if feat.data().execState() not in (2, 3):  # ExecFailed, InvalidArgument
+            return ""
+        error = feat.error()
+    except Exception:  # noqa: BLE001 — no state to read: assume it rebuilds
+        return ""
+    return (solver_error(sk) or re.sub(r"<[^>]+>", "", error or "").strip()
+            or "the sketch does not rebuild")
+
+
 def status(executor, sk: Sketch, before: dict | None = None) -> dict:
     geos = snapshot(sk)
+    err = rebuild_error(sk)
     out = {"sketch": sk.name, "dof": dof(sk),
-           "loose_ends": loose_ends(sk, geos), "regions": regions(executor, sk)}
+           "loose_ends": loose_ends(sk, geos), "regions": [] if err else regions(executor, sk)}
+    if err:
+        out["rebuild_error"] = err
     if before is not None:
         out["moved"] = moved(before, geos)
     return out

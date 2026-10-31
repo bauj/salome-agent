@@ -31,7 +31,7 @@ def exec_records(st, records: list) -> None:
                 obj = st.ns.pop(var, None)
                 if obj is not None:
                     try:
-                        st.ns["shaper_doc"].removeFeature(obj.feature())
+                        st.ns["_remove"](obj)
                     except Exception:  # noqa: BLE001 — already gone with its owner
                         pass
         raise
@@ -678,18 +678,37 @@ def tool_sketch_remove(executor, args: dict):
         + [cid for cid, c in sk.constraints.items()
            if any(r.partition(".")[0] in ents for r in c.refs)]))
     before = snapshot(sk)
-    records = []
-    for i in cons + ents:
-        obj = sk.constraints.get(i) or sk.entities.get(i)
-        records.append(record("removeFeature", f"shaper_doc.removeFeature({obj.var}.feature())",
-                              refs=[obj.var], recv=sk.name))
+    vars_ = [(sk.constraints.get(i) or sk.entities.get(i)).var for i in cons + ents]
+    # _remove also takes the constraints SHAPER made for us (a fillet's, a mirror)
+    records = [record("removeFeature", f"_remove({', '.join(vars_)})", refs=vars_,
+                      recv=sk.name)]
     exec_records(st, records)
     for i in cons:
         sk.constraints.pop(i)
     for i in ents:
         sk.entities.pop(i)
+    also = _drop_removed(st, sk)
     before = {k: v for k, v in before.items() if k in sk.entities}
-    return _reply(executor, sk, records, before, removed=[*ents, *cons])
+    return _reply(executor, sk, records, before, removed=[*ents, *cons, *also])
+
+
+def _drop_removed(st, sk: Sketch) -> list:
+    """Forget the entities and constraints SHAPER removed along with others (a
+    mirror's copies go with its source); their ids."""
+    def gone(obj):
+        try:
+            data = obj.feature().data()
+            return data is None or not data.isValid()
+        except Exception:  # noqa: BLE001 — a removed feature cannot even be read
+            return True
+    dropped = []
+    for book in (sk.constraints, sk.entities):
+        for i, item in list(book.items()):
+            if gone(item.api):
+                book.pop(i)
+                st.ns.pop(item.var, None)
+                dropped.append(i)
+    return dropped
 
 
 # --- sketch_status ----------------------------------------------------------
@@ -846,7 +865,7 @@ def tool_sketch_fillet(executor, args: dict):
         with transaction():
             obj = st.ns.pop(var, None)
             if obj is not None:
-                st.ns["shaper_doc"].removeFeature(obj.feature())
+                st.ns["_remove"](obj)
             restore(sk, geos)
         raise ValueError(f"the fillet conflicts with the constraints on {first} or {second} "
                          f"({err}); remove them first")
