@@ -5,17 +5,31 @@ import sys
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="salome-agent")
-    parser.add_argument("request")
+    parser.add_argument("request",
+                        help="what to build, in plain words (quote it), e.g. "
+                             "\"a 10 mm cube with a 3 mm hole through it\"")
     parser.add_argument("--images", default=None, metavar="PATH,PATH,...",
                         help="comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) "
                              "the generated CAD should match -- e.g. several views/plans "
                              "of the same part; a vision agent describes them, the "
                              "description (not the images) goes to the planner and "
                              "the CAD stages (GEOM or SHAPER)")
-    parser.add_argument("--batch", action="store_true")
-    parser.add_argument("--work-dir", default=None)
-    parser.add_argument("--config", default=None)
-    parser.add_argument("--on-failure", choices=["abort", "continue"], default=None)
+    parser.add_argument("--batch", action="store_true",
+                        help="run without prompts: no plan approval, no question on a "
+                             "failed stage, no offer to clear a study left by earlier "
+                             "runs (cannot be combined with --chat)")
+    parser.add_argument("--work-dir", default=None, metavar="DIR",
+                        help="folder that gets one <run_id> folder per run (result.py, "
+                             "report.md, traces); overrides work_dir in config, default "
+                             "the current folder")
+    parser.add_argument("--config", default=None, metavar="PATH",
+                        help="configuration file to use (LLM endpoint, model, key, "
+                             "policy); default config.json in the current folder")
+    parser.add_argument("--on-failure", choices=["abort", "continue"], default=None,
+                        help="what a failed stage does in --batch mode: 'abort' stops "
+                             "the run and writes what was built, 'continue' skips the "
+                             "stage and goes on with the next ones "
+                             "(overrides policy.on_stage_failure in config)")
     parser.add_argument("--tools", choices=["hints", "all"], default=None,
                         help="tool retrieval for GEOM and SHAPER stages: 'hints' (default) "
                              "offers the specialist a per-stage subset it widens on demand; "
