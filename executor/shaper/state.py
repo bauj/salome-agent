@@ -65,6 +65,17 @@ def _remove(*objs):
         doc.removeFeature(f)
 
 
+def _looks(obj):
+    """obj's results and all their sub-results: the viewer draws each copy of a
+    pattern or compound with its own colour and transparency."""
+    out, todo = [], list(obj.results())
+    while todo:
+        r = todo.pop(0)
+        out.append(r)
+        todo += [r.subResult(i) for i in range(r.numberOfSubs())]
+    return out
+
+
 def _wrap(ent):
     """A sketch entity SHAPER made itself (a fillet arc, a mirrored copy) as its API object."""
     f = ent if hasattr(ent, "getKind") else ent.feature()

@@ -128,7 +128,7 @@ def _display(executor, name, fn: str, call: str) -> dict:
     st = state(executor)
     if st.objects[name] in CONSTRUCTION:
         raise ValueError(f"{name!r} is a construction {st.objects[name]}; colour a shape")
-    code = f"for _r in {name}.results():\n    _r.{call}"
+    code = f"for _r in _looks({name}):\n    _r.{call}"
     rec = record(fn, code, refs=[name], recv=name)
     with transaction():
         run(st, code)
