@@ -746,7 +746,7 @@ def _edge_feature(executor, args: dict, prefix: str, fn: str, call, radius=None)
         if added:
             r["also_rounded"] = added
         if notes:
-            r["note"] = "; ".join(notes)
+            r["note"] = "; ".join(notes + ([r["note"]] if r.get("note") else []))
     return r
 
 

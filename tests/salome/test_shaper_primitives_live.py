@@ -225,3 +225,19 @@ def test_colour_carries_onto_the_result_of_an_operation(agent_client):
     both = _ok(agent_client, "fuse", objects=[fused["name"], blue])
     assert "different colours" in both.get("note", ""), both
     assert not any("setColor" in r["code"] for r in both["records"])
+
+
+def test_cut_reports_how_much_of_each_tool_is_inside(agent_client):
+    # Run 0c3302778f3f: arch cylinders broke through the top of the body, and
+    # one side's cylinders started at the side face and stayed outside it.
+    body = _ok(agent_client, "make_box", dx=4700, dy=1850, dz=650,
+               center=[2350, 0, 325])["name"]
+    out = _ok(agent_client, "make_cylinder", radius=400, height=500, origin=[800, 925, 350],
+              axis="OY")["name"]
+    half = _ok(agent_client, "make_cylinder", radius=400, height=500,
+               origin=[800, -925, 350], axis="OY")["name"]
+    tools = {t["name"]: t for t in
+             _ok(agent_client, "cut", objects=[body], tools=[out, half])["tools"]}
+    assert tools[out]["inside"] == 0 and tools[out]["beyond"]["y_max"] == 500
+    assert 0.8 < tools[half]["inside"] < 1
+    assert tools[half]["beyond"] == {"z_min": 50, "z_max": 100}

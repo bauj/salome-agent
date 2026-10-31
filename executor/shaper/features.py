@@ -3,7 +3,7 @@ import math
 from executor.shaper.sketch import exec_records
 from executor.shaper.state import (
     CONSTRUCTION, PUBLISH_LINE, construction_info, forget, measure, new_name, publish_study,
-    raw_box, record, run, sketch_frame, sketch_of, state, tool, transaction,
+    raw_box, record, results_of, run, sketch_frame, sketch_of, state, tool, transaction,
 )
 
 _AXES = ("OX", "OY", "OZ")
@@ -394,7 +394,8 @@ def _boolean(executor, args: dict, op: str) -> dict:
     tools, trefs = _operands(executor, args.get("tools"), "tools")
     infos = [measure(executor, n) for n in refs]
     before = _amount(infos)
-    tool_boxes = [measure(executor, n)["bbox"] for n in trefs] if op == "Cut" else []
+    tinfos = [measure(executor, n) for n in trefs] if op == "Cut" else []
+    tool_boxes = [m["bbox"] for m in tinfos]
     code = f"{name} = model.add{op}(shaper_doc, [{', '.join(objs)}], [{', '.join(tools)}])"
     out = _build(executor, name, f"add{op}", code, refs + trefs, "boolean")
     if out["ok"] and op == "Cut":
@@ -405,6 +406,41 @@ def _boolean(executor, args: dict, op: str) -> dict:
             else:
                 why = f"{', '.join(trefs)} does not overlap {', '.join(refs)}"
             out["delta"] = f"{name}: nothing was removed — {why}"
+        out["tools"] = _tool_report(executor, refs, trefs, infos, tinfos)
+    return out
+
+
+_SIDES = ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max")
+
+
+def _tool_report(executor, refs: list, trefs: list, infos: list, tinfos: list) -> list:
+    """For each solid tool of a cut: the share of its volume inside the objects,
+    and how far it reaches past their bounding box on each side."""
+    from GeomAlgoAPI import BOOL_COMMON, GeomAlgoAPI_Boolean
+    from GeomAlgoAPI import GeomAlgoAPI_ShapeTools as T
+    objs = [r.shape() for n in refs for r in results_of(executor, n)]
+    boxes = [m["bbox"] for m in infos]
+    box = [min(b[k] for b in boxes) if k % 2 == 0 else max(b[k] for b in boxes)
+           for k in range(6)]
+    out = []
+    for t, ti in zip(trefs, tinfos):
+        vol = ti.get("volume") or 0
+        if vol <= 0:
+            continue
+        inside = 0.0
+        for ts in (r.shape() for r in results_of(executor, t)):
+            for o in objs:
+                op = GeomAlgoAPI_Boolean(o, ts, BOOL_COMMON)
+                if op.isDone() and op.shape() is not None:
+                    inside += T.volume(op.shape())
+        b = ti["bbox"]
+        beyond = {_SIDES[k]: round(box[k] - b[k] if k % 2 == 0 else b[k] - box[k], 4)
+                  for k in range(6)
+                  if (box[k] - b[k] if k % 2 == 0 else b[k] - box[k]) > 1e-6}
+        entry = {"name": t, "inside": round(min(inside / vol, 1.0), 4)}
+        if beyond:
+            entry["beyond"] = beyond
+        out.append(entry)
     return out
 
 
@@ -431,7 +467,10 @@ def tool_fuse(executor, args: dict):
 
 
 @tool("cut", category="boolean",
-      description="Remove the faces or solids `tools` from the faces or solids `objects`.",
+      description=("Remove the faces or solids `tools` from the faces or solids `objects`. "
+                   "The reply gives each solid tool's share of its volume inside `objects` "
+                   "(`inside`, 0-1) and how far it reaches past their bounding box on each "
+                   "side (`beyond`, mm)."),
       schema=_BOOL_SCHEMA)
 def tool_cut(executor, args: dict):
     return _boolean(executor, args, "Cut")
