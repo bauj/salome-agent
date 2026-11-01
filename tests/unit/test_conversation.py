@@ -315,7 +315,8 @@ def test_an_image_reading_reaches_later_turns_until_undone(conv, monkeypatch):
     conv.turn("like this", images=["data:image/png;base64,AAAA"], on_event=lambda e: None,
               on_gate=None)
     conv.turn("missing the bars", on_event=lambda e: None, on_gate=None)
-    assert seen[1] == [{"event": "image", "turn": 0, "spec": {"summary": "a plate"}}]
+    assert seen[1] == [{"event": "image", "turn": 0, "spec": {"summary": "a plate"},
+                        "at": 0}]
     conv.undo(); conv.undo()
     conv.turn("a box", on_event=lambda e: None, on_gate=None)
     assert seen[2] == []
@@ -385,3 +386,22 @@ def test_a_turn_out_of_iterations_does_not_quote_the_last_tool_error(conv, monke
     monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
     r = conv.turn("fillet it", on_event=lambda e: None, on_gate=None)
     assert r.status == "failed" and r.message == "ran out of tool iterations"
+
+
+def test_a_re_read_is_saved_under_the_turn_of_the_image(conv, monkeypatch):
+    finals = iter([{"image_spec": {"summary": "4 slots"}},
+                   {"image_spec": {"summary": "4 slots and bars"}, "image_reread_of": 0}])
+    seen = []
+
+    def fake(app, inp, cfg, mapper, llm, on_event, on_gate, cancel):
+        seen.append([e for e in inp["history"] if e["event"] == "image"])
+        return {**inp, "build_graph": _graph_with(1).to_dict(), **next(finals)}
+
+    monkeypatch.setattr(conv_mod, "drive", fake)
+    conv.turn("plate", images=["data:image/png;base64,AAAA"], on_event=lambda e: None,
+              on_gate=None)
+    conv.turn("", images=["data:image/png;base64,AAAA"], on_event=lambda e: None, on_gate=None)
+    images = [e for e in conv.history if e["event"] == "image"]
+    assert images[-1] == {"event": "image", "turn": 0, "spec": {"summary": "4 slots and bars"},
+                          "at": 1}
+    assert {e["turn"] for e in images} == {0}

@@ -449,7 +449,7 @@ def _spec(session: AmendSession) -> ModuleSpec:
 
 def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
               history=(), selection=None, session=None, cancel=None,
-              image_description=None, earlier_images=()):
+              image_description=None, earlier_images=(), image_reread_of=None):
     session = session or AmendSession(graph, client, turn)
     blocks = ["Build graph:\n" + graph.render()]
     snap = _snapshot(client, graph)
@@ -464,14 +464,19 @@ def run_amend(text: str, graph, llm, client, turn: int, policy: dict, *,
     for image_turn, description in earlier_images:
         blocks.append(f"The user attached reference image(s) on turn {image_turn}; the "
                       "image-analysis agent described them as:\n" + description)
-    if image_description:
+    if image_description and image_reread_of:
+        blocks.append(f"The user attached the reference image(s) of turn {image_reread_of} "
+                      "again; the image-analysis agent read them again with the user's "
+                      "corrections, and this reading replaces its earlier one:\n"
+                      + image_description)
+    elif image_description:
         blocks.append("The user attached reference image(s) to this message; the "
                       "image-analysis agent describes them as:\n" + image_description)
     if len(earlier_images) + bool(image_description) > 1:
         blocks.append("Images came on several turns: a later one may show the current "
                       "result rather than the target. The user's words say which one the "
                       "model should match.")
-    elif earlier_images:
+    elif earlier_images or image_reread_of:
         blocks.append("The model you are amending should match this description unless "
                       "the user says otherwise.")
     blocks.append(f"The user says: {text}")

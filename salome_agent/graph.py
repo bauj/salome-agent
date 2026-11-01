@@ -162,11 +162,39 @@ def _readings(state: dict) -> dict:
             if e.get("event") == "image"}
 
 
-def _earlier_images(state: dict) -> list:
+def _earlier_images(state: dict, skip: int | None = None) -> list:
     """(turn number, amend block) of every earlier turn's image reading: a later
-    image can be a picture of the result, so none replaces the others."""
+    image can be a picture of the result, so none replaces the others. `skip`:
+    the turn whose reading this turn's re-read replaces."""
     from salome_agent.nodes.vision_spec import amend_block
-    return [(t + 1, amend_block(spec)) for t, spec in sorted(_readings(state).items())]
+    return [(t + 1, amend_block(spec)) for t, spec in sorted(_readings(state).items())
+            if t != skip]
+
+
+def _same_images_turn(state: dict, stored: dict, images: list) -> int | None:
+    """The latest earlier turn that came with exactly these images (same bytes,
+    same order) and has a reading, else None."""
+    turn = state.get("turn_idx") or 0
+    readings = _readings(state)
+    match = [t for t, v in stored.items()
+             if t < turn and t in readings and list(v.get("images") or []) == list(images)]
+    return max(match) if match else None
+
+
+def _corrections(state: dict, image_turn: int) -> str:
+    """What the user wrote since the latest reading of `image_turn`'s images, one
+    line per turn, the default image-only text left out."""
+    from salome_agent.nodes.vision import IMAGE_ONLY_REQUEST, NO_CORRECTION_WORDS
+
+    history = state.get("history") or []
+    since = max([image_turn] + [e.get("at", e["turn"]) for e in history
+                                if e.get("event") == "image" and e.get("turn") == image_turn])
+    texts = [(e["turn"], e.get("text") or "") for e in history
+             if e.get("event") == "turn" and e.get("turn", -1) > since]
+    texts.append(((state.get("turn_idx") or 0), state.get("user_request") or ""))
+    lines = [f"turn {t + 1}: {text.strip()}" for t, text in texts
+             if text.strip() and text.strip() != IMAGE_ONLY_REQUEST]
+    return "\n".join(lines) or NO_CORRECTION_WORDS
 
 
 def _replan_reading(readings: dict, turn: int, named) -> dict | None:
@@ -197,8 +225,9 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
     readings = _readings(state)
+    reread_of = state.get("image_reread_of")
     if state.get("image_spec"):
-        readings[turn] = state["image_spec"]
+        readings[turn if reread_of is None else reread_of] = state["image_spec"]
     images = {t: v for t, v in (config["configurable"].get("turn_images") or {}).items()
               if t in readings}
     retries = ((state.get("config") or {}).get("llm") or {}).get("vision_fix_retries", 2)
@@ -207,12 +236,14 @@ def _amend_node(state: dict, config: "RunnableConfig"):
                                  view=getattr(client, "mode", None) == "gui",
                                  fix_retries=retries)
     extra = {}
-    earlier = _earlier_images(state)
+    earlier = _earlier_images(state, skip=reread_of)
     if earlier:
         extra["earlier_images"] = earlier
     if state.get("image_spec"):
         from salome_agent.nodes.vision_spec import amend_block
         extra["image_description"] = amend_block(state["image_spec"])
+        if reread_of is not None:
+            extra["image_reread_of"] = reread_of + 1
     try:
         session, outcome = amend.run_amend(
             state["user_request"], graph, llm, client, turn,
@@ -239,7 +270,8 @@ def _amend_node(state: dict, config: "RunnableConfig"):
         return Command(update=update, goto="assemble")
     if "replan" in outcome:
         update["replan_context"] = _replan_context(state, session.graph, outcome["replan"])
-        spec = _replan_reading(session.readings, turn, outcome.get("image_turn"))
+        spec = _replan_reading(session.readings, turn if reread_of is None else reread_of,
+                               outcome.get("image_turn"))
         if spec:
             update["image_spec"] = spec
         log.info("  amend -> replan: %s", outcome["replan"])
@@ -346,12 +378,22 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
         return Command(goto=after)
     llm = config["configurable"]["llm_client"]
     retries = ((state.get("config") or {}).get("llm") or {}).get("vision_fix_retries", 2)
-    log.info("describing %d reference image(s)...", len(images))
+    stored = config["configurable"].get("turn_images") or {}
+    reread_of = _same_images_turn(state, stored, images) if after == "amend" else None
+    request, reread = state["user_request"], {}
+    if reread_of is not None:
+        request = stored[reread_of].get("request") or request
+        reread = {"earlier": _readings(state)[reread_of],
+                  "correction": _corrections(state, reread_of)}
+        log.info("same reference image(s) as turn %d: reading them again with the user's "
+                 "words since: %s", reread_of + 1, reread["correction"])
+    else:
+        log.info("describing %d reference image(s)...", len(images))
     snap0 = _usage_snap(llm)
     t0 = time.monotonic()
     try:
-        spec = describe_images(state["user_request"], images, llm, fix_retries=retries,
-                               on_progress=_progress_writer())
+        spec = describe_images(request, images, llm, fix_retries=retries,
+                               on_progress=_progress_writer(), **reread)
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -361,7 +403,7 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
     log.info("image spec:\n%s", json.dumps(spec, ensure_ascii=False, indent=1))
     # only this node reads the images; the checkpointer would otherwise carry
     # the base64 through every later step
-    update = {"image_spec": spec, "reference_images": None}
+    update = {"image_spec": spec, "reference_images": None, "image_reread_of": reread_of}
     if snap0 is not None:
         vt = _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0)
         log.info("  vision timing: wall=%.1fs llm=%.1fs", vt["wall"], vt["llm_s"])

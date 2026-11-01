@@ -207,6 +207,12 @@ def _ask(llm, messages: list[dict]) -> dict:
                         module="vision", reasoning_share=0.5)
 
 
+# The request sent when the user attaches images with no text (CLI /image, salome-agent-gui).
+IMAGE_ONLY_REQUEST = "Build what the attached image(s) show."
+NO_CORRECTION_WORDS = ("(no words: the user attached the same image(s) again, so something "
+                       "in the earlier reading is wrong)")
+
+
 def describe_images(request: str, images: list[str], llm, fix_retries: int = 2,
                     on_progress=None, earlier: dict | None = None,
                     correction: str | None = None) -> dict:

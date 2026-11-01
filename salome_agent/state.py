@@ -54,6 +54,7 @@ class RunState(TypedDict):
     user_request: str
     reference_images: Optional[list[str]]
     image_spec: Optional[dict]
+    image_reread_of: Optional[int]
     config: dict
 
     plan: list[StagePlan]
