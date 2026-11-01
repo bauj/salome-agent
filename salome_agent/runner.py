@@ -121,7 +121,7 @@ def initial_state(request: str, config: dict, client, run_id: str, batch: bool,
         "study_ns": "salome_agent_run", "final_script": None, "report": None,
         "fatal": None, "aborted": False, "run_id": run_id,
         "build_graph": None, "turn_idx": 0, "selection": None, "turn_outcome": None,
-        "replan_context": None, "degraded": None,
+        "replan_context": None, "degraded": None, "amend_timing": None,
     }
 
 

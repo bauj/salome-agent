@@ -33,7 +33,7 @@ class StageRecord(TypedDict, total=False):
     # Task 5's per-call trace: [{tool, tool_args, records}] — what a build
     # node is made from. None for script modules.
     calls: Optional[list[dict]]
-    # {wall, llm_s, core_s, exec_s, turns, in_tok, out_tok} — accumulated
+    # {wall, llm_s, harness_s, exec_s, turns, in_tok, out_tok} — accumulated
     # across retry re-entries. Written by graph nodes, read by report.py.
     timing: dict
     # finish_stage's request_conflict (the model's words) and the result
@@ -81,3 +81,4 @@ class RunState(TypedDict):
     turn_outcome: Optional[dict]
     replan_context: Optional[str]
     degraded: Optional[bool]
+    amend_timing: Optional[dict]

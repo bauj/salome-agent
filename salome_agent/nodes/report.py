@@ -42,20 +42,26 @@ def _stage_timing_suffix(tm: dict) -> str:
              f"llm {tm.get('llm_s', 0):.1f}s"]
     if tm.get("exec_s"):
         parts.append(f"exec {tm['exec_s']:.1f}s")
-    parts.append(f"core {tm.get('core_s', 0):.1f}s")
+    parts.append(f"harness {tm.get('harness_s', 0):.1f}s")
     parts.append(f"tokens {_tok(tm.get('in_tok', 0))} in / {_tok(tm.get('out_tok', 0))} out")
     return " — " + ", ".join(parts)
 
 
 def _timing_lines(state: dict) -> list[str]:
+    at = state.get("amend_timing") or {}
     pt = state.get("plan_timing") or {}
     stage_tms = [(idx, state["stages"][idx].get("timing") or {})
                  for idx in sorted(state["stages"])]
     stage_tms = [(i, t) for i, t in stage_tms if t]
-    if not pt and not stage_tms:
+    if not at and not pt and not stage_tms:
         return []
     total = len(state["stages"])
     lines = ["## Timing", ""]
+    if at:
+        lines.append(f"- amend (turn {(state.get('turn_idx') or 0) + 1}): "
+                     f"{at.get('wall', 0):.1f}s wall, {at.get('llm_s', 0):.1f}s llm, "
+                     f"{at.get('exec_s', 0):.1f}s exec, {at.get('turns', 0)} calls, tokens {_tok(at.get('in_tok', 0))} in / "
+                     f"{_tok(at.get('out_tok', 0))} out")
     if pt:
         lines.append(f"- planner: {pt.get('wall', 0):.1f}s wall, "
                      f"{pt.get('llm_s', 0):.1f}s llm")
@@ -63,10 +69,10 @@ def _timing_lines(state: dict) -> list[str]:
         mod = state["stages"][idx].get("module", "?")
         lines.append(f"- stage {idx + 1}/{total} ({mod}): {tm.get('wall', 0):.1f}s wall, "
                      f"{tm.get('llm_s', 0):.1f}s llm, "
-                     f"{tm.get('exec_s', 0):.1f}s exec, {tm.get('core_s', 0):.1f}s core")
-    wall = pt.get("wall", 0) + sum(t.get("wall", 0) for _, t in stage_tms)
-    llm_s = pt.get("llm_s", 0) + sum(t.get("llm_s", 0) for _, t in stage_tms)
-    exec_s = sum(t.get("exec_s", 0) for _, t in stage_tms)
+                     f"{tm.get('exec_s', 0):.1f}s exec, {tm.get('harness_s', 0):.1f}s harness")
+    wall = at.get("wall", 0) + pt.get("wall", 0) + sum(t.get("wall", 0) for _, t in stage_tms)
+    llm_s = at.get("llm_s", 0) + pt.get("llm_s", 0) + sum(t.get("llm_s", 0) for _, t in stage_tms)
+    exec_s = at.get("exec_s", 0) + sum(t.get("exec_s", 0) for _, t in stage_tms)
     if wall:
         lines.append(f"- total: {wall:.1f}s measured wall — {llm_s:.1f}s llm "
                      f"({llm_s / wall * 100:.0f}%), {exec_s:.1f}s exec")

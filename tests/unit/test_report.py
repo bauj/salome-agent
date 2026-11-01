@@ -58,11 +58,11 @@ def test_report_omits_usage_section_when_absent():
 
 def _timed_state():
     return _state(
-        plan_timing={"wall": 12.0, "llm_s": 11.5, "core_s": 0.5, "turns": 1,
+        plan_timing={"wall": 12.0, "llm_s": 11.5, "harness_s": 0.5, "turns": 1,
                      "in_tok": 2000, "out_tok": 400},
         stages={
             0: {"module": "geom", "status": "ok",
-                "timing": {"wall": 40.0, "llm_s": 30.0, "core_s": 2.0, "exec_s": 8.0,
+                "timing": {"wall": 40.0, "llm_s": 30.0, "harness_s": 2.0, "exec_s": 8.0,
                            "turns": 5, "in_tok": 16000, "out_tok": 2100}},
         })
 
@@ -135,3 +135,26 @@ def test_report_warnings_and_built_lines():
 
 def test_report_has_no_warnings_section_without_conflicts():
     assert "## Warnings" not in write_report(_timed_state())
+
+
+def test_report_timing_section_on_an_amend_turn():
+    out = write_report(_state(
+        turn_idx=1, stages={},
+        amend_timing={"wall": 20.0, "llm_s": 15.0, "exec_s": 3.0, "harness_s": 2.0, "turns": 3,
+                      "in_tok": 9000, "out_tok": 700}))
+    assert "## Timing" in out
+    assert ("- amend (turn 2): 20.0s wall, 15.0s llm, 3.0s exec, 3 calls, "
+            "tokens 9.0k in / 700 out") in out
+    assert "20.0s measured wall — 15.0s llm (75%), 3.0s exec" in out
+
+
+def test_report_timing_totals_an_amend_that_replanned():
+    out = write_report(_timed_state() | {
+        "turn_idx": 1,
+        "amend_timing": {"wall": 8.0, "llm_s": 6.0, "harness_s": 2.0, "turns": 1,
+                         "in_tok": 1000, "out_tok": 100}})
+    lines = out.splitlines()
+    assert lines.index("- amend (turn 2): 8.0s wall, 6.0s llm, 0.0s exec, 1 calls, "
+                       "tokens 1.0k in / 100 out") \
+        < next(i for i, l in enumerate(lines) if l.startswith("- planner:"))
+    assert "60.0s measured wall" in out
