@@ -81,3 +81,4 @@ class RunState(TypedDict):
     turn_outcome: Optional[dict]
     replan_context: Optional[str]
     degraded: Optional[bool]
+    amend_timing: Optional[dict]

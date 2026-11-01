@@ -476,3 +476,28 @@ def test_a_re_read_replaces_the_old_reading_for_the_follow_up_model(tmp_path, mo
     assert seen["image_reread_of"] == 1
     assert "4 slots and bars" in seen["image_description"]
     assert seen["session"].readings == {0: {"summary": "4 slots and bars"}}
+
+
+def test_amend_turn_records_its_timing(tmp_path, monkeypatch):
+    from salome_agent.specialists import amend as amend_mod
+
+    class FakeLLM:
+        usage = {"calls": 4, "prompt_tokens": 100, "completion_tokens": 10,
+                 "llm_seconds": 1.0}
+
+    llm = FakeLLM()
+
+    def fake_run_amend(text, graph, llm_, client, turn, policy, **kw):
+        llm_.usage.update(calls=6, prompt_tokens=2100, completion_tokens=310, llm_seconds=4.5)
+        return amend_mod.AmendSession(graph, client, turn), {"summary": "ok", "question": None}
+
+    monkeypatch.setattr(amend_mod, "run_amend", fake_run_amend)
+    app = build_graph(batch=True)
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": llm,
+                            "executor_client": None}}
+    out = app.invoke(_state(tmp_path, _graph(), "make it taller"), config=cfg)
+    tm = out["amend_timing"]
+    assert (tm["turns"], tm["in_tok"], tm["out_tok"], tm["llm_s"]) == (2, 2000, 300, 3.5)
+    assert tm["wall"] >= 0
+    report = (tmp_path / "r1" / "report.md").read_text()
+    assert "- amend (turn 2):" in report and "2 calls" in report
