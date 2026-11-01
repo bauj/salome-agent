@@ -4,6 +4,7 @@ import sys
 import threading
 
 from salome_agent.interactive import terminal_gate
+from salome_agent.nodes.vision import IMAGE_ONLY_REQUEST
 
 _HELP = """commands:
   /undo      revert the last turn
@@ -17,7 +18,6 @@ _HELP = """commands:
 anything else is a request to the agent. Ctrl-C cancels the running turn."""
 
 
-IMAGE_ONLY_REQUEST = "Build what the attached image(s) show."
 _IMAGE_USAGE = "usage: /image PATH[,PATH] [request] — quote a path with spaces"
 
 

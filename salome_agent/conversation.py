@@ -129,9 +129,12 @@ class Conversation:
         outcome = final.get("turn_outcome") or {}
         if result.status in ("ok", "needs_input"):
             if images and final.get("image_spec"):
-                self.history.append({"event": "image", "turn": n, "spec": final["image_spec"]})
+                reread_of = final.get("image_reread_of")
+                self.history.append({"event": "image",
+                                     "turn": n if reread_of is None else reread_of,
+                                     "spec": final["image_spec"], "at": n})
             for t, spec in outcome.get("image_rereads") or ():
-                self.history.append({"event": "image", "turn": t, "spec": spec})
+                self.history.append({"event": "image", "turn": t, "spec": spec, "at": n})
         warnings = result.warnings
         self.history.append({"event": "turn", "turn": n, "text": text,
                              "status": result.status,

@@ -550,3 +550,15 @@ def test_transcript_carries_a_turn_warnings():
                                "warnings": ["stage 1/1 (smesh): kept your 2 mm step"]}])
     assert text == ("turn 1 (ok): mesh it at 2 mm -> meshed\n"
                     "  warning: stage 1/1 (smesh): kept your 2 mm step")
+
+
+
+def test_a_re_read_image_is_introduced_as_replacing_the_earlier_reading():
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("finish_turn", {"summary": "x"}))]
+    run_amend("Build what the attached image(s) show.", _graph(), llm, FakeClient(), 3, POLICY,
+              image_description="4 slots and bars", image_reread_of=1)
+    user = llm.chat.call_args.kwargs["messages"][1]["content"]
+    assert ("attached the reference image(s) of turn 1 again" in user
+            and "this reading replaces its earlier one:\n4 slots and bars" in user)
+    assert "to this message" not in user and "should match this description" in user

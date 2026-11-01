@@ -761,3 +761,78 @@ def test_a_stopped_later_turn_is_headed_as_stopped(tmp_path):
     write_report_file(state, None, stopped="during this turn")
     assert (tmp_path / "r1" / "report.md").read_text().startswith(
         "\n\n# Turn 2 (stopped)\n\n# Report: r1")
+
+
+IMG_A, IMG_B = "data:image/png;base64,AAAA", "data:image/png;base64,BBBB"
+
+
+def _reattach(monkeypatch, images, text, history, stored, turn=3):
+    from salome_agent import graph
+    from salome_agent.nodes import vision
+
+    seen = {}
+
+    def fake_describe(request, imgs, llm, **kw):
+        seen.update(request=request, **kw)
+        return {"summary": "new reading"}
+
+    monkeypatch.setattr(vision, "describe_images", fake_describe)
+    state = {"user_request": text, "reference_images": images, "turn_idx": turn,
+             "history": history, "build_graph": None}
+    cmd = graph._describe_image_node(state, {"configurable": {
+        "llm_client": MagicMock(), "turn_images": stored}})
+    return cmd, seen
+
+
+_HISTORY = [{"event": "image", "turn": 0, "spec": {"summary": "4 slots"}, "at": 0},
+            {"event": "turn", "turn": 0, "text": "build this plate"},
+            {"event": "turn", "turn": 1, "text": "stay in 2D"},
+            {"event": "turn", "turn": 2, "text": "many bars are missing"}]
+_STORED = {0: {"request": "build this plate", "images": [IMG_A]},
+           3: {"request": "Build what the attached image(s) show.", "images": [IMG_A]}}
+
+
+def test_the_same_image_attached_again_is_read_again_with_the_user_s_corrections(monkeypatch):
+    # GH #50: run 591def8507b8 re-read a re-attached image from scratch.
+    cmd, seen = _reattach(monkeypatch, [IMG_A], "Build what the attached image(s) show.",
+                          _HISTORY, _STORED)
+    assert seen["request"] == "build this plate"
+    assert seen["earlier"] == {"summary": "4 slots"}
+    assert seen["correction"] == "turn 2: stay in 2D\nturn 3: many bars are missing"
+    assert cmd.update["image_reread_of"] == 0
+    assert cmd.update["image_spec"] == {"summary": "new reading"}
+
+
+def test_a_re_attach_with_text_adds_that_text_to_the_corrections(monkeypatch):
+    _, seen = _reattach(monkeypatch, [IMG_A], "the bars are vertical", _HISTORY[:2],
+                        {**_STORED, 3: {"request": "the bars are vertical", "images": [IMG_A]}})
+    assert seen["correction"] == "turn 4: the bars are vertical"
+
+
+def test_a_re_attach_with_no_words_since_says_so(monkeypatch):
+    from salome_agent.nodes.vision import NO_CORRECTION_WORDS
+
+    _, seen = _reattach(monkeypatch, [IMG_A], "Build what the attached image(s) show.",
+                        _HISTORY[:2], _STORED, turn=1)
+    assert seen["correction"] == NO_CORRECTION_WORDS
+
+
+@pytest.mark.parametrize("images", [[IMG_B], [IMG_A, IMG_B]])
+def test_a_new_image_or_an_added_one_gets_a_fresh_reading(monkeypatch, images):
+    cmd, seen = _reattach(monkeypatch, images, "and this", _HISTORY,
+                          {**_STORED, 3: {"request": "and this", "images": images}})
+    assert "earlier" not in seen and seen["request"] == "and this"
+    assert cmd.update["image_reread_of"] is None
+
+
+def test_a_second_re_attach_starts_from_the_latest_reading(monkeypatch):
+    history = _HISTORY + [
+        {"event": "image", "turn": 0, "spec": {"summary": "4 slots and bars"}, "at": 3},
+        {"event": "turn", "turn": 3, "text": "Build what the attached image(s) show."},
+        {"event": "turn", "turn": 4, "text": "the bars are thinner"}]
+    stored = {0: _STORED[0], 3: _STORED[3],
+              5: {"request": "Build what the attached image(s) show.", "images": [IMG_A]}}
+    _, seen = _reattach(monkeypatch, [IMG_A], "Build what the attached image(s) show.",
+                        history, stored, turn=5)
+    assert seen["earlier"] == {"summary": "4 slots and bars"}
+    assert seen["correction"] == "turn 5: the bars are thinner"

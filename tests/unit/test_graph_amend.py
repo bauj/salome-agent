@@ -3,6 +3,7 @@ import os
 import uuid
 
 from salome_agent.build_graph import BuildGraph
+from salome_agent import graph as graph_mod
 from salome_agent.graph import build_graph, route_start
 
 POLICY = {"tool_iteration_cap": 5, "tool_selection": "hints", "verify_cadence": "none",
@@ -449,3 +450,29 @@ def test_amend_session_gets_the_stored_images_their_readings_and_the_view(tmp_pa
     assert s.images == {0: stored[0]}
     assert s.readings == {0: {"summary": "slots"}}
     assert s.view is True
+
+
+def test_a_re_read_replaces_the_old_reading_for_the_follow_up_model(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from salome_agent.specialists import amend as amend_mod
+
+    seen = {}
+
+    def fake_run_amend(text, graph, llm, client, turn, policy, session=None, **kw):
+        seen.update(kw, session=session)
+        return session, {"summary": "ok", "question": None}
+
+    monkeypatch.setattr(amend_mod, "run_amend", fake_run_amend)
+    state = _state(tmp_path, _graph(), "Build what the attached image(s) show.", turn=3)
+    state["history"] = [{"event": "image", "turn": 0, "spec": {"summary": "4 slots"}, "at": 0}]
+    state["image_spec"] = {"summary": "4 slots and bars"}
+    state["image_reread_of"] = 0
+    stored = {0: {"request": "plate", "images": ["data:image/png;base64,A"]}}
+    cfg = {"configurable": {"thread_id": uuid.uuid4().hex, "llm_client": None,
+                            "executor_client": SimpleNamespace(mode="headless"),
+                            "turn_images": stored}}
+    graph_mod._amend_node(state, cfg)
+    assert "earlier_images" not in seen
+    assert seen["image_reread_of"] == 1
+    assert "4 slots and bars" in seen["image_description"]
+    assert seen["session"].readings == {0: {"summary": "4 slots and bars"}}
