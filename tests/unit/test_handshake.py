@@ -83,7 +83,40 @@ def test_live_owner_none_when_pid_start_mismatch():
     assert handshake.live_owner() is None
 
 
-def test_dir_and_file_permissions():
-    handshake.write(port=1, token="t", mode="headless", log_path="/x")
-    assert oct(handshake.path().parent.stat().st_mode)[-3:] == "700"
-    assert oct(handshake.path().stat().st_mode)[-3:] == "600"
+def test_files_live_under_the_data_dir(tmp_path):
+    base = tmp_path / ".local" / "share" / "salome-agent"
+    assert handshake.path() == base / "server.json"
+    assert handshake.log_path() == str(base / "server.log")
+
+
+def test_write_makes_the_handshake_owner_only():
+    handshake.write(port=1, token="secret", mode="gui", log_path="/x")
+    assert handshake.path().stat().st_mode & 0o777 == 0o600
+
+
+def test_write_removes_an_older_install_s_leftovers(tmp_path):
+    old = tmp_path / ".salome_agent"
+    old.mkdir()
+    for name in ("server.log", "salome-agent-gui.pid"):
+        (old / name).write_text("x")
+    (old / "server.json").write_text(json.dumps({"proto": handshake.PROTO, "pid": 2 ** 22,
+                                                 "pid_start": 1}))
+    handshake.write(port=1, token="t", mode="gui", log_path="/x")
+    assert not old.exists()
+
+
+def test_write_keeps_the_old_dir_while_an_old_server_runs_from_it(tmp_path):
+    old = tmp_path / ".salome_agent"
+    old.mkdir()
+    (old / "server.json").write_text(json.dumps({"proto": handshake.PROTO, "pid": 1}))
+    handshake.write(port=1, token="t", mode="gui", log_path="/x")
+    assert (old / "server.json").exists()
+
+
+def test_write_keeps_files_it_does_not_know_in_the_old_dir(tmp_path):
+    old = tmp_path / ".salome_agent"
+    old.mkdir()
+    (old / "server.log").write_text("x")
+    (old / "notes.txt").write_text("mine")
+    handshake.write(port=1, token="t", mode="gui", log_path="/x")
+    assert (old / "notes.txt").exists() and not (old / "server.log").exists()

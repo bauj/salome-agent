@@ -8,18 +8,18 @@
 #           must exist). One server at a time — a second start bails.
 #
 # Runs in the foreground and stays up until Ctrl-C. Startup takes ~10-20s (the
-# SALOME session bootstrap). The server is ready once ~/.salome_agent/server.json
+# SALOME session bootstrap). The server is ready once ~/.local/share/salome-agent/server.json
 # appears; the CLI discovers it from that file.
 #
-# Logs: the server redirects its own stdout/stderr to ~/.salome_agent/server.log
+# Logs: the server redirects its own stdout/stderr to ~/.local/share/salome-agent/server.log
 # once it is up. Anything printed to this terminal before that is the SALOME
 # shell bootstrap.
 #
 set -euo pipefail
 : "${SALOME_ROOT:?set SALOME_ROOT to your SALOME install root}"
 
-handshake="$HOME/.salome_agent/server.json"
-log="$HOME/.salome_agent/server.log"
+handshake="$HOME/.local/share/salome-agent/server.json"
+log="$HOME/.local/share/salome-agent/server.log"
 
 # The agent's own venv python lacks psutil + SALOME's sys.path; strip it so
 # `salome shell` picks its bundled python3.

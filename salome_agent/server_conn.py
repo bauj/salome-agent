@@ -1,6 +1,4 @@
-import json
-import os
-
+from agent_server import handshake
 from salome_agent.executor_client import (ExecutorClient, ServerBusy,
                                           SessionDied, SessionPoisoned)
 
@@ -13,14 +11,15 @@ class ServerUnavailable(Exception):
 
 
 def read_handshake() -> dict | None:
-    try:
-        with open(os.path.expanduser("~/.salome_agent/server.json")) as f:
-            data = json.loads(f.read())
-    except (OSError, ValueError):
-        return None
-    if data.get("proto") != 1:
-        return None
-    return data
+    return handshake.read()
+
+
+def _unavailable_text() -> str:
+    if handshake.live_owner(handshake.old_path()) is not None:
+        return (f"No SALOME agent server running from this version; one from an older "
+                f"install still writes {handshake.old_path()}. Restart SALOME from the "
+                f"updated install, or stop that server. {_HELP}")
+    return f"No SALOME agent server running. {_HELP}"
 
 
 def connect(run_id: str, record_path: str | None = None, hold: bool = False,
@@ -28,7 +27,7 @@ def connect(run_id: str, record_path: str | None = None, hold: bool = False,
     for attempt in (1, 2):
         hs = read_handshake()
         if hs is None:
-            raise ServerUnavailable(f"No SALOME agent server running. {_HELP}")
+            raise ServerUnavailable(_unavailable_text())
         try:
             return ExecutorClient(hs["host"], hs["port"], hs["token"], run_id,
                                   record_path=record_path, hold=hold, run_dir=run_dir)

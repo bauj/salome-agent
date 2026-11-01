@@ -54,7 +54,7 @@ def launch(context) -> None:
         _SERVER_THREAD = threading.Thread(target=_SERVER.serve_forever, daemon=True)
         _SERVER_THREAD.start()
         handshake.write(port=port, token=token, mode="gui",
-                        log_path=os.path.expanduser("~/.salome_agent/server.log"))
+                        log_path=handshake.log_path())
         _register_about_to_quit()
         _status(f"SALOME agent server on 127.0.0.1:{port}")
     except Exception as e:                     # noqa: BLE001

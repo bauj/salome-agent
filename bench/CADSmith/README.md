@@ -20,7 +20,7 @@ git clone https://github.com/jabarkle/CADSmith.git ../CADSmith
 
 2. Write a config for the model to test: copy `config.example.json` and set `llm.base_url`, `llm.api_key`, `llm.model` (plus any `extra_body`, e.g. `{"reasoning_effort": "high"}`) and `salome.root`. One config per model, e.g. `config_gptoss.json`.
 
-3. Start the headless agent server and leave it running (ready when `~/.salome_agent/server.json` appears):
+3. Start the headless agent server and leave it running (ready when `~/.local/share/salome-agent/server.json` appears):
 
    ```bash
    SALOME_ROOT=/path/to/your/SALOME scripts/start-headless-server.sh

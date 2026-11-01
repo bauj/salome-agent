@@ -22,7 +22,7 @@ Two processes:
 | **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes SHAPER / GEOM / SMESH tool calls, introspection, timeout kills |
 
 The agent connects to the server over loopback TCP (token-authenticated,
-line-delimited JSON); it discovers a running server via `~/.salome_agent/server.json`.
+line-delimited JSON); it discovers a running server via `~/.local/share/salome-agent/server.json`.
 
 Flow: `request → [vision, when images are given] → plan → [per stage: specialist tool loop → finish_stage check → advance] → assemble result.py → report`
 
@@ -170,8 +170,8 @@ SALOME process. Start it first (once per SALOME session):
   agent server** — see [GUI plugin setup](#gui-plugin-setup) for the one-time install.
 - **Headless (CI / batch):** `scripts/start-headless-server.sh` (needs `SALOME_ROOT`)
   — isolated study, no GUI. Runs in the foreground; ready when
-  `~/.salome_agent/server.json` appears (~10-20s), logs to
-  `~/.salome_agent/server.log`, stop with Ctrl-C. One server at a time. It
+  `~/.local/share/salome-agent/server.json` appears (~10-20s), logs to
+  `~/.local/share/salome-agent/server.log`, stop with Ctrl-C. One server at a time. It
   stays up across CLI runs — the CLI drops its connection but never shuts the
   server down.
 
@@ -212,7 +212,7 @@ give it its own request body (e.g. a different `reasoning_effort`) like the othe
 
 The agent will:
 
-1. Connect to the running server via `~/.salome_agent/server.json`. If none is
+1. Connect to the running server via `~/.local/share/salome-agent/server.json`. If none is
    running it exits with a message telling you to start one.
 2. Plan the stages, run each specialist, verify, and assemble — progress is logged to
    stderr as it goes (`planning...`, `stage 1/2 [shaper] ...`,
@@ -227,7 +227,7 @@ The agent will:
    - `report.md` — per-stage status, what each stage built, timing and LLM token usage, and a `## Warnings` section when an accepted stage kept a user value against a check or missed a check (also printed at the end; the CLI prints each warning as a `[warning]` line)
 
 Raw SALOME noise goes to
-`~/.salome_agent/server.log`, not your terminal.
+`~/.local/share/salome-agent/server.log`, not your terminal.
 
 Run the result on its own, with no agent involved:
 
@@ -255,7 +255,7 @@ Run the result on its own, with no agent involved:
 The menu entry comes with the salome-agent-gui SAT product: launch
 `"$SALOME_ROOT"/salome`, then **Tools ▸ Plugins ▸ SALOME Agent** starts the server
 inside the GUI and opens the chat window. CLI runs find the same server via
-`~/.salome_agent/server.json`.
+`~/.local/share/salome-agent/server.json`.
 
 If an older setup ran `scripts/install-plugin.sh` (removed), delete its
 `# --- salome-agent server launcher ---` block from
@@ -358,7 +358,7 @@ Test layout:
 
 - `tests/unit/` — no SALOME, no network.
 - `tests/salome/` — live tests against a headless agent server the fixture
-  starts (it refuses to run if another server owns `~/.salome_agent/server.json`).
+  starts (it refuses to run if another server owns `~/.local/share/salome-agent/server.json`).
 - `tests/replay.py` + `tests/fixtures/cassettes/` — a recorded run (LLM replies
   and server responses) replayed strictly in order, no network or SALOME;
   `test_golden_runs.py` checks the replay still produces
@@ -383,7 +383,7 @@ SALOME build changes:
 python3 scripts/regen-toplevel-api.py
 ```
 
-It reuses a running agent server (`~/.salome_agent/server.json`, GUI plugin or
+It reuses a running agent server (`~/.local/share/salome-agent/server.json`, GUI plugin or
 headless) if one is up, otherwise spawns a throwaway headless server (needs
 `$SALOME_ROOT` or `salome.root` in `config.json`) and tears it down after. A
 module whose live introspect comes back empty keeps its existing member list.
@@ -420,7 +420,7 @@ agent_server/       the server that runs inside SALOME
   backend.py        Backend protocol + HeadlessBackend
   gui_backend.py    GuiBackend + Qt main-thread marshal
   wire.py           loopback TCP + token listener
-  handshake.py      ~/.salome_agent/server.json
+  handshake.py      ~/.local/share/salome-agent/server.json
   gui_plugin.py     the Tools > Plugins entry point (launch/restart)
   namespace.py      builds the exec namespace (geompy/smesh/...)
   __main__.py       headless entry (`python -m agent_server`)
