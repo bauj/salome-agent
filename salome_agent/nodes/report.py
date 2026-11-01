@@ -60,7 +60,7 @@ def _timing_lines(state: dict) -> list[str]:
     if at:
         lines.append(f"- amend (turn {(state.get('turn_idx') or 0) + 1}): "
                      f"{at.get('wall', 0):.1f}s wall, {at.get('llm_s', 0):.1f}s llm, "
-                     f"{at.get('turns', 0)} calls, tokens {_tok(at.get('in_tok', 0))} in / "
+                     f"{at.get('exec_s', 0):.1f}s exec, {at.get('turns', 0)} calls, tokens {_tok(at.get('in_tok', 0))} in / "
                      f"{_tok(at.get('out_tok', 0))} out")
     if pt:
         lines.append(f"- planner: {pt.get('wall', 0):.1f}s wall, "
@@ -72,7 +72,7 @@ def _timing_lines(state: dict) -> list[str]:
                      f"{tm.get('exec_s', 0):.1f}s exec, {tm.get('core_s', 0):.1f}s core")
     wall = at.get("wall", 0) + pt.get("wall", 0) + sum(t.get("wall", 0) for _, t in stage_tms)
     llm_s = at.get("llm_s", 0) + pt.get("llm_s", 0) + sum(t.get("llm_s", 0) for _, t in stage_tms)
-    exec_s = sum(t.get("exec_s", 0) for _, t in stage_tms)
+    exec_s = at.get("exec_s", 0) + sum(t.get("exec_s", 0) for _, t in stage_tms)
     if wall:
         lines.append(f"- total: {wall:.1f}s measured wall — {llm_s:.1f}s llm "
                      f"({llm_s / wall * 100:.0f}%), {exec_s:.1f}s exec")

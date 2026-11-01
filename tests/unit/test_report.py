@@ -140,11 +140,12 @@ def test_report_has_no_warnings_section_without_conflicts():
 def test_report_timing_section_on_an_amend_turn():
     out = write_report(_state(
         turn_idx=1, stages={},
-        amend_timing={"wall": 20.0, "llm_s": 15.0, "core_s": 5.0, "turns": 3,
+        amend_timing={"wall": 20.0, "llm_s": 15.0, "exec_s": 3.0, "core_s": 2.0, "turns": 3,
                       "in_tok": 9000, "out_tok": 700}))
     assert "## Timing" in out
-    assert "- amend (turn 2): 20.0s wall, 15.0s llm, 3 calls, tokens 9.0k in / 700 out" in out
-    assert "20.0s measured wall — 15.0s llm (75%)" in out
+    assert ("- amend (turn 2): 20.0s wall, 15.0s llm, 3.0s exec, 3 calls, "
+            "tokens 9.0k in / 700 out") in out
+    assert "20.0s measured wall — 15.0s llm (75%), 3.0s exec" in out
 
 
 def test_report_timing_totals_an_amend_that_replanned():
@@ -153,6 +154,7 @@ def test_report_timing_totals_an_amend_that_replanned():
         "amend_timing": {"wall": 8.0, "llm_s": 6.0, "core_s": 2.0, "turns": 1,
                          "in_tok": 1000, "out_tok": 100}})
     lines = out.splitlines()
-    assert lines.index("- amend (turn 2): 8.0s wall, 6.0s llm, 1 calls, tokens 1.0k in / 100 out") \
+    assert lines.index("- amend (turn 2): 8.0s wall, 6.0s llm, 0.0s exec, 1 calls, "
+                       "tokens 1.0k in / 100 out") \
         < next(i for i, l in enumerate(lines) if l.startswith("- planner:"))
     assert "60.0s measured wall" in out

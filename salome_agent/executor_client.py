@@ -1,6 +1,7 @@
 import importlib
 import json
 import socket
+import time
 
 from agent_server.limits import (MAIN_THREAD_TIMEOUT, REFRESH_TIMEOUT, SIDE_MODULES,
                                  TOOL_TIMEOUT)
@@ -27,6 +28,9 @@ class ServerOutdated(Exception):
 
 
 class ExecutorClient:
+    # Running total of the time spent waiting on the server's replies.
+    exec_seconds = 0.0
+
     def __init__(self, host: str, port: int, token: str, run_id: str,
                  record_path: str | None = None, hold: bool = False,
                  run_dir: str | None = None):
@@ -83,7 +87,11 @@ class ExecutorClient:
             self._f.flush()
         except (BrokenPipeError, ConnectionResetError, OSError) as e:
             raise SessionDied(f"server socket write failed: {e}") from e
-        resp = self._recv(cmd)
+        t0 = time.monotonic()
+        try:
+            resp = self._recv(cmd)
+        finally:
+            self.exec_seconds += time.monotonic() - t0
         if resp.get("fatal"):
             raise SessionPoisoned(resp.get("error", "poisoned"))
         if self.record_path:

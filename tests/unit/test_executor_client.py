@@ -357,3 +357,20 @@ def test_a_failed_hello_raises_session_died_with_the_servers_error():
     with pytest.raises(SessionDied, match="hello failed on the server"):
         _connect(box)
     t.join()
+
+
+def test_exec_seconds_adds_up_the_wait_for_each_reply(monkeypatch):
+    from salome_agent import executor_client
+
+    clock = iter([10.0, 12.5, 20.0, 21.0])
+    box = []
+    t = threading.Thread(target=_fake_server,
+                         args=(box, [{"id": 1, "ok": True}, {"id": 2, "ok": True}]))
+    t.start()
+    client = _connect(box)
+    assert client.exec_seconds == 0.0
+    monkeypatch.setattr(executor_client.time, "monotonic", lambda: next(clock))
+    client.run("print(1)", timeout=5)
+    client.list_study()
+    assert client.exec_seconds == 3.5
+    t.join()

@@ -10,20 +10,24 @@ from salome_agent.llm import (ReasoningTimeExceeded, RepetitionLoopDetected, Str
 from salome_agent.logs import log
 
 
-def _usage_snap(llm) -> dict | None:
-    """The LLM client's running counters, or None if it has no real usage
-    dict (a bare MagicMock in tests) — timing is then skipped."""
+def _usage_snap(llm, client=None) -> dict | None:
+    """The LLM client's running counters and the time spent waiting on the
+    SALOME server, or None if the LLM has no real usage dict (a bare
+    MagicMock in tests) — timing is then skipped."""
     u = getattr(llm, "usage", None)
     if not isinstance(u, dict):
         return None
+    exec_s = getattr(client, "exec_seconds", 0.0)
     return {"calls": u.get("calls", 0), "prompt_tokens": u.get("prompt_tokens", 0),
             "completion_tokens": u.get("completion_tokens", 0),
-            "llm_seconds": u.get("llm_seconds", 0.0)}
+            "llm_seconds": u.get("llm_seconds", 0.0),
+            "exec_seconds": exec_s if isinstance(exec_s, float) else 0.0}
 
 
 def _timing_delta(before: dict, after: dict, wall: float) -> dict:
     llm_s = after["llm_seconds"] - before["llm_seconds"]
-    return {"wall": wall, "llm_s": llm_s, "core_s": wall - llm_s,
+    exec_s = after["exec_seconds"] - before["exec_seconds"]
+    return {"wall": wall, "llm_s": llm_s, "exec_s": exec_s, "core_s": wall - llm_s - exec_s,
             "turns": after["calls"] - before["calls"],
             "in_tok": after["prompt_tokens"] - before["prompt_tokens"],
             "out_tok": after["completion_tokens"] - before["completion_tokens"]}
@@ -224,14 +228,14 @@ def _amend_node(state: dict, config: "RunnableConfig"):
     log.info("amend turn %d: %s", turn + 1, state["user_request"])
     # Created here, not in run_amend: edits already applied to the study must
     # still reach the conversation's rollback when the LLM call fails mid-loop.
-    snap0 = _usage_snap(llm)
+    snap0 = _usage_snap(llm, client)
     t0 = time.monotonic()
 
     def timed(update: dict) -> dict:
         if snap0 is not None:
             update["amend_timing"] = {
                 k: round(v, 2) for k, v in
-                _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0).items()}
+                _timing_delta(snap0, _usage_snap(llm, client), time.monotonic() - t0).items()}
         return update
 
     readings = _readings(state)
@@ -507,7 +511,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     llm = config["configurable"]["llm_client"]
     client = config["configurable"].get("executor_client")
     cap = state["config"]["policy"]["tool_iteration_cap"]
-    snap0 = _usage_snap(llm)
+    snap0 = _usage_snap(llm, client)
     t0 = time.monotonic()
 
     stages = dict(state["stages"])
@@ -604,7 +608,7 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
     if snap0 is not None:
         stage["timing"] = _accum_timing(
             stage.get("timing"),
-            _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0))
+            _timing_delta(snap0, _usage_snap(llm, client), time.monotonic() - t0))
     stages[idx] = stage
     update["stages"] = stages
     if "fatal" in update:
