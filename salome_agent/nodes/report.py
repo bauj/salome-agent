@@ -42,7 +42,7 @@ def _stage_timing_suffix(tm: dict) -> str:
              f"llm {tm.get('llm_s', 0):.1f}s"]
     if tm.get("exec_s"):
         parts.append(f"exec {tm['exec_s']:.1f}s")
-    parts.append(f"core {tm.get('core_s', 0):.1f}s")
+    parts.append(f"harness {tm.get('harness_s', 0):.1f}s")
     parts.append(f"tokens {_tok(tm.get('in_tok', 0))} in / {_tok(tm.get('out_tok', 0))} out")
     return " — " + ", ".join(parts)
 
@@ -69,7 +69,7 @@ def _timing_lines(state: dict) -> list[str]:
         mod = state["stages"][idx].get("module", "?")
         lines.append(f"- stage {idx + 1}/{total} ({mod}): {tm.get('wall', 0):.1f}s wall, "
                      f"{tm.get('llm_s', 0):.1f}s llm, "
-                     f"{tm.get('exec_s', 0):.1f}s exec, {tm.get('core_s', 0):.1f}s core")
+                     f"{tm.get('exec_s', 0):.1f}s exec, {tm.get('harness_s', 0):.1f}s harness")
     wall = at.get("wall", 0) + pt.get("wall", 0) + sum(t.get("wall", 0) for _, t in stage_tms)
     llm_s = at.get("llm_s", 0) + pt.get("llm_s", 0) + sum(t.get("llm_s", 0) for _, t in stage_tms)
     exec_s = at.get("exec_s", 0) + sum(t.get("exec_s", 0) for _, t in stage_tms)

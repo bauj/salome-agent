@@ -27,7 +27,7 @@ def _usage_snap(llm, client=None) -> dict | None:
 def _timing_delta(before: dict, after: dict, wall: float) -> dict:
     llm_s = after["llm_seconds"] - before["llm_seconds"]
     exec_s = after["exec_seconds"] - before["exec_seconds"]
-    return {"wall": wall, "llm_s": llm_s, "exec_s": exec_s, "core_s": wall - llm_s - exec_s,
+    return {"wall": wall, "llm_s": llm_s, "exec_s": exec_s, "harness_s": wall - llm_s - exec_s,
             "turns": after["calls"] - before["calls"],
             "in_tok": after["prompt_tokens"] - before["prompt_tokens"],
             "out_tok": after["completion_tokens"] - before["completion_tokens"]}
@@ -628,9 +628,9 @@ def _advance_node(state: dict):
     log.info("  stage %d/%d accepted", idx + 1, len(state["plan"]))
     tm = (state["stages"][idx].get("timing") or {})
     if tm:
-        log.info("  stage %d/%d timing: wall=%ss llm=%ss (%s turns) exec=%ss core=%ss",
+        log.info("  stage %d/%d timing: wall=%ss llm=%ss (%s turns) exec=%ss harness=%ss",
                  idx + 1, len(state["plan"]), tm.get("wall", 0), tm.get("llm_s", 0),
-                 tm.get("turns", 0), tm.get("exec_s", 0), tm.get("core_s", 0))
+                 tm.get("turns", 0), tm.get("exec_s", 0), tm.get("harness_s", 0))
     goto = "assemble" if update["stage_idx"] >= len(state["plan"]) else "run_stage"
     return Command(update=update, goto=goto)
 
