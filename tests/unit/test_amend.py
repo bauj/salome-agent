@@ -541,3 +541,12 @@ def test_a_turn_that_only_measured_is_not_refused():
     _, outcome = run_amend("how tall is it?", _graph(), llm, FakeClient(), 1, POLICY)
     assert outcome["summary"] == "No change to the model. it is 1 mm tall"
     assert llm.chat.call_count == 2
+
+
+def test_transcript_carries_a_turn_warnings():
+    from salome_agent.specialists.amend import render_transcript
+    text = render_transcript([{"event": "turn", "turn": 0, "text": "mesh it at 2 mm",
+                               "status": "ok", "summary": "meshed",
+                               "warnings": ["stage 1/1 (smesh): kept your 2 mm step"]}])
+    assert text == ("turn 1 (ok): mesh it at 2 mm -> meshed\n"
+                    "  warning: stage 1/1 (smesh): kept your 2 mm step")

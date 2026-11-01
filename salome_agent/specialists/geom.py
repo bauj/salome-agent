@@ -149,6 +149,11 @@ FINISH_STAGE_SCHEMA = {
             "One sentence: what this stage built, with its main sizes, naming every "
             "feature it made, also those beyond this stage's job (e.g. 'revolved vase "
             "body, wall 2 mm, rim filleted 0.5 mm').")},
+        "request_conflict": {"type": "string", "description": (
+            "Only when the request and a check or limit disagree: the value the "
+            "user gave, whether you kept it (and the check it misses) or what you "
+            "used instead, and why. Shown to the user as a warning. Leave it out "
+            "otherwise.")},
     },
     "required": ["result_names", "built"],
 }

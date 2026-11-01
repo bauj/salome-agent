@@ -515,6 +515,53 @@ def test_each_failing_status_is_named():
     assert _result_check_refusal({"d": {"status": "ok"}}) is None
 
 
+_MISS = {"ok": True, "results": {"m1": {"status": "misses_check",
+                                         "detail": "its volume 96.0 is 4.00% off the shape's 100.0"}}}
+
+
+def test_a_missed_check_is_refused_until_finish_names_the_request_conflict():
+    client = MagicMock()
+    client.check_results.return_value = _MISS
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("done", {"result_names": ["m1"]})),
+        _resp(("done", {"result_names": ["m1"], "request_conflict": "kept the user's 2 mm step"}))]
+    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
+        {"module": "toy"}, llm, client, iteration_cap=4)
+    refusal = _tool_contents(llm)[0]
+    assert "misses a quality check" in refusal and "4.00% off" in refusal
+    assert "request_conflict" in refusal
+    assert result["request_conflict"] == "kept the user's 2 mm step"
+    assert result["warnings"] == ["m1: its volume 96.0 is 4.00% off the shape's 100.0"]
+
+
+def test_request_conflict_does_not_excuse_a_defect():
+    client = MagicMock()
+    client.check_results.side_effect = [
+        {"ok": True, "results": {"m1": {"status": "not_meshed", "detail": "it has meshing errors"}}},
+        {"ok": True, "results": {"m1": {"status": "ok"}}}]
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        _resp(("done", {"result_names": ["m1"], "request_conflict": "user size"})),
+        _resp(("done", {"result_names": ["m1"]}))]
+    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
+        {"module": "toy"}, llm, client, iteration_cap=4)
+    assert "not a finished mesh" in _tool_contents(llm)[0]
+    assert "warnings" not in result and "request_conflict" not in result
+
+
+def test_request_conflict_alone_is_carried_without_warnings():
+    client = MagicMock()
+    client.check_results.return_value = {"ok": True, "results": {"m1": {"status": "ok"}}}
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", {"result_names": ["m1"],
+                                            "request_conflict": "used 5 mm, 1 mm was over the limit"}))]
+    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
+        {"module": "toy"}, llm, client, iteration_cap=2)
+    assert result["request_conflict"] == "used 5 mm, 1 mm was over the limit"
+    assert "warnings" not in result
+
+
 def test_no_result_check_unless_the_spec_asks():
     client = MagicMock()
     llm = MagicMock()

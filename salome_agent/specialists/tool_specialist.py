@@ -559,8 +559,9 @@ class ToolSpecialist:
 
             if finish_call is not None:
                 call_id, args, term = finish_call
+                warnings = []
                 if term is spec.terminator and spec.checks_results:
-                    refusal = _check_results(client, args, spec.name)
+                    refusal, warnings = _check_results(client, args, spec.name)
                     if refusal:
                         log.info("  %s: finish refused, a result does not hold up",
                                  spec.terminator.name)
@@ -596,6 +597,12 @@ class ToolSpecialist:
                                          "content": "\n\n".join(parts)})
                         continue
                 result = term.handle(args, call_log)
+                if term is spec.terminator:
+                    conflict = (args.get("request_conflict") or "").strip()
+                    if conflict:
+                        result = {**result, "request_conflict": conflict}
+                    if warnings:
+                        result = {**result, "warnings": warnings}
                 if term is spec.terminator and spec.forgets:
                     call_log, calls = _sweep(client, call_log, calls,
                                              result.get("result_names") or [])
@@ -614,23 +621,32 @@ class ToolSpecialist:
         return _with_calls(spec.on_exhausted(call_log, last_error), calls)
 
 
-def _check_results(client, args: dict, module: str) -> str | None:
+def _check_results(client, args: dict, module: str) -> tuple[str | None, list[str]]:
+    """(refusal, warnings). A result that only misses a quality check is
+    accepted when finish_stage says how it departs from the request; the
+    measured miss then becomes a warning for the user."""
     names = args.get("result_names") or []
     if isinstance(names, str):
         names = [names]
     if not names:
-        return None
+        return None, []
     try:
         r = client.check_results(list(names), module=module)
     except (SessionDied, SessionPoisoned):
         raise
     except Exception as e:  # noqa: BLE001 — a failed check never blocks a stage
         log.warning("  result check failed, finish accepted: %s", e)
-        return None
+        return None, []
     if not r.get("ok"):
         log.warning("  result check failed, finish accepted: %s", r.get("error"))
-        return None
-    return _result_check_refusal(r.get("results") or {})
+        return None, []
+    results = r.get("results") or {}
+    misses = [f"{name}: {res.get('detail', '')}" for name, res in results.items()
+              if res.get("status") == "misses_check"]
+    refusal = _result_check_refusal(results)
+    if refusal is None and misses and not (args.get("request_conflict") or "").strip():
+        refusal = _misses_check_refusal(misses)
+    return refusal, ([] if refusal else misses)
 
 
 _CHECK_LINES = {
@@ -652,6 +668,14 @@ def _result_check_refusal(results: dict) -> str | None:
     return ("Not finished: a result does not hold up.\n" + "\n".join(lines)
             + "\nRebuild or fix it, or leave it out of result_names, then call "
             "finish_stage again.")
+
+
+def _misses_check_refusal(misses: list[str]) -> str:
+    return ("Not finished: a result misses a quality check.\n"
+            + "\n".join(f"- {m}" for m in misses)
+            + "\nImprove it and call finish_stage again. If it misses the check "
+            "because of a value the user gave, keep that value and call finish_stage "
+            "again with request_conflict naming the value and the check it misses.")
 
 
 def _sweep(client, call_log: list, calls: list, result_names: list) -> tuple[list, list]:

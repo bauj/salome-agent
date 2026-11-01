@@ -74,6 +74,23 @@ def _timing_lines(state: dict) -> list[str]:
     return lines
 
 
+def stage_warnings(state: dict) -> list[str]:
+    """What the user should know about results that depart from the request
+    or miss a check: the model's own words, then the harness's measurements."""
+    stages = state.get("stages") or {}
+    total = len(stages)
+    out = []
+    for idx in sorted(stages):
+        st = stages[idx]
+        if st.get("status") != "ok":
+            continue
+        where = f"stage {idx + 1}/{total} ({st.get('module', '?')})"
+        if st.get("request_conflict"):
+            out.append(f"{where}: {st['request_conflict']}")
+        out += [f"{where} missed a check: {w}" for w in st.get("warnings") or ()]
+    return out
+
+
 def _image_lines(state: dict) -> list[str]:
     from salome_agent.nodes.vision_spec import all_conflicts, unclaimed_parts
 
@@ -102,6 +119,9 @@ def write_report(state: dict, usage: dict | None = None,
         lines += ["## Outcome", "", f"**Stopped by you** {stopped}.", ""]
     elif state.get("fatal"):
         lines += ["## Outcome", "", f"**Run aborted:** {state['fatal']}", ""]
+    warnings = stage_warnings(state)
+    if warnings:
+        lines += ["## Warnings", "", *[f"- {w}" for w in warnings], ""]
     sess = state.get("session") or {}
     if sess.get("mode") == "gui":
         prefix = sess.get("name_prefix") or "sa_"
@@ -132,4 +152,6 @@ def write_report(state: dict, usage: dict | None = None,
             suffix = _stage_timing_suffix(tm)
         lines.append(f"- stage {idx + 1}/{total} ({stage['module']}): "
                      f"{stage['status']}{suffix}")
+        if stage.get("built"):
+            lines.append(f"  - built: {stage['built']}")
     return "\n".join(lines)

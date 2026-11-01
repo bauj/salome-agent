@@ -356,7 +356,9 @@ def _render_shaper(result: dict) -> str:
 def render_transcript(history) -> str:
     turns = [e for e in history if e.get("event") == "turn"][-10:]
     return "\n".join(f"turn {e['turn'] + 1} ({e.get('status')}): {e.get('text')} -> "
-                     f"{e.get('summary') or ''}" for e in turns)
+                     f"{e.get('summary') or ''}"
+                     + "".join(f"\n  warning: {w}" for w in e.get("warnings") or ())
+                     for e in turns)
 
 
 def _snapshot(client, graph) -> str | None:

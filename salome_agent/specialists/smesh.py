@@ -49,7 +49,11 @@ says so, and compute builds them without that limit.
 When done, call finish_stage(result_names) with the meshes that matter. It is
 refused while a named mesh is not computed, has meshing errors, has no
 elements of the dimension it was set up for, has an empty group, or fills a
-solid with a volume more than 1% off the solid's. export_mesh writes a file:
+solid with a volume more than 1% off the solid's. A size or setting the user
+gave wins over the volume check: keep it, and finish with request_conflict
+saying which value misses the check. When a value the user gave cannot be kept
+(compute refuses it), say in request_conflict what you used instead. Never
+change a value the user gave without saying so there. export_mesh writes a file:
 only when the request asks for one. If you abandon an attempt, call discard on
 what you built for it.
 

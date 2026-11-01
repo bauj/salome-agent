@@ -535,6 +535,9 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             stage["status"] = "ok"
             stage["result_names"] = result["result_names"]
             stage["built"] = result.get("built")
+            for key in ("request_conflict", "warnings"):
+                if result.get(key):
+                    stage[key] = result[key]
             update["last_error"] = None
             log.info("  %s specialist done: %d tool call(s), %d %s call(s), results=%s",
                      module, len(result.get("calls") or []),
