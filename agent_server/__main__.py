@@ -33,9 +33,10 @@ def main(argv=None) -> int:
               f"stop it first", file=sys.stderr)
         return 2
 
-    log_path = os.path.expanduser("~/.salome_agent/server.log")
+    log_path = handshake.log_path()
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    logf = open(log_path, "w")
+    logf = os.fdopen(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w")
+    os.chmod(log_path, 0o600)
     os.dup2(logf.fileno(), sys.stdout.fileno())
     os.dup2(logf.fileno(), sys.stderr.fileno())
 

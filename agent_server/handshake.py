@@ -6,8 +6,24 @@ from pathlib import Path
 PROTO = 1
 
 
+_OLD_DIR = "~/.salome_agent"
+_OLD_FILES = ("server.json", "server.json.tmp", "server.log", "salome-agent-gui.pid")
+
+
+def state_dir() -> Path:
+    return Path(os.path.expanduser("~/.local/share/salome-agent"))
+
+
 def path() -> Path:
-    return Path(os.path.expanduser("~/.salome_agent/server.json"))
+    return state_dir() / "server.json"
+
+
+def log_path() -> str:
+    return str(state_dir() / "server.log")
+
+
+def old_path() -> Path:
+    return Path(os.path.expanduser(_OLD_DIR)) / "server.json"
 
 
 def _pid_start(pid: int) -> int | None:
@@ -21,8 +37,8 @@ def _pid_start(pid: int) -> int | None:
 def write(*, port: int, token: str, mode: str, log_path: str,
           salome_port: int | None = None) -> None:
     p = path()
-    p.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(p.parent, 0o700)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    drop_old_dir()
     pid = os.getpid()
     data = {
         "proto": PROTO, "host": "127.0.0.1", "port": port, "token": token,
@@ -31,17 +47,19 @@ def write(*, port: int, token: str, mode: str, log_path: str,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2))
-    os.chmod(tmp, 0o600)
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(data, indent=2))
     os.replace(tmp, p)
 
 
-def live_owner() -> dict | None:
+def live_owner(p: Path | None = None) -> dict | None:
     """The handshake's server if its pid is still alive and is the same
     process that wrote it (pid_start guards against pid reuse). Else None --
     stale file, dead pid, or a recycled pid.
     """
-    data = read()
+    data = read(p)
     if data is None:
         return None
     pid = data.get("pid")
@@ -56,9 +74,9 @@ def live_owner() -> dict | None:
     return data
 
 
-def read() -> dict | None:
+def read(p: Path | None = None) -> dict | None:
     try:
-        data = json.loads(path().read_text())
+        data = json.loads((p or path()).read_text())
     except (OSError, ValueError):
         return None
     if data.get("proto") != PROTO:
@@ -73,3 +91,17 @@ def remove() -> None:
         return
     if data.get("pid") == os.getpid():
         path().unlink(missing_ok=True)
+
+
+def drop_old_dir() -> None:
+    """Remove what older versions left in ~/.salome_agent, unless a server
+    started by an older install still runs from there."""
+    old = old_path().parent
+    if not old.is_dir() or live_owner(old_path()) is not None:
+        return
+    for name in _OLD_FILES:
+        (old / name).unlink(missing_ok=True)
+    try:
+        old.rmdir()
+    except OSError:
+        pass

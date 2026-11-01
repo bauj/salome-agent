@@ -6,9 +6,11 @@ import time
 
 import pytest
 
+from agent_server import handshake
+
 from ._salome_root import SALOME_ROOT
 
-_HS = os.path.expanduser("~/.salome_agent/server.json")
+_HS = str(handshake.path())
 
 
 def _salome_subprocess_env() -> dict:
@@ -33,7 +35,7 @@ def _start_server(repo_root: str) -> subprocess.Popen:
     from agent_server.handshake import live_owner
     if live_owner() is not None:
         raise RuntimeError(
-            "another agent server owns ~/.salome_agent/server.json — stop it "
+            "another agent server owns ~/.local/share/salome-agent/server.json — stop it "
             "before running the live suite (it would be orphaned otherwise)")
     if os.path.exists(_HS):
         os.unlink(_HS)

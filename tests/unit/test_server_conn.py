@@ -28,8 +28,8 @@ def _home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr("os.path.expanduser",
                         lambda p: p.replace("~", str(tmp_path), 1))
-    d = tmp_path / ".salome_agent"
-    d.mkdir()
+    d = tmp_path / ".local" / "share" / "salome-agent"
+    d.mkdir(parents=True)
     return d
 
 
@@ -41,6 +41,20 @@ def _write_hs(_home, port, token="t"):
 
 def test_connect_absent_handshake_raises(_home):
     with pytest.raises(server_conn.ServerUnavailable):
+        server_conn.connect("run1")
+
+
+def test_connect_names_a_server_left_by_an_older_install(_home, tmp_path):
+    old = tmp_path / ".salome_agent"
+    old.mkdir()
+    (old / "server.json").write_text(json.dumps(
+        {"proto": 1, "host": "127.0.0.1", "port": 9, "token": "t", "pid": 1}))
+    with pytest.raises(server_conn.ServerUnavailable, match="older install"):
+        server_conn.connect("run1")
+
+
+def test_connect_without_any_server_says_none_running(_home):
+    with pytest.raises(server_conn.ServerUnavailable, match="No SALOME agent server running. "):
         server_conn.connect("run1")
 
 
