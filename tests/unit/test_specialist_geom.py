@@ -980,3 +980,55 @@ def test_first_message_tells_the_model_to_start_with_one_step():
     sent = llm.chat.call_args.kwargs["messages"][1]["content"]
     assert sent.startswith("{'module': 'geom'")
     assert sent.endswith("the tool descriptions say how each tool behaves.")
+
+
+def _repeat_run(chat_side_effect, call_tool_side_effect):
+    llm = MagicMock()
+    llm.chat.side_effect = chat_side_effect
+    client = MagicMock()
+    client.list_tools.return_value = {"tools": [
+        {"name": "make_box_two_pnt", "category": "primitive"},
+        {"name": "make_box", "category": "primitive"}]}
+    client.call_tool.side_effect = call_tool_side_effect
+    result = run_geom_specialist({"module": "geom", "intent": "x", "params": {}, "inputs": [],
+                                  "tools": ["make_box_two_pnt"]},
+                                 llm, client, iteration_cap=20, verify_cadence="none")
+    sent = [str(m.get("content")) for m in llm.chat.call_args_list[-1].kwargs["messages"]
+            if m.get("role") == "tool"]
+    return result, client, sent
+
+
+BAD = ("make_box_two_pnt", {"point1": "(0,0,0)", "point2": "(1,1,1)"})
+
+
+def test_a_failed_call_repeated_5_times_ends_the_stage():
+    # GH #49: small models resent the same failing call until the iteration cap.
+    result, client, sent = _repeat_run([_resp(BAD)] * 6 + [_resp(("finish_stage", {}))],
+                                       [{"ok": False, "error": "bad point"}])
+    assert client.call_tool.call_count == 1
+    msg = result["last_error"]["message"]
+    assert msg == ("stage ended: the model repeated a call that already failed 5 times "
+                   "(make_box_two_pnt); its error was: bad point")
+    assert "result_names" not in result
+
+
+def test_the_3rd_and_4th_repeats_warn_the_model():
+    _, _, sent = _repeat_run([_resp(BAD)] * 6, [{"ok": False, "error": "bad point"}])
+    repeats = [m for m in sent if "identical call already failed" in m]
+    assert "times after it failed" not in repeats[0] and "times after it failed" not in repeats[1]
+    assert len(repeats) == 4
+    assert ("You have sent this exact call 3 times after it failed. "
+            "2 more repeats end the stage.") in repeats[2]
+    assert ("You have sent this exact call 4 times after it failed. "
+            "One more repeat ends the stage.") in repeats[3]
+
+
+def test_a_call_that_runs_resets_the_repeat_count():
+    other = ("make_box", {"dx": 1, "dy": 1, "dz": 1})
+    result, client, _ = _repeat_run(
+        [_resp(BAD)] * 4 + [_resp(other)] + [_resp(BAD)] * 4
+        + [_resp(("finish_stage", {"result_names": []}))],
+        [{"ok": False, "error": "bad point"}, {"ok": False, "error": "other failure"}])
+    assert client.call_tool.call_count == 2
+    assert "stage ended" not in str(result.get("last_error"))
+    assert result["result_names"] == []

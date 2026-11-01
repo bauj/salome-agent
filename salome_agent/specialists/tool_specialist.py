@@ -31,6 +31,20 @@ _TEXT_CALL_NUDGE = ("You wrote a tool call as text in your reply; tools only run
 # iteration cap (task 395).
 _SAME_REPLY_LIMIT = 3
 
+# Refused repeats of a call that already failed, counted since the last call
+# that ran: the model is warned from _REPEAT_WARN_FROM on and the stage ends at
+# _REPEAT_LIMIT instead of looping to the iteration cap (GH #49).
+_REPEAT_WARN_FROM = 3
+_REPEAT_LIMIT = 5
+
+
+def _repeat_warning(n: int) -> str:
+    left = _REPEAT_LIMIT - n
+    if left <= 0 or n < _REPEAT_WARN_FROM:
+        return ""
+    more = "One more repeat ends" if left == 1 else f"{left} more repeats end"
+    return f" You have sent this exact call {n} times after it failed. {more} the stage."
+
 
 def _not_run_note(n: int) -> str:
     return (f"\n\nnot run: {n} more call(s) in your reply, written after results you had "
@@ -326,6 +340,7 @@ class ToolSpecialist:
             return False
 
         last_reply, same_replies = None, 0
+        repeats = 0
         for i in range(iteration_cap):
             if cancelled():
                 return _with_calls(spec.on_exhausted(call_log, last_error), calls)
@@ -497,18 +512,30 @@ class ToolSpecialist:
                     continue
                 key = _call_key(name, args)
                 if key in failed_calls:
+                    repeats += 1
                     log.info("  repeat of a call that already failed (%s) — answered "
                              "locally, no round-trip", name)
+                    if repeats >= _REPEAT_LIMIT:
+                        log.warning("  %s stage: a call that already failed repeated %d "
+                                    "times (%s); ending the stage", spec.name, repeats, name)
+                        return _with_calls(spec.on_exhausted(call_log, {
+                            "phase": "exec", "message": (
+                                f"stage ended: the model repeated a call that already "
+                                f"failed {repeats} times ({name}); its error was: "
+                                f"{failed_calls[key]}"),
+                            "offending_line": None, "traceback": None}), calls)
                     result = {"ok": False, "repeat": True, "error": (
                         f"identical call already failed with: {failed_calls[key]}. "
                         "Do not repeat it — change the arguments or the approach, or "
-                        "gather information first (measure / get_subshapes / check_shape).")}
+                        "gather information first (measure / get_subshapes / check_shape)."
+                        + _repeat_warning(repeats))}
                     batch_error = {"phase": "exec", "message": failed_calls[key],
                                    "offending_line": None, "traceback": None}
                     messages.append({"role": "tool", "tool_call_id": call_id,
                                      "content": spec.render_result(result)})
                     continue
                 result = spec.execute(client, name, args)
+                repeats = 0
                 if result["ok"]:
                     call_log.extend(result.get("records") or [])
                     if result.get("records"):

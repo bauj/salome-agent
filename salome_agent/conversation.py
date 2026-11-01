@@ -164,8 +164,10 @@ class Conversation:
             self.ended = True
             return TurnResult("ended", fatal, final)
         if fatal or final.get("aborted") or outcome.get("exhausted"):
+            stage_error = (outcome.get("last_error") or {}).get("message")
             message = fatal or ("turn cancelled" if final.get("aborted") else
-                                "ran out of tool iterations")
+                                stage_error if str(stage_error or "").startswith("stage ended:")
+                                else "ran out of tool iterations")
             return self._rollback(after, before, message, final)
         self._snapshots.append((before, self.turn_idx, len(self.history)))
         self._redo.clear()
