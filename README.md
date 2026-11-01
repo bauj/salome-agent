@@ -18,17 +18,17 @@ Two processes:
 
 | Process   | Runs where | Does |
 |-----------|-----------|------|
-| **agent**    | your Python venv | planning, LLM calls, static verification, script assembly (LangGraph `StateGraph`) |
+| **agent**    | your Python venv | planning, LLM calls, stage checks, script assembly (LangGraph `StateGraph`) |
 | **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes SHAPER / GEOM / SMESH tool calls, introspection, timeout kills |
 
 The agent connects to the server over loopback TCP (token-authenticated,
 line-delimited JSON); it discovers a running server via `~/.salome_agent/server.json`.
 
-Flow: `request → plan → [per stage: specialist tool loop → finish_stage check → advance] → assemble result.py → report`
+Flow: `request → [vision, when images are given] → plan → [per stage: specialist tool loop → finish_stage check → advance] → assemble result.py → report`
 
 - **shaper** stages — the default CAD module — run as tool calls (`create_sketch`, `sketch_add`, `extrude`, `fillet_edges`, ...) against the server. Each call executes the same source line that goes into `result.py`, so the live document and the script cannot drift.
 - **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log. The planner picks GEOM only when the request names it ("using GEOM").
-- **smesh** stages run as tool calls (`create_mesh`, `mesh_tetra`, `name_subshapes`, `local_size`, `compute`, ...) on a shape an earlier stage built, SHAPER or GEOM. Each call executes the line it records into `result.py`; `compute` answers with element counts, the mesh volume next to the shape's, quality and every part that failed, and `finish_stage` is refused until the mesh holds up.
+- **smesh** stages run as tool calls (`create_mesh`, `mesh_tetra`, `name_subshapes`, `local_size`, `compute`, ...) on a shape an earlier stage built, SHAPER or GEOM. Each call executes the line it records into `result.py`; `compute` answers with element counts, the mesh volume next to the shape's, quality and every part that failed, and `finish_stage` is refused until the mesh holds up. One exception: a mesh whose volume is more than 1% off the shape's is accepted when the user asked for the size that causes it; the model then passes `request_conflict` with the user's own words for that value (refused if those words are not in the request), and the miss is shown to the user as a warning. A defect (not computed, meshing errors, no elements of the stage's dimension, an empty group) is always refused.
 - A failed stage stops at the stage-failure gate (or, with `--batch`, follows `on_stage_failure`). A retry continues from what the failed attempt built and is told what that is. GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
 
 ---
@@ -224,7 +224,7 @@ The agent will:
    reasoning while a call is in flight, and the tool calls it ends with.
 3. Write output to `<work_dir>/<run_id>/`:
    - `result.py` — the standalone reproducible script
-   - `report.md` — per-stage status, timing and LLM token usage (also printed at the end)
+   - `report.md` — per-stage status, what each stage built, timing and LLM token usage, and a `## Warnings` section when an accepted stage kept a user value against a check or missed a check (also printed at the end; the CLI prints each warning as a `[warning]` line)
 
 Raw SALOME noise goes to
 `~/.salome_agent/server.log`, not your terminal.
@@ -316,6 +316,7 @@ Commands:
 
 | Command | Meaning |
 |---------|---------|
+| `/help` | list these commands |
 | `/undo` | revert the last turn |
 | `/redo` | re-apply the last undone turn (cleared by any new turn) |
 | `/show` | print the build graph |
@@ -425,8 +426,10 @@ agent_server/       the server that runs inside SALOME
   __main__.py       headless entry (`python -m agent_server`)
 executor/
   registry.py       ToolRegistry — tool decorator, schemas, arg-type coercion
+  code_guard.py     checks SHAPER / SMESH source built from tool arguments before it runs
   shaper/           SHAPER tool implementations (sketch, features, primitives, ...)
   geom/             geom tool implementations + per-tool JSON schemas
+  smesh/            SMESH tool implementations (setup, naming, sizes, groups, compute, export)
 scripts/            start-headless-server.sh, regen-toplevel-api.py, make-cassette.py,
                     dump-view.sh (+ dump_view.py, run inside the SALOME GUI)
 docs/superpowers/   design specs + implementation plans
