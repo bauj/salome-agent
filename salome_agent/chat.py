@@ -75,6 +75,8 @@ def run_turn(conv, text, gate, stream, images=None):
 
 def _say(stream, result):
     stream.write(f"[{result.status}] {result.message}\n")
+    for w in result.warnings:
+        stream.write(f"[warning] {w}\n")
     stream.flush()
 
 

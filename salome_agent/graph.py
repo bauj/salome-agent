@@ -508,7 +508,8 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             tool_selection=policy.get("tool_selection", "hints"),
             verify_cadence=policy.get("verify_cadence", "final"),
             retry=retry, seed_call_log=seed, seed_calls=seed_calls,
-            cancel=config["configurable"].get("cancel"), upstream=upstream)
+            cancel=config["configurable"].get("cancel"), upstream=upstream,
+            request=state.get("user_request") or "")
     except Exception as e:  # noqa: BLE001
         msg = _llm_endpoint_fatal(e)
         if msg is None:
@@ -535,6 +536,9 @@ def _run_stage_node(state: dict, config: "RunnableConfig"):
             stage["status"] = "ok"
             stage["result_names"] = result["result_names"]
             stage["built"] = result.get("built")
+            for key in ("request_conflict", "warnings"):
+                if result.get(key):
+                    stage[key] = result[key]
             update["last_error"] = None
             log.info("  %s specialist done: %d tool call(s), %d %s call(s), results=%s",
                      module, len(result.get("calls") or []),

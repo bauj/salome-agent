@@ -33,6 +33,11 @@ class TurnResult:
     message: str
     final_state: dict
 
+    @property
+    def warnings(self) -> list[str]:
+        from salome_agent.nodes.report import stage_warnings
+        return stage_warnings(self.final_state or {})
+
 
 class Conversation:
     """Everything that outlives a turn: one executor connection (the caller
@@ -127,12 +132,14 @@ class Conversation:
                 self.history.append({"event": "image", "turn": n, "spec": final["image_spec"]})
             for t, spec in outcome.get("image_rereads") or ():
                 self.history.append({"event": "image", "turn": t, "spec": spec})
+        warnings = result.warnings
         self.history.append({"event": "turn", "turn": n, "text": text,
                              "status": result.status,
-                             "summary": outcome.get("summary") or _built(final)})
+                             "summary": outcome.get("summary") or _built(final),
+                             **({"warnings": warnings} if warnings else {})})
         usage = getattr(self.llm, "usage", None)
         self._event(on_event, "turn_done", turn=n, status=result.status, message=result.message,
-                    usage=dict(usage) if usage else None)
+                    usage=dict(usage) if usage else None, warnings=warnings)
         return result
 
     def _viewer(self, action: str, names: list) -> None:

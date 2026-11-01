@@ -132,3 +132,18 @@ def test_image_command_with_a_bad_path_is_an_error_line_not_a_turn(tmp_path):
     assert conv.turns == ["a house"]
     assert "nope.png" in out and "usage: /image" in out
     assert code == 0
+
+
+def test_say_prints_each_warning_of_the_turn():
+    import io
+    from salome_agent.chat import _say
+    from salome_agent.conversation import TurnResult
+    final = {"stages": {0: {"module": "smesh", "status": "ok",
+                            "request_conflict": "kept your 2 mm step",
+                            "warnings": ["mesh_2: its volume is 4.10% off"]}}}
+    out = io.StringIO()
+    _say(out, TurnResult("ok", "meshed", final))
+    assert out.getvalue().splitlines() == [
+        "[ok] meshed",
+        "[warning] stage 1/1 (smesh): kept your 2 mm step",
+        "[warning] stage 1/1 (smesh) missed a check: mesh_2: its volume is 4.10% off"]

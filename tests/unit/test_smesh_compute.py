@@ -80,11 +80,18 @@ def test_mesh_status_ok():
     ({"volumes": 0}, 3, "no volume elements"),
     ({"faces": 0}, 2, "no face elements"),
     ({"groups": {"inlet": 0}}, 3, "inlet is empty"),
-    ({"volume": 5900.0}, 3, "1.67%"),
 ])
 def test_mesh_status_refusals(kw, dim, word):
     r = c.mesh_status(_m(**kw), dim)
     assert r["status"] == "not_meshed" and word in r["detail"]
+
+
+def test_mesh_volume_off_is_a_missed_check_not_a_defect():
+    r = c.mesh_status(_m(volume=5900.0), 3)
+    assert r["status"] == "misses_check"
+    assert "1.67%" in r["detail"] and "1% at most" in r["detail"]
+    # a defect still wins over the volume check
+    assert c.mesh_status(_m(volume=5900.0, groups={"inlet": 0}), 3)["status"] == "not_meshed"
 
 
 def test_check_line_exists():

@@ -201,8 +201,9 @@ def mesh_status(info: dict, dim) -> dict:
     if dim == 3:
         off = volume_off(info["volume"], info["shape_volume"])
         if off is not None and off > 0.01:
-            return bad(f"its volume {info['volume']} is {off:.2%} off the shape's "
-                       f"{info['shape_volume']}")
+            return {"status": "misses_check",
+                    "detail": f"its volume {info['volume']} is {off:.2%} off the shape's "
+                              f"{info['shape_volume']}; the check wants 1% at most"}
     return {"status": "ok"}
 
 

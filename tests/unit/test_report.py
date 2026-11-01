@@ -116,3 +116,22 @@ def test_report_names_each_endpoint_and_model():
     assert "## LLM endpoint" in out
     assert "- shared: `small` at https://api.x/v1" in out
     assert "- vision: `big` at https://other/v1" in out
+
+
+def test_report_warnings_and_built_lines():
+    out = write_report(_state(stages={
+        0: {"module": "shaper", "status": "ok", "built": "flange 120 mm"},
+        1: {"module": "smesh", "status": "ok", "built": "body-fitted mesh, 2 mm",
+            "request_conflict": "kept your 2 mm step; the volume check fails",
+            "warnings": ["mesh_2: its volume 140550.7 is 4.10% off the shape's 146562.4"]},
+        2: {"module": "smesh", "status": "failed", "request_conflict": "not shown"}}))
+    assert "## Warnings" in out
+    assert "- stage 2/3 (smesh): kept your 2 mm step; the volume check fails" in out
+    assert "- stage 2/3 (smesh) missed a check: mesh_2: its volume 140550.7 is 4.10% off" in out
+    assert "not shown" not in out
+    assert out.index("## Warnings") < out.index("## Stages")
+    assert "  - built: body-fitted mesh, 2 mm" in out
+
+
+def test_report_has_no_warnings_section_without_conflicts():
+    assert "## Warnings" not in write_report(_timed_state())

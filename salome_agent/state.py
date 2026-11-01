@@ -36,6 +36,10 @@ class StageRecord(TypedDict, total=False):
     # {wall, llm_s, core_s, exec_s, turns, in_tok, out_tok} — accumulated
     # across retry re-entries. Written by graph nodes, read by report.py.
     timing: dict
+    # finish_stage's request_conflict (the model's words) and the result
+    # checks it missed (the harness's measurements): shown to the user
+    request_conflict: Optional[str]
+    warnings: list[str]
 
 
 class SessionHandle(TypedDict):
