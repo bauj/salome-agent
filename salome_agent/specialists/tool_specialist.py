@@ -231,12 +231,14 @@ class ToolSpecialist:
 
     def run(self, stage_plan, llm, client, iteration_cap, *, blocks=(),
             tool_selection="hints", verify_cadence="final", retry=None,
-            seed_call_log=None, seed_calls=None, cancel=None, upstream=()) -> dict:
+            seed_call_log=None, seed_calls=None, cancel=None, upstream=(),
+            request: str = "") -> dict:
         if client is None and self.spec.needs_session:
             return {"fatal": f"a {self.spec.name} stage needs a SALOME agent server"}
         # what the stage built so far, for a stage that ends on an error: its
         # report, retry and rollback still see those calls
         self._so_far = dict
+        self._request = request
         try:
             return self._run(stage_plan, llm, client, iteration_cap, blocks,
                              tool_selection, verify_cadence, retry, seed_call_log, seed_calls,
@@ -560,8 +562,18 @@ class ToolSpecialist:
             if finish_call is not None:
                 call_id, args, term = finish_call
                 warnings = []
+                conflict = None
+                if term is spec.terminator and args.get("request_conflict"):
+                    problem = _conflict_problem(args["request_conflict"], self._request)
+                    if problem:
+                        log.info("  %s: request_conflict refused", spec.terminator.name)
+                        messages.append({"role": "tool", "tool_call_id": call_id,
+                                         "content": problem})
+                        continue
+                    conflict = _conflict_text(args["request_conflict"])
                 if term is spec.terminator and spec.checks_results:
-                    refusal, warnings = _check_results(client, args, spec.name)
+                    refusal, warnings = _check_results(client, args, spec.name,
+                                                       conflict is not None)
                     if refusal:
                         log.info("  %s: finish refused, a result does not hold up",
                                  spec.terminator.name)
@@ -598,7 +610,6 @@ class ToolSpecialist:
                         continue
                 result = term.handle(args, call_log)
                 if term is spec.terminator:
-                    conflict = (args.get("request_conflict") or "").strip()
                     if conflict:
                         result = {**result, "request_conflict": conflict}
                     if warnings:
@@ -621,10 +632,43 @@ class ToolSpecialist:
         return _with_calls(spec.on_exhausted(call_log, last_error), calls)
 
 
-def _check_results(client, args: dict, module: str) -> tuple[str | None, list[str]]:
+_QUOTE_MAX_WORDS = 8
+
+
+def _norm(text: str) -> str:
+    return " ".join(str(text).casefold().split())
+
+
+def _conflict_problem(conflict, request: str) -> str | None:
+    """Why a request_conflict cannot be accepted, or None. user_words must be a
+    short excerpt of the user's request as written: an exact check, so a value
+    the model chose itself cannot pass as the user's."""
+    if not isinstance(conflict, dict) or not str(conflict.get("user_words") or "").strip() \
+            or not str(conflict.get("why") or "").strip():
+        return ("request_conflict needs two fields: user_words (the words of the user's "
+                "request that give the value, copied as written) and why (what you kept or "
+                "changed, and why). Call finish_stage again.")
+    words = _norm(conflict["user_words"]).strip(" \"'«».,;:")
+    if len(words.split()) > _QUOTE_MAX_WORDS:
+        return (f"request_conflict.user_words is longer than {_QUOTE_MAX_WORDS} words: "
+                "quote only the words that give the value. Call finish_stage again.")
+    if not request.strip() or words not in _norm(request):
+        return (f'request_conflict.user_words "{conflict["user_words"]}" is not in the '
+                "user's request as written. A value that is not in the request was your "
+                "choice: improve the result, or call finish_stage without request_conflict "
+                "if nothing departs from the request.")
+    return None
+
+
+def _conflict_text(conflict: dict) -> str:
+    return f'"{str(conflict["user_words"]).strip()}": {str(conflict["why"]).strip()}'
+
+
+def _check_results(client, args: dict, module: str,
+                   conflict_ok: bool = False) -> tuple[str | None, list[str]]:
     """(refusal, warnings). A result that only misses a quality check is
-    accepted when finish_stage says how it departs from the request; the
-    measured miss then becomes a warning for the user."""
+    accepted when finish_stage carries a valid request_conflict; the measured
+    miss then becomes a warning for the user."""
     names = args.get("result_names") or []
     if isinstance(names, str):
         names = [names]
@@ -644,7 +688,7 @@ def _check_results(client, args: dict, module: str) -> tuple[str | None, list[st
     misses = [f"{name}: {res.get('detail', '')}" for name, res in results.items()
               if res.get("status") == "misses_check"]
     refusal = _result_check_refusal(results)
-    if refusal is None and misses and not (args.get("request_conflict") or "").strip():
+    if refusal is None and misses and not conflict_ok:
         refusal = _misses_check_refusal(misses)
     return refusal, ([] if refusal else misses)
 
@@ -675,7 +719,7 @@ def _misses_check_refusal(misses: list[str]) -> str:
             + "\n".join(f"- {m}" for m in misses)
             + "\nImprove it and call finish_stage again. If it misses the check "
             "because of a value the user gave, keep that value and call finish_stage "
-            "again with request_conflict naming the value and the check it misses.")
+            "again with request_conflict quoting the user's words for that value.")
 
 
 def _sweep(client, call_log: list, calls: list, result_names: list) -> tuple[list, list]:

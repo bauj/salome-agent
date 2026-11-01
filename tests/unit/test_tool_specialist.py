@@ -517,22 +517,51 @@ def test_each_failing_status_is_named():
 
 _MISS = {"ok": True, "results": {"m1": {"status": "misses_check",
                                          "detail": "its volume 96.0 is 4.00% off the shape's 100.0"}}}
+_REQ = "Maille-la en hexaedres par body fitting avec un pas de 2 mm."
+_KEEP = {"user_words": "pas de 2  MM", "why": "kept it; the volume check fails"}
 
 
-def test_a_missed_check_is_refused_until_finish_names_the_request_conflict():
+def _finish_run(client, *finishes, request=_REQ, cap=4):
+    llm = MagicMock()
+    llm.chat.side_effect = [_resp(("done", f)) for f in finishes]
+    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
+        {"module": "toy"}, llm, client, iteration_cap=cap, request=request)
+    return result, _tool_contents(llm)
+
+
+def test_a_missed_check_is_refused_until_finish_quotes_the_request():
     client = MagicMock()
     client.check_results.return_value = _MISS
-    llm = MagicMock()
-    llm.chat.side_effect = [
-        _resp(("done", {"result_names": ["m1"]})),
-        _resp(("done", {"result_names": ["m1"], "request_conflict": "kept the user's 2 mm step"}))]
-    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
-        {"module": "toy"}, llm, client, iteration_cap=4)
-    refusal = _tool_contents(llm)[0]
-    assert "misses a quality check" in refusal and "4.00% off" in refusal
-    assert "request_conflict" in refusal
-    assert result["request_conflict"] == "kept the user's 2 mm step"
+    result, tools = _finish_run(client, {"result_names": ["m1"]},
+                                {"result_names": ["m1"], "request_conflict": _KEEP})
+    assert "misses a quality check" in tools[0] and "4.00% off" in tools[0]
+    assert "request_conflict" in tools[0]
+    assert result["request_conflict"] == '"pas de 2  MM": kept it; the volume check fails'
     assert result["warnings"] == ["m1: its volume 96.0 is 4.00% off the shape's 100.0"]
+
+
+def test_user_words_not_in_the_request_are_refused():
+    client = MagicMock()
+    client.check_results.return_value = _MISS
+    result, tools = _finish_run(
+        client, {"result_names": ["m1"],
+                 "request_conflict": {"user_words": "1 mm", "why": "resolves the holes"}},
+        {"result_names": ["m1"], "request_conflict": _KEEP})
+    assert '"1 mm" is not in the user\'s request' in tools[0]
+    assert "your choice" in tools[0]
+    assert result["request_conflict"].startswith('"pas de 2  MM"')
+
+
+def test_a_long_quote_or_a_bare_string_is_refused():
+    client = MagicMock()
+    client.check_results.return_value = _MISS
+    _, tools = _finish_run(
+        client, {"result_names": ["m1"],
+                 "request_conflict": {"user_words": _REQ, "why": "x"}},
+        {"result_names": ["m1"], "request_conflict": "kept the 2 mm step"},
+        {"result_names": ["m1"], "request_conflict": _KEEP})
+    assert "longer than 8 words" in tools[0]
+    assert "needs two fields" in tools[1]
 
 
 def test_request_conflict_does_not_excuse_a_defect():
@@ -540,25 +569,19 @@ def test_request_conflict_does_not_excuse_a_defect():
     client.check_results.side_effect = [
         {"ok": True, "results": {"m1": {"status": "not_meshed", "detail": "it has meshing errors"}}},
         {"ok": True, "results": {"m1": {"status": "ok"}}}]
-    llm = MagicMock()
-    llm.chat.side_effect = [
-        _resp(("done", {"result_names": ["m1"], "request_conflict": "user size"})),
-        _resp(("done", {"result_names": ["m1"]}))]
-    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
-        {"module": "toy"}, llm, client, iteration_cap=4)
-    assert "not a finished mesh" in _tool_contents(llm)[0]
+    result, tools = _finish_run(client, {"result_names": ["m1"], "request_conflict": _KEEP},
+                                {"result_names": ["m1"]})
+    assert "not a finished mesh" in tools[0]
     assert "warnings" not in result and "request_conflict" not in result
 
 
 def test_request_conflict_alone_is_carried_without_warnings():
     client = MagicMock()
     client.check_results.return_value = {"ok": True, "results": {"m1": {"status": "ok"}}}
-    llm = MagicMock()
-    llm.chat.side_effect = [_resp(("done", {"result_names": ["m1"],
-                                            "request_conflict": "used 5 mm, 1 mm was over the limit"}))]
-    result = ToolSpecialist(_finish_spec(checks_results=True)).run(
-        {"module": "toy"}, llm, client, iteration_cap=2)
-    assert result["request_conflict"] == "used 5 mm, 1 mm was over the limit"
+    result, _ = _finish_run(client, {"result_names": ["m1"], "request_conflict": {
+        "user_words": "pas de 2 mm", "why": "used 5 mm, 2 mm was over the element limit"}},
+        cap=2)
+    assert result["request_conflict"] == '"pas de 2 mm": used 5 mm, 2 mm was over the element limit'
     assert "warnings" not in result
 
 

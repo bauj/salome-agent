@@ -149,11 +149,20 @@ FINISH_STAGE_SCHEMA = {
             "One sentence: what this stage built, with its main sizes, naming every "
             "feature it made, also those beyond this stage's job (e.g. 'revolved vase "
             "body, wall 2 mm, rim filleted 0.5 mm').")},
-        "request_conflict": {"type": "string", "description": (
-            "Only when the request and a check or limit disagree: the value the "
-            "user gave, whether you kept it (and the check it misses) or what you "
-            "used instead, and why. Shown to the user as a warning. Leave it out "
-            "otherwise.")},
+        "request_conflict": {
+            "type": "object",
+            "description": (
+                "Only when the user's request and a check or limit disagree. Shown "
+                "to the user as a warning. Leave it out otherwise."),
+            "properties": {
+                "user_words": {"type": "string", "description": (
+                    "The few words of the user's request that give the value, "
+                    "copied as written (e.g. 'pas de 2 mm').")},
+                "why": {"type": "string", "description": (
+                    "Whether you kept that value (and the check it misses) or what "
+                    "you used instead, and why.")},
+            },
+            "required": ["user_words", "why"]},
     },
     "required": ["result_names", "built"],
 }
