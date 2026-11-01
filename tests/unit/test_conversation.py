@@ -365,3 +365,23 @@ def test_images_stay_with_the_conversation_and_a_reread_replaces_the_reading(con
     from salome_agent.graph import _earlier_images, _readings
     assert _readings({"history": conv.history}) == {0: {"summary": "slots"}}
     assert len(_earlier_images({"history": conv.history})) == 1
+
+
+def test_a_turn_ended_by_the_stage_says_why(conv, monkeypatch):
+    conv.graph = _graph_with(1); conv.turn_idx = 1
+    msg = ("stage ended: the model repeated a call that already failed 5 times "
+           "(fillet_edges); its error was: radius too big")
+    _fake_drive(monkeypatch, {"build_graph": conv.graph.to_dict(), "turn_outcome": {
+        "exhausted": True, "last_error": {"phase": "exec", "message": msg}}})
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    r = conv.turn("fillet it", on_event=lambda e: None, on_gate=None)
+    assert r.status == "failed" and r.message == msg
+
+
+def test_a_turn_out_of_iterations_does_not_quote_the_last_tool_error(conv, monkeypatch):
+    conv.graph = _graph_with(1); conv.turn_idx = 1
+    _fake_drive(monkeypatch, {"build_graph": conv.graph.to_dict(), "turn_outcome": {
+        "exhausted": True, "last_error": {"phase": "exec", "message": "radius too big"}}})
+    monkeypatch.setattr(conv_mod, "sync", lambda client, current, target: target.copy())
+    r = conv.turn("fillet it", on_event=lambda e: None, on_gate=None)
+    assert r.status == "failed" and r.message == "ran out of tool iterations"
