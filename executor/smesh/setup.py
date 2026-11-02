@@ -81,7 +81,8 @@ def hexa_code(m: str, args: dict) -> str:
 
 def body_fitted_code(m: str, args: dict) -> str:
     s = str(_pos(args, "size"))
-    return f"{m}_a3 = {m}.BodyFitted().SetGrid({s!r}, {s!r}, {s!r}, 4.0)"
+    return (f"{m}_a3 = {m}.BodyFitted().SetGrid({s!r}, {s!r}, {s!r}, 4.0)\n"
+            f"{m}_a3.SetToCreateFaces(True)")
 
 
 # algorithm -> (dimension, the Mesh method and its algo argument)
@@ -223,7 +224,8 @@ def tool_mesh_hexa(executor, args: dict):
 
 @tool("mesh_body_fitted", category="setup",
       description=("Hexahedra on a Cartesian grid of step `size`; cells cut by the "
-                   "boundary become polyhedra. Any solid, no face mesh needed."),
+                   "boundary become polyhedra, and the boundary gets face elements, so "
+                   "groups on faces work. Any solid, no face mesh needed."),
       schema={"type": "object", "properties": {**_MESH, "size": {"type": "number"}},
               "required": ["mesh", "size"]})
 def tool_mesh_body_fitted(executor, args: dict):

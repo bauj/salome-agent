@@ -191,7 +191,9 @@ def test_group_on_late_shaper_group_and_from_geometry(agent_client):
     assert set(g["groups"]) == {"side", "inlet"}
     r = _ok(agent_client, "smesh", "compute", mesh=m)
     assert r["groups"]["inlet"] > 0 and r["groups"]["side"] > 0
-    assert _call(agent_client, "smesh", "group_on_geometry", mesh=m, group="inlet")["ok"] is False
+    again = _ok(agent_client, "smesh", "group_on_geometry", mesh=m, group="inlet")
+    assert again["note"] == "replaced the earlier face group inlet"
+    assert again["size"] == r["groups"]["inlet"]
 
 
 def test_check_results_refuses_until_computed(agent_client):
@@ -306,3 +308,43 @@ def test_a_mesh_on_a_shaper_group_measures_the_group(agent_client):
     assert info[b] == {"type": "solid", "area": pytest.approx(2200),
                        "volume": pytest.approx(6000), "faces": 6}
     assert info["roof"]["type"] == "face" and info["roof"]["area"] == pytest.approx(200)
+
+
+def test_body_fitted_mesh_fills_face_groups(agent_client):
+    b = shaper_box(agent_client, dx=100, dy=50, dz=20)
+    base = _ok(agent_client, "smesh", "get_subshapes", shape=b, sub_type="face",
+               where={"sorted_by": "z", "take": "min", "count": 1})["subshapes"]
+    _ok(agent_client, "smesh", "name_subshapes", shape=b, ids=[base[0]["id"]], name="sole")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_body_fitted", mesh=m, size=5)
+    _ok(agent_client, "smesh", "group_on_geometry", mesh=m, group="sole")
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["faces"] > 0 and r["groups"]["sole"] == 200
+    assert r["group_notes"]["sole"] == "area 5000.0 of its shape group's 5000.0"
+
+
+def test_group_on_geometry_again_replaces_the_group(agent_client):
+    b = shaper_box(agent_client)
+    top_face_group(agent_client, b, name="lid2")
+    m = _ok(agent_client, "smesh", "create_mesh", shape=b)["name"]
+    _ok(agent_client, "smesh", "mesh_tetra", mesh=m, max_size=5)
+    _ok(agent_client, "smesh", "group_on_geometry", mesh=m, group="lid2",
+        element_type="volume")
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["groups"]["lid2"] == 0
+    assert r["group_notes"]["lid2"] == (
+        "empty: none of this mesh's volume elements lie on its shape group")
+    g = _ok(agent_client, "smesh", "group_on_geometry", mesh=m, group="lid2",
+            element_type="node")
+    assert g["note"] == "replaced the earlier volume group lid2" and g["size"] > 0
+    r = _ok(agent_client, "smesh", "compute", mesh=m)
+    assert r["groups"]["lid2"] == g["size"] and "lid2" not in r["group_notes"]
+    assert _in_study(agent_client, "lid2") == 2   # the shape group and one mesh group
+
+
+def test_name_subshapes_notes_sub_shapes_already_named(agent_client):
+    b = shaper_box(agent_client)
+    first = top_face_group(agent_client, b, name="cap_geom")
+    assert "note" not in first
+    again = top_face_group(agent_client, b, name="cap2")
+    assert again["note"].startswith(f"the same sub-shapes of {b} are already the group cap_geom")

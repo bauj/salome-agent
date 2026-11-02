@@ -160,3 +160,23 @@ def test_export_reply_says_where_result_py_writes(monkeypatch, tmp_path):
     assert r["path"] == str(tmp_path / "mesh_1.med")
     assert r["records"][0]["code"] == "mesh_1.ExportMED('mesh_1.med')"
     assert "result.py" in r["note"] and "mesh_1.med" in r["note"]
+
+
+def test_group_note_says_why_a_group_is_empty():
+    no_faces = c.group_note("FACE", 0, {"faces": 0, "volumes": 30}, None)
+    assert "no face elements" in no_faces and 'element_type "node"' in no_faces
+    off = c.group_note("FACE", 0, {"faces": 20}, None)
+    assert off == "empty: none of this mesh's face elements lie on its shape group"
+    assert "no volume elements" in c.group_note("VOLUME", 0, {"volumes": 0}, None)
+
+
+def test_group_note_gives_a_face_group_area_next_to_its_shape_group():
+    assert c.group_note("FACE", 456, {"faces": 10437}, (1614.0, 2261.9467)) == (
+        "area 1614.0 of its shape group's 2261.9467")
+    assert c.group_note("NODE", 12, {"nodes": 40}, None) == ""
+
+
+def test_mesh_status_names_why_a_group_is_empty():
+    why = c.group_note("FACE", 0, {"faces": 0}, None)
+    r = c.mesh_status(_m(groups={"inlet": 0}, group_notes={"inlet": why}), 3)
+    assert r["detail"] == "inlet is " + why

@@ -47,6 +47,20 @@ def _taken(executor) -> set:
             | (set(sh.objects) if sh else set()))
 
 
+def ids_key(ids) -> tuple:
+    return tuple(sorted(str(i) for i in ids or ()))
+
+
+def same_ids_note(geo_groups: dict, shape: str, ids) -> str:
+    """A note naming the groups that already hold exactly these sub-shapes of `shape`."""
+    key = ids_key(ids)
+    same = [n for n, g in geo_groups.items() if g.shape == shape and g.ids == key]
+    if not same:
+        return ""
+    return (f"the same sub-shapes of {shape} are already the group {', '.join(same)}: "
+            "use that name, or discard it if it is not needed")
+
+
 @tool("name_subshapes", category="naming",
       description=("Publish sub-shapes of `shape` (`ids` from get_subshapes, all of one "
                    "type) as one named group. Use the name in local_size, edge_segments, "
@@ -61,6 +75,7 @@ def tool_name_subshapes(executor, args: dict):
     expr, owner = shape_ref(executor, shape)
     st = state(executor)
     check_group_name(name, _taken(executor))
+    note, key = same_ids_note(st.geo_groups, shape, ids), ids_key(ids)
     if owner == "shaper":
         r = make_group(executor, shape, ids, name)
         if not r["ok"]:
@@ -68,9 +83,10 @@ def tool_name_subshapes(executor, args: dict):
         rec = dict(r["records"][0])
         rec["code"] = rec["code"] + f"\n_name({name}, {name!r})\n" + REPUBLISH
         rec["publish"] = None
-        st.geo_groups[name] = GeoGroup(shape, "shaper", r["sub_type"])
-        return {"ok": True, "records": [rec], "name": name, "sub_type": r["sub_type"],
-                "count": r["count"], "measure": r.get("measure")}
+        st.geo_groups[name] = GeoGroup(shape, "shaper", r["sub_type"], key)
+        out = {"ok": True, "records": [rec], "name": name, "sub_type": r["sub_type"],
+               "count": r["count"], "measure": r.get("measure")}
+        return {**out, "note": note} if note else out
     if not isinstance(ids, list) or not ids or not all(isinstance(i, int) for i in ids):
         raise ValueError(f"ids of a GEOM shape are integers from get_subshapes, got {ids!r}")
     geompy = st.ns["geompy"]
@@ -81,12 +97,13 @@ def tool_name_subshapes(executor, args: dict):
     sub_type = types.pop()
     code = _geom_group_code(name, expr, ids, sub_type)
     run(st, code)
-    st.geo_groups[name] = GeoGroup(shape, "geom", sub_type)
+    st.geo_groups[name] = GeoGroup(shape, "geom", sub_type, key)
     props = geompy.BasicProperties(st.ns[name])
     rec = record("CreateGroup", code, out=[name], refs=[shape])
-    return {"ok": True, "records": [rec], "name": name, "sub_type": sub_type,
-            "count": len(ids), "measure": {"length": props[0], "area": props[1],
-                                           "volume": props[2]}}
+    out = {"ok": True, "records": [rec], "name": name, "sub_type": sub_type,
+           "count": len(ids), "measure": {"length": props[0], "area": props[1],
+                                          "volume": props[2]}}
+    return {**out, "note": note} if note else out
 
 
 @tool("shape_info", category="query",

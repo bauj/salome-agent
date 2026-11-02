@@ -26,32 +26,39 @@ def _sub_type(st, gexpr, g) -> str:
 
 
 def _add(executor, m, group, element_type) -> tuple:
+    """The code, variable and replaced element type (None when new) of a mesh group."""
     st = state(executor)
     info = mesh_of(executor, m)
     gexpr, g = group_ref(executor, group)
-    if group in info.groups:
-        raise ValueError(f"{m} already has a group {group!r}")
     var = f"{m}_{group}"
-    code = group_code(var, m, gexpr, group, element_for(_sub_type(st, gexpr, g), element_type))
+    element = element_for(_sub_type(st, gexpr, g), element_type)
+    old = info.groups.get(group)
+    code = group_code(var, m, gexpr, group, element)
+    if old is not None:
+        code = f"{m}.RemoveGroup({var})\n" + code
     run(st, code)
-    info.groups[group] = group
-    return code, var
+    info.groups[group] = element
+    return code, var, old
 
 
 @tool("group_on_geometry", category="group",
       description=("A group of the mesh elements on the named shape group `group` (faces on "
                    "a face group, …), named like it. It follows the mesh when it is "
-                   "recomputed."),
+                   "recomputed. Called again for the same group, it replaces that mesh "
+                   "group (for example with another element_type)."),
       schema={"type": "object", "properties": {
           "mesh": {"type": "string"}, "group": {"type": "string"},
           "element_type": {"type": "string", "enum": list(_CHOICES)}},
           "required": ["mesh", "group"]})
 def tool_group_on_geometry(executor, args: dict):
     m, group = args.get("mesh"), args.get("group")
-    code, var = _add(executor, m, group, args.get("element_type"))
+    code, var, old = _add(executor, m, group, args.get("element_type"))
     size = state(executor).ns[var].Size()
-    return {"ok": True, "records": [record("GroupOnGeom", code, recv=m, refs=[group])],
-            "mesh": m, "group": group, "size": size}
+    out = {"ok": True, "records": [record("GroupOnGeom", code, recv=m, refs=[group])],
+           "mesh": m, "group": group, "size": size}
+    if old is not None:
+        out["note"] = f"replaced the earlier {old.lower()} group {group}"
+    return out
 
 
 @tool("groups_from_geometry", category="group",
