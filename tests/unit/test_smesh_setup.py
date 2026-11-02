@@ -31,7 +31,9 @@ def test_surface_and_hexa_and_body_fitted():
     assert "LocalLength(2.5)" in su.hexa_code("m", {"segment_length": 2.5})
     with pytest.raises(ValueError):
         su.hexa_code("m", {"segments": 4, "segment_length": 2})
-    assert "m.BodyFitted().SetGrid('3', '3', '3', 4.0)" in su.body_fitted_code("m", {"size": 3})
+    bf = su.body_fitted_code("m", {"size": 3})
+    assert "m_a3 = m.BodyFitted().SetGrid('3', '3', '3', 4.0)" in bf
+    assert "m_a3.SetToCreateFaces(True)" in bf
 
 
 def test_algorithm_code_global_and_local():

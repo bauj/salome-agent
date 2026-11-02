@@ -40,8 +40,9 @@ REPUBLISH = "model.end()\nmodel.publishToShaperStudy()\nmodel.begin()"
 
 
 class GeoGroup:
-    def __init__(self, shape: str, owner: str, sub_type: str):
+    def __init__(self, shape: str, owner: str, sub_type: str, ids: tuple = ()):
         self.shape, self.owner, self.sub_type = shape, owner, sub_type
+        self.ids = ids
 
 
 class MeshInfo:

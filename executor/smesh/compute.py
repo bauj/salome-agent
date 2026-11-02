@@ -180,8 +180,39 @@ def measure_mesh(executor, name: str) -> dict:
     out["area"] = round(smesh.GetArea(m), 4) if out["faces"] else 0.0
     out["quality"] = {k: q for k in _REPLY_QUALITY if (q := quality(st, m, k))}
     out["groups"] = {g: st.ns[f"{name}_{g}"].Size() for g in info.groups}
+    notes = {g: group_note(element, out["groups"][g], out, _areas(executor, st, name, g))
+             for g, element in info.groups.items()}
+    out["group_notes"] = {g: n for g, n in notes.items() if n}
     out["errors"] = [failure_line(f) for f in failures(st, info, m)]
     return out
+
+
+_COUNTS = {"NODE": ("nodes", "nodes"), "EDGE": ("edges", "edge elements"),
+           "FACE": ("faces", "face elements"), "VOLUME": ("volumes", "volume elements")}
+
+
+def group_note(element: str, size: int, counts: dict, areas) -> str:
+    """Why a group is empty, or a face group's area next to its shape group's."""
+    key, kind = _COUNTS.get(element, ("", "elements"))
+    if size == 0:
+        if key and counts.get(key) == 0:
+            return (f"empty: this mesh has no {kind}; group_on_geometry with "
+                    "element_type \"node\" groups the nodes on it instead")
+        return f"empty: none of this mesh's {kind} lie on its shape group"
+    if areas is not None:
+        return f"area {areas[0]} of its shape group's {areas[1]}"
+    return ""
+
+
+def _areas(executor, st, name: str, group: str):
+    g = st.ns[f"{name}_{group}"]
+    if str(g.GetType()) != "FACE" or not g.Size():
+        return None
+    try:
+        shape_area = shape_props(executor, group)["area"]
+    except LookupError:
+        return None
+    return round(st.ns["smesh"].GetArea(g), 4), shape_area
 
 
 def mesh_status(info: dict, dim) -> dict:
@@ -197,7 +228,9 @@ def mesh_status(info: dict, dim) -> dict:
         return bad("it has no face elements")
     empty = [g for g, n in info["groups"].items() if n == 0]
     if empty:
-        return bad(", ".join(f"{g} is empty" for g in empty))
+        notes = info.get("group_notes") or {}
+        return bad(", ".join(f"{g} is {notes[g]}" if g in notes else f"{g} is empty"
+                             for g in empty))
     if dim == 3:
         off = volume_off(info["volume"], info["shape_volume"])
         if off is not None and off > 0.01:
@@ -226,8 +259,9 @@ def tool_evaluate(executor, args: dict):
 @tool("compute", category="compute",
       description=("Build `mesh`. The reply gives the counts per element type, the mesh "
                    "volume or area next to the shape's, the worst quality values, each "
-                   "group's size, and every part that failed: algorithm, reason, its type, "
-                   "centre and size."),
+                   "group's size (with why it is empty, or a face group's area next to "
+                   "its shape group's), and every part that failed: algorithm, reason, "
+                   "its type, centre and size."),
       schema=_MESH)
 def tool_compute(executor, args: dict):
     st = state(executor)
