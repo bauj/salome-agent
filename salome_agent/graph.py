@@ -419,7 +419,9 @@ def _describe_image_node(state: dict, config: "RunnableConfig"):
     # the base64 through every later step
     update = {"image_spec": spec, "reference_images": None, "image_reread_of": reread_of}
     if snap0 is not None:
-        vt = _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0)
+        vt = {k: round(v, 2) for k, v in
+              _timing_delta(snap0, _usage_snap(llm), time.monotonic() - t0).items()}
+        update["vision_timing"] = vt
         log.info("  vision timing: wall=%.1fs llm=%.1fs", vt["wall"], vt["llm_s"])
     return Command(update=update, goto=after)
 

@@ -55,6 +55,7 @@ class RunState(TypedDict):
     reference_images: Optional[list[str]]
     image_spec: Optional[dict]
     image_reread_of: Optional[int]
+    vision_timing: Optional[dict]
     config: dict
 
     plan: list[StagePlan]

@@ -48,15 +48,20 @@ def _stage_timing_suffix(tm: dict) -> str:
 
 
 def _timing_lines(state: dict) -> list[str]:
+    vt = state.get("vision_timing") or {}
     at = state.get("amend_timing") or {}
     pt = state.get("plan_timing") or {}
     stage_tms = [(idx, state["stages"][idx].get("timing") or {})
                  for idx in sorted(state["stages"])]
     stage_tms = [(i, t) for i, t in stage_tms if t]
-    if not at and not pt and not stage_tms:
+    if not vt and not at and not pt and not stage_tms:
         return []
     total = len(state["stages"])
     lines = ["## Timing", ""]
+    if vt:
+        lines.append(f"- image reading: {vt.get('wall', 0):.1f}s wall, "
+                     f"{vt.get('llm_s', 0):.1f}s llm, {vt.get('turns', 0)} calls, "
+                     f"tokens {_tok(vt.get('in_tok', 0))} in / {_tok(vt.get('out_tok', 0))} out")
     if at:
         lines.append(f"- amend (turn {(state.get('turn_idx') or 0) + 1}): "
                      f"{at.get('wall', 0):.1f}s wall, {at.get('llm_s', 0):.1f}s llm, "
@@ -70,8 +75,10 @@ def _timing_lines(state: dict) -> list[str]:
         lines.append(f"- stage {idx + 1}/{total} ({mod}): {tm.get('wall', 0):.1f}s wall, "
                      f"{tm.get('llm_s', 0):.1f}s llm, "
                      f"{tm.get('exec_s', 0):.1f}s exec, {tm.get('harness_s', 0):.1f}s harness")
-    wall = at.get("wall", 0) + pt.get("wall", 0) + sum(t.get("wall", 0) for _, t in stage_tms)
-    llm_s = at.get("llm_s", 0) + pt.get("llm_s", 0) + sum(t.get("llm_s", 0) for _, t in stage_tms)
+    wall = (vt.get("wall", 0) + at.get("wall", 0) + pt.get("wall", 0)
+            + sum(t.get("wall", 0) for _, t in stage_tms))
+    llm_s = (vt.get("llm_s", 0) + at.get("llm_s", 0) + pt.get("llm_s", 0)
+             + sum(t.get("llm_s", 0) for _, t in stage_tms))
     exec_s = at.get("exec_s", 0) + sum(t.get("exec_s", 0) for _, t in stage_tms)
     if wall:
         lines.append(f"- total: {wall:.1f}s measured wall — {llm_s:.1f}s llm "
