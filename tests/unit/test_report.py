@@ -158,3 +158,14 @@ def test_report_timing_totals_an_amend_that_replanned():
                        "tokens 1.0k in / 100 out") \
         < next(i for i, l in enumerate(lines) if l.startswith("- planner:"))
     assert "60.0s measured wall" in out
+
+
+def test_report_timing_shows_the_image_reading_and_counts_it():
+    out = write_report(_timed_state() | {
+        "vision_timing": {"wall": 149.0, "llm_s": 148.7, "exec_s": 0.0, "harness_s": 0.3,
+                          "turns": 1, "in_tok": 2000, "out_tok": 15900}})
+    lines = out.splitlines()
+    reading = "- image reading: 149.0s wall, 148.7s llm, 1 calls, tokens 2.0k in / 15.9k out"
+    assert lines.index(reading) < next(i for i, l in enumerate(lines)
+                                       if l.startswith("- planner:"))
+    assert "201.0s measured wall — 190.2s llm (95%), 8.0s exec" in out

@@ -860,3 +860,21 @@ def test_a_second_re_attach_starts_from_the_latest_reading(monkeypatch):
                         history, stored, turn=5)
     assert seen["earlier"] == {"summary": "4 slots and bars"}
     assert seen["correction"] == "turn 5: the bars are thinner"
+
+
+def test_describe_image_node_records_its_timing(monkeypatch):
+    from salome_agent import graph
+    from salome_agent.nodes import vision
+
+    llm = _FakeLLM()
+
+    def fake_describe(request, images, llm, **kw):
+        llm.burn(2, 3000, 900, 140.0)
+        return {"summary": "a flange"}
+
+    monkeypatch.setattr(vision, "describe_images", fake_describe)
+    state = {"user_request": "x", "reference_images": ["data:image/png;base64,AAAA"]}
+    cmd = graph._describe_image_node(state, {"configurable": {"llm_client": llm}})
+    vt = cmd.update["vision_timing"]
+    assert vt["llm_s"] == 140.0 and vt["turns"] == 2
+    assert vt["in_tok"] == 3000 and vt["out_tok"] == 900
