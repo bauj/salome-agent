@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import ast
 import json
 from types import SimpleNamespace

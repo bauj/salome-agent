@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """The vision agent's structured spec (task 286): mechanical validation, and the
 renderings the planner, CAD stages, amend and the report get."""
 import copy

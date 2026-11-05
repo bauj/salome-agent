@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.smesh.setup import _on, _pos
 from executor.smesh.state import group_ref, mesh_of, record, run, state, tool
 

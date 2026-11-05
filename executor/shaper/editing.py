@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """One sketch is edited at a time, as in SHAPER's GUI: a sketch is being edited
 from create_sketch, or from the first change to a closed one, until
 close_sketch, and nothing else is built meanwhile. A sketch changed while

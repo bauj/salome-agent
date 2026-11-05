@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 #
 # Start the headless SALOME agent server: a full SALOME session (no GUI) that
 # executes stage scripts, geom tool calls and introspection for the CLI. This

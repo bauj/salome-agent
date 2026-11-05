@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.geom.helpers import _check_shape, tool, _check_sub_ids, _next_name, _publish
 from executor.geom.results import _select_subshapes
 

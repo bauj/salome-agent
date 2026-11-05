@@ -471,3 +471,7 @@ docs/superpowers/   design specs + implementation plans
   NETGEN is predicted 2–6× too high, so a NETGEN mesh can be refused well below
   the limit.
 - RAG / documentation retrieval was cut from v1.
+
+## License
+
+GNU Lesser General Public License, version 2.1 or later: see `COPYING`.

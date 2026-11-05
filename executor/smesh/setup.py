@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.smesh.state import (
     MeshInfo, group_ref, mesh_of, new_name, record, run, shape_ref, state, tool)
 

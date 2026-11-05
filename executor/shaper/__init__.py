@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """The shaper tool package. Importing it registers every tool; SHAPER itself
 is imported on the first call, so geom-only runs never load it."""
 from executor.geom.helpers import _pinned

@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 # Runs INSIDE SALOME (`salome shell -- python3 bench/CADSmith/cadsmith_export.py ...`),
 # in its own process, not in the agent server: rebuilds a run's result.py and
 # exports the run's final geometry to STL.

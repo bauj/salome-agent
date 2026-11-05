@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """The geom tool package. Importing it registers every tool."""
 from executor.geom.helpers import (  # noqa: F401
     ArgRef, CallRecord, _counters, _gui_call, _next_name, _parse_coords,

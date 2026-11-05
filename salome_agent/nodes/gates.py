@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from langgraph.graph import END
 from langgraph.types import Command, interrupt
 

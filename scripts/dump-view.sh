@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 #
 # Screenshot a run's result in the SALOME viewer: opens the SALOME GUI,
 # rebuilds result.py, shows the result objects and saves the view as a png

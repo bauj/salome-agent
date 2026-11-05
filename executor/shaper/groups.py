@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Named groups of sub-shapes: SHAPER's own make_group tool, and the code the
 SMESH tools reuse to name faces and edges of a SHAPER shape."""
 import builtins

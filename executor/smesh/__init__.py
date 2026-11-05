@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """The SMESH tool package. Importing it registers every tool."""
 from executor.geom.helpers import _pinned
 from executor.smesh.state import COMPUTE_TIMEOUT_S, registry, reset  # noqa: F401

@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 def _fmt_arg(arg: dict) -> str:
     kind = arg["kind"]
     if kind == "literal":

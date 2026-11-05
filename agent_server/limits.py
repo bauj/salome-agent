@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """How long the server lets each kind of work run before it gives up. The
 client reads these too, so it waits for a reply at least as long as the
 server may legitimately take to send one."""

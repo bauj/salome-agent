@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.shaper.features import _unknown
 from executor.shaper.state import (
     CONSTRUCTION, measure, publish_study, record, results_of, run, shape_status, state, tool,

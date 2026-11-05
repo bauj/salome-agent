@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import threading
 import traceback as tb_module
 from contextlib import redirect_stderr, redirect_stdout

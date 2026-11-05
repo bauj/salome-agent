@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Run salome-agent on the CADSmith benchmark prompts and score each result
 against the benchmark's reference STL.
 

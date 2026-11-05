@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """make_ellipse / make_polyline / make_curve / make_profile_face."""
 from types import SimpleNamespace
 from unittest.mock import MagicMock

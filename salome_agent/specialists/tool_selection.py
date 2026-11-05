@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Per-stage tool retrieval (see
 docs/superpowers/specs/2026-09-02-geom-tool-retrieval-design.md).
 

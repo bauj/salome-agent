@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from types import SimpleNamespace
 
 # Alias keeps the assertions below unedited after the geom_tools -> geom package move.

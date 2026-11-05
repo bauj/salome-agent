@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Pins exactly what geom's ToolSpecialist SENDS the model in `tools`. Neither
 test_specialist_geom.py (asserts on results, not requests) nor
 test_golden_runs.py (ReplayLLM ignores the request payload) can see a

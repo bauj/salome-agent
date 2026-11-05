@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import math
 
 from executor.smesh.state import MAX_ELEMENTS, evaluate, mesh_of, record, shape_ref, state, tool

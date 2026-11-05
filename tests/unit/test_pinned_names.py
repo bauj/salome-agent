@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 # tests/unit/test_pinned_names.py
 from types import SimpleNamespace
 

@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.shaper.state import POSTAMBLE, PREAMBLE, PUBLISH_LINE
 from salome_agent.calc import CALC_PROMPT
 from salome_agent.logs import log

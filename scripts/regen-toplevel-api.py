@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Regenerate salome_agent/verify/toplevel_api.json from a live introspect().
 
 That fixture is the snapshot of SALOME's top-level APIs (geompy, smesh,
