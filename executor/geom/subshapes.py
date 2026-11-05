@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.geom.helpers import tool, _next_name, _publish
 from executor.geom.results import _centre, _select_subshapes
 

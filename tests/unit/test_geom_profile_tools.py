@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """make_arc / make_wire / make_face_from_wires: 2D profiles out of lines and arcs."""
 import math
 from types import SimpleNamespace

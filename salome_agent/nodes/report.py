@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 def _usage_lines(usage: dict) -> list[str]:
     calls = usage.get("calls", 0)
     metered = usage.get("metered_calls", 0)

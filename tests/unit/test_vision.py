@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from unittest.mock import MagicMock
 
 from salome_agent.nodes.vision import VISION_SYSTEM_PROMPT, describe_images

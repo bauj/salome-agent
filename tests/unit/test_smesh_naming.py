@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.smesh.naming import same_ids_note
 from executor.smesh.state import GeoGroup
 

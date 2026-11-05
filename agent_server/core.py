@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import traceback
 
 from executor import geom, shaper, smesh  # top-level — salome_init mutates sys.path later

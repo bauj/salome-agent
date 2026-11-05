@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """The calc tool: a few lines of Python arithmetic, run in a separate locked-down
 interpreter so the model computes numbers instead of reasoning them out."""
 import ast

@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.shaper.features import _base_selections, _build, _operands
 from executor.shaper.primitives import _XYZ, _point
 from executor.shaper.state import new_name, state, tool

@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 # Runs INSIDE the SALOME GUI (launched by scripts/dump-view.sh): rebuilds a
 # run's result.py, displays its result objects in an OCC view and saves a
 # screenshot with SalomePyQt.dumpView. Driven by environment variables:

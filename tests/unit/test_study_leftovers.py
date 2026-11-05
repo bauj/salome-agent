@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from types import SimpleNamespace
 
 from agent_server.backend import HeadlessBackend, clear_study, study_objects

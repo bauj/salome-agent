@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Catch a model repeating itself while it streams (task 317).
 
 Small models fall into loops: the same sentence over and over (gpt-oss:20b),

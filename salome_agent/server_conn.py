@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from agent_server import handshake
 from salome_agent.executor_client import (ExecutorClient, ServerBusy,
                                           SessionDied, SessionPoisoned)

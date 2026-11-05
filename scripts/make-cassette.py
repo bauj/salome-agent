@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Turn a recorded run directory into a committed cassette.
 
 Usage: scripts/make-cassette.py <run_dir> <cassette_name>

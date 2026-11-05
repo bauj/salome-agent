@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Resolve the SALOME install root for the live (`-m salome`) tests.
 
 Order: the `SALOME_ROOT` env var, then `salome.root` in a repo-root

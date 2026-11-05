@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Live-LLM smoke test for the smesh specialist (task 177).
 
 Every other specialist test uses a MagicMock LLM, which cannot catch

@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from executor.smesh.state import evaluate, group_ref, mesh_of, record, run, state, tool
 
 ELEMENT_TYPES = {"vertex": "NODE", "edge": "EDGE", "face": "FACE", "solid": "VOLUME"}

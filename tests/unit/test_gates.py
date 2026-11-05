@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import salome_agent.nodes.gates as gates
 from langgraph.graph import END
 

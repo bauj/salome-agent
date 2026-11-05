@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """The run's meshes, the named geometry groups they use, and what every SMESH
 tool shares: resolving names, running SMESH code, recording it.
 

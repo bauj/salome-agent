@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Every free string argument of every GEOM, SHAPER and SMESH tool, given a value
 that tries to break out of the generated code and create a marker directory.
 The other arguments name real objects, so the payload reaches the code it targets."""

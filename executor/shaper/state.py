@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """The run's SHAPER document, the sketches built in it, and what every tool
 shares: running SHAPER code, recording it, and reporting a sketch's state.
 

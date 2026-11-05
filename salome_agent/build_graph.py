@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import copy
 import json
 from dataclasses import asdict, dataclass, field

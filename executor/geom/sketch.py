@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import math
 
 from executor.geom.helpers import _check_shape, tool, _next_name, _publish, _resolve_point, _resolve_axis

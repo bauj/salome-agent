@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import pytest
 
 from executor.shaper.primitives import _coords, _num, plane_coefficients

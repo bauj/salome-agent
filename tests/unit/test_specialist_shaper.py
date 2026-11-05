@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from unittest.mock import MagicMock
 
 from salome_agent.modules import llm_module_names, spec_for

@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 import salome_agent.specialists.geom  # noqa: F401 — trigger GEOM_SPEC registration
 from salome_agent.modules import MODULES, ModuleSpec, Terminator, spec_for
 

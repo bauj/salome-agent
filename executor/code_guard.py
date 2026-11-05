@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 """Check SHAPER and SMESH source built from tool arguments before it runs.
 
 The tools paste the model's names into Python source; a name that broke out of

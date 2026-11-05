@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 from salome_agent.specialists.geom import CORE_TOOLS
 from salome_agent.specialists.tool_selection import (
     hint_tool_names, initial_offered, resolve_load, suggest_tool_names,

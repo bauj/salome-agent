@@ -1,3 +1,5 @@
+# Copyright (C) 2026  salome-agent authors
+# LGPL 2.1 or later
 # result.py runs standalone under `salome shell` with no executor process
 # attached, so it must self-init the same way the executor's exec namespace
 # does (import convention confirmed 2026-08-29 for this SALOME build).
