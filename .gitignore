@@ -8,3 +8,5 @@ config_*.json
 .claude/
 uv.lock
 samples/
+docs/superpowers/
+.superpowers/

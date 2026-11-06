@@ -1,310 +1,121 @@
 # salome-agent
 
-Turn a natural-language request into a **verified, reproducible SALOME Python script**.
+The core of [SALOME Agent](https://github.com/bauj/salome-agent-gui): it turns a request in plain
+words, or a picture, into SALOME geometry and meshes, plus a standalone `result.py` that rebuilds
+them.
 
-You describe what you want ("make a 10 mm cube, then tetrahedral-mesh it"). The agent
-plans the stages, drives per-module specialist agents (SHAPER / GEOM / SMESH) against a
-live SALOME session, verifies each stage actually runs, and assembles a standalone
-`result.py` that reproduces the whole thing with no agent or executor involved.
+There are two ways to use it:
 
-Built for SALOME module development / automation — not an end-user chatbot or a solver
-pipeline.
+- **In the SALOME window:** install [salome-agent-gui](https://github.com/bauj/salome-agent-gui),
+  which includes this engine and adds a chat window. Most users want this.
+- **From the command line:** use this repo directly, against a headless SALOME with no window, or
+  against one already open with the plugin. This suits scripts, batch runs and automation.
 
----
+The rest of this page covers the command line.
 
-## How it works
+| More detail | |
+|---|---|
+| [Configuration reference](docs/configuration.md) | Every setting |
+| [Development guide](docs/development.md) | Architecture, tests, code layout, adding tools |
 
-Two processes:
+## What it does
 
-| Process   | Runs where | Does |
-|-----------|-----------|------|
-| **agent**    | your Python venv | planning, LLM calls, stage checks, script assembly (LangGraph `StateGraph`) |
-| **server**   | inside a SALOME process — a GUI plugin thread, or headless `python -m agent_server` | executes SHAPER / GEOM / SMESH tool calls, introspection, timeout kills |
+You write a request such as "make a 10 mm cube, then tetrahedral-mesh it". The agent then:
 
-The agent connects to the server over loopback TCP (token-authenticated,
-line-delimited JSON); it discovers a running server via `~/.local/share/salome-agent/server.json`.
+1. **Reads your images,** if you gave any, and turns them into a written description.
+2. **Plans** the job as a list of stages, each one a piece of work for one SALOME module.
+3. **Builds each stage** in a live SALOME session, using that module's tools, and checks the result.
+4. **Writes `result.py`,** a script that rebuilds everything in SALOME with no agent involved, and
+   `report.md`, a record of the run.
 
-Flow: `request → [vision, when images are given] → plan → [per stage: specialist tool loop → finish_stage check → advance] → assemble result.py → report`
+It works with three SALOME modules: **SHAPER** for CAD (the default), **GEOM** for CAD when your
+request names it ("using GEOM"), and **SMESH** for meshing.
 
-- **shaper** stages — the default CAD module — run as tool calls (`create_sketch`, `sketch_add`, `extrude`, `fillet_edges`, ...) against the server. Each call executes the same source line that goes into `result.py`, so the live document and the script cannot drift.
-- **geom** stages run as tool calls (`make_box`, `get_subshapes`, `fillet_edges`, ...) against the server; the script is generated from the call log. The planner picks GEOM only when the request names it ("using GEOM").
-- **smesh** stages run as tool calls (`create_mesh`, `mesh_tetra`, `name_subshapes`, `local_size`, `compute`, ...) on a shape an earlier stage built, SHAPER or GEOM. Each call executes the line it records into `result.py`; `compute` answers with element counts, the mesh volume next to the shape's, quality and every part that failed, and `finish_stage` is refused until the mesh holds up. One exception: a mesh whose volume is more than 1% off the shape's is accepted when the user asked for the size that causes it; the model then passes `request_conflict` with the user's own words for that value (refused if those words are not in the request), and the miss is shown to the user as a warning. A defect (not computed, meshing errors, no elements of the stage's dimension, an empty group) is always refused.
-- A failed stage stops at the stage-failure gate (or, with `--batch`, follows `on_stage_failure`). A retry continues from what the failed attempt built and is told what that is. GUI mode does not roll back published objects; see [Known limitations](#known-limitations).
+## Quick start
 
----
+You need:
 
-## Requirements
+- **Python 3.10 or newer,** both on your system and in your SALOME
+- **a SALOME installation**
+- **an LLM:** any OpenAI-compatible endpoint that supports tool calling
 
-- **Python 3.10+**
-- A working **SALOME install** (developed against a recent `master` native build).
-  The live tests find it via `$SALOME_ROOT` or `salome.root` in `config.json`.
-- An **OpenAI-compatible, tool-calling LLM endpoint** (base URL + API key + model name).
-
----
-
-## Install
+**1. Install**
 
 ```bash
-cd /path/to/salome-agent   # the repo root
+git clone https://github.com/bauj/salome-agent.git
+cd salome-agent
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .          # or -e ".[dev]" to also get pytest
+pip install -e .
 ```
 
-This installs `langgraph` and `requests` and puts a `salome-agent` entry point in
-`.venv/bin`.
-
-> The command is `salome-agent` (hyphen), not `salome_agent`.
-> If `pip install -e .` was skipped, there is no entry point — run it as
-> `python -m salome_agent.cli ...` from the repo root instead.
-
----
-
-## Configure
-
-Copy the template and fill in your LLM credentials:
+**2. Configure.** Copy the example, then set `base_url`, `api_key` and `model` in its `llm` section:
 
 ```bash
 cp config.example.json config.json
 ```
 
-```json
-{
-  "llm": {
-    "base_url": "http://your-endpoint:port/v1",
-    "api_key": "sk-...",
-    "model": "auto",
-    "ssl_cert_file": "",
-    "temperature": 0,
-    "timeout": 120,
-    "json_retries": 2,
-    "vision_fix_retries": 2,
-    "loop_retries": 3,
-    "text_tool_calls": true,
-    "max_retries": 2,
-    "reasoning_budget": 20000,
-    "carry_reasoning": true,
-    "extra_headers": {},
-    "extra_body": {},
-    "module_extra_body": {},
-    "modules": {}
-  },
-  "salome": {
-    "root": "/path/to/your/SALOME"
-  },
-  "policy": {
-    "tool_iteration_cap": 12,
-    "plan_detail": "balanced",
-    "tool_selection": "hints",
-    "verify_cadence": "final",
-    "on_stage_failure": "abort"
-  },
-  "work_dir": "~/.local/share/salome-agent/runs"
-}
-```
-
-Required keys: `llm.base_url` and `llm.model`. Missing either is a hard error. An unknown key in the `llm` block (a typo such as `extra-body`) is logged as a warning and ignored.
-
-#### `llm` — the model endpoint
-
-Any OpenAI-compatible `/chat/completions` endpoint. Requests are streamed (SSE).
-
-| Key | Default | Meaning |
-|-----|---------|---------|
-| `base_url` | — (required) | Endpoint base URL, up to and including `/v1`. |
-| `model` | — (required) | Model name sent in every request. |
-| `api_key` | `""` | Sent as `Authorization: Bearer <key>`. Leave empty for an endpoint without auth. |
-| `ssl_cert_file` | `""` | Path to a CA bundle for an HTTPS endpoint with a private CA. `~` is expanded; a missing file fails at startup. Empty verifies against the system trust store. |
-| `temperature` | `0` | Sampling temperature. |
-| `timeout` | `120` | Seconds. Total wall-clock budget for one streamed LLM call; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. The gap between two streamed chunks is capped separately at 60 s. `--timeout` overrides it. |
-| `json_retries` | `2` | When the planner's answer does not parse as JSON, the answer and the exact parser error are fed back and the planner is re-asked this many times before the run fails. |
-| `vision_fix_retries` | `2` | When the image-analysis agent's spec fails the mechanical checks (an outline that does not close, an arc end off its radius, a hole outside the outline, a dangling reference), the errors are fed back and it is re-asked this many times; errors still left go to the planner and geom as `conflicts`. |
-| `max_retries` | `2` | Retries for transient failures — connection drop, truncated stream, HTTP 429 (honouring `Retry-After`), fast 502/503/504, a mid-stream error frame for a server-side failure (5xx/429 status, or type `server_error`/`api_error`) — with exponential backoff. Raise it for a flaky free-tier endpoint. |
-| `reasoning_budget` | `20000` | Specialist (tool-calling) calls only: approximate reasoning tokens (characters / 4) a model may spend before its first tool call. Past it the call is cut and re-asked once with the tail of its own reasoning and a "continue from it and act" nudge; a second cut in a row ends the stage. If the cut reasoning ends in a loop, it is handled as a loop (see `loop_retries`). `0` turns it off. |
-| `loop_retries` | `3` | Every call (planner, specialists, vision): when the streamed reasoning or answer starts repeating itself (the same sentences over and over, as small models do), the call is cut at once. A planner or specialist call is then re-asked with its text from before the loop and one repeated sentence, never the loop itself, up to this many cuts in a row; past that the stage ends (the plan fails). A vision call that loops ends the run. |
-| `text_tool_calls` | `true` | Specialist (tool-calling) calls only: a reply with no tool call is read for calls the model wrote as text (JSON, `<tool key="value"/>`, `<call:tool key=value/>`) and those run. Calls after other text in the reply (such as a result the model made up) are not run and the model is told so; a call whose exact text appears in a message the model was given (request, tool result) is never run. An echo the model reformats is not caught. `false` turns reading text calls off. Either way, the same reply with no tool call 3 times in a row ends the stage. |
-| `carry_reasoning` | `true` | Specialist (tool-calling) calls only: each turn's reasoning (`reasoning_content`) stays in the stage's history, so after a tool result (a `calc`, say) the model resumes its own thinking instead of starting over. Costs input tokens for the rest of the stage. Set `false` for a provider that rejects `reasoning_content` in requests. |
-| `extra_headers` | `{}` | Extra HTTP headers sent verbatim on every request. In a string value `{run_id}` is replaced with the run's id — for gateways that want a stable per-conversation token, e.g. `{"x-opencode-session": "{run_id}"}`. |
-| `extra_body` | `{}` | Extra top-level fields merged into every request's JSON body, next to `model`/`messages`/`temperature`. Use this, not `extra_headers`, for provider body params such as `{"reasoning_effort": "high"}`; whether the provider honours a field is up to the provider. |
-| `module_extra_body` | `{}` | `{"planner" \| "shaper" \| "geom" \| "smesh": {...}}` — a body sent *instead of* `extra_body` (full replacement, not a merge) on that module's calls. Lets an expensive knob sit on the planner only, e.g. `{"planner": {"reasoning_effort": "high"}}`, while the many specialist calls run without it. |
-| `modules` | `{}` | `{"vision" \| "planner" \| "shaper" \| "geom" \| "smesh": {...}}` — sends that module's calls to their own endpoint and/or model. Each entry may set `base_url`, `api_key`, `model`, `ssl_cert_file`, `temperature`, `timeout`, `extra_headers`, `extra_body`; a key left out keeps the shared `llm` value — except with a `base_url` of its own, which never inherits the shared `api_key`, `ssl_cert_file`, `extra_headers` or `extra_body` (another host gets no credentials meant for the main one). Its `extra_body`, when set, wins over `module_extra_body`. E.g. a stronger drawing reader for images only: `{"vision": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "api_key": "...", "model": "gemini-3-pro-preview"}}`. |
-
-#### `policy` — how a run behaves
-
-The first two keys have no built-in default — keep them in your config.
-
-| Key | Default | Meaning |
-|-----|---------|---------|
-| `tool_iteration_cap` | — | Maximum LLM turns (each turn may carry several tool calls) a tool-calling specialist gets for one stage. |
-| `on_stage_failure` | — | `abort` \| `continue`. What `--batch` does when a stage fails: stop the run, or skip the stage and go on. Interactive runs ask instead. `--on-failure` overrides it. |
-| `plan_detail` | `balanced` | `coarse` \| `balanced` \| `fine`. How finely the planner splits a request into stages — `coarse` favours fewer, bigger stages; `fine` favours splitting a part or assembly into more stages. |
-| `tool_selection` | `hints` | `hints` \| `all`. `hints`: the SHAPER / GEOM specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: the module's full registry on every call. `--tools` overrides it. |
-| `verify_cadence` | `final` | How hard the SHAPER / GEOM specialist is pushed to `measure`-check where its shapes landed — see below. |
-
-`policy.verify_cadence`:
-- `none` — no self-check.
-- `final` (default) — read the `shape_info` that rides on every result for free; call `measure` explicitly only when something looks off and once on the result shape(s) before `finish_stage`. If a move or boolean is still unmeasured at `finish_stage`, the loop asks for a measure once before accepting.
-- `strict` — measure after every move or boolean. If the model does three in a row without one, the loop forces a measure before it can continue.
-
-#### Other keys
-
-| Key | Default | Meaning |
-|-----|---------|---------|
-| `work_dir` | `.` | Where each run's folder (`<run_id>/` with `result.py`, `report.md`, logs) is written. `~` is expanded. `--work-dir` overrides it. |
-| `salome.root` | — | Path to your SALOME install. The agent itself does not use it (it talks to an already-running agent server); the live tests and `scripts/regen-toplevel-api.py` read it when `$SALOME_ROOT` is not set. |
-
-The salome-agent-gui plugin stores its own settings (`gui.theme`, `gui.batch`, …) in a `gui` section of the same file; the agent ignores that section.
-
-`config.json` is gitignored — keep your credentials there, not in `config.example.json`.
-
----
-
-## Usage
-
-Run **from the repo root** (`config.json` is resolved relative to the current directory).
-
-The agent talks to a **SALOME agent server** — the executor loop running inside a
-SALOME process. Start it first (once per SALOME session):
-
-- **GUI:** launch `"$SALOME_ROOT"/salome`, then **Tools ▸ Plugins ▸ Launch SALOME
-  agent server** — see [GUI plugin setup](#gui-plugin-setup) for the one-time install.
-- **Headless (CI / batch):** `scripts/start-headless-server.sh` (needs `SALOME_ROOT`)
-  — isolated study, no GUI. Runs in the foreground; ready when
-  `~/.local/share/salome-agent/server.json` appears (~10-20s), logs to
-  `~/.local/share/salome-agent/server.log`, stop with Ctrl-C. One server at a time. It
-  stays up across CLI runs — the CLI drops its connection but never shuts the
-  server down.
-
-Then:
+**3. Start SALOME for the agent.** In a second terminal, from the repo, start a headless SALOME
+and leave it running. It is ready after about 10-20 seconds; stop it with Ctrl-C.
 
 ```bash
-cd /path/to/salome-agent   # the repo root
-source .venv/bin/activate
+export SALOME_ROOT=/path/to/your/SALOME    # the directory holding the salome launcher
+scripts/start-headless-server.sh
+```
 
+Prefer to watch it build? Open SALOME with the
+[salome-agent-gui](https://github.com/bauj/salome-agent-gui) plugin instead and click
+**Tools > Plugins > SALOME Agent**: the command line then drives that window.
+
+**4. Run a request,** from the repo root, where `config.json` is:
+
+```bash
 salome-agent "make a 10mm cube" --batch
 ```
 
-To point the agent at a picture (or several) of the part you want, add `--images`
-(comma-separated paths, no spaces around the commas needed):
+**5. Get the result.** The run prints its `output dir`, which holds `result.py` and `report.md`.
+With the example config, that is under `~/.local/share/salome-agent/runs/`. To rebuild the model
+with no agent involved:
+
+```bash
+"$SALOME_ROOT"/salome shell -- python3 <output dir>/result.py
+```
+
+## Using it
+
+### Review each run, or run unattended
+
+Without `--batch`, the run stops to ask you twice:
+
+- **After planning,** it prints the stages: `[Y]es`, `[e]dit` (opens the plan in `$EDITOR`) or
+  `[n]o` to abort.
+- **If a stage fails:** `[h]int` (give the agent a tip and retry), `[s]kip stage` or `[a]bort run`.
+
+With `--batch`, the plan is approved automatically. A failed stage then either stops the run or is
+skipped: the example config stops it, and `--on-failure continue` skips it instead.
+
+### Start from pictures
 
 ```bash
 salome-agent "make this bracket" --images ./bracket-sketch.png --batch
 
-# several views/plans of the same part
+# several views of the same part
 salome-agent "make this bracket" --images ./front.png,./side.png,./top.bmp --batch
 ```
 
-Each image is base64-encoded (PNG/JPEG/WEBP/GIF/BMP, recognised by content; at most 10
-images and 20 MB in all; needs a vision-capable LLM behind `llm.base_url`) and first handed to a dedicated **vision agent**. It extracts what is
-visible — the parts and their shapes, dimensions written on the drawing, proportions,
-symmetry, and what is ambiguous — as a structured description, which is logged and passed
-to the **planner** and to the **SHAPER / GEOM specialist** in place of the raw pictures — neither
-sees the images themselves. The planner uses it to shape the stage breakdown, the
-specialist for proportions and placement. Multiple
-images are treated as different views/plans of the *same* part, reconciled into one 3D
-description — not as separate parts. Explicit numeric dimensions in the text request
-win, then dimensions read from the image; values the vision agent had to estimate are
-marked `~`. SMESH stages don't see the images — it only feeds CAD construction.
+- Accepts PNG, JPEG, WEBP, GIF and BMP, up to 10 images and 20 MB in all. You need a vision-capable
+  model; [`llm.modules.vision`](docs/configuration.md) can use a different model just for this.
+- Several images are read as views of **one** part, not as separate parts.
+- Numbers in your text win over numbers read from the image. Values the agent had to estimate are
+  marked `~`.
 
-The vision call is tagged `module="vision"`, so `llm.modules.vision` can send it to a
-different model or endpoint (one that reads drawings better) and `llm.module_extra_body` can
-give it its own request body (e.g. a different `reasoning_effort`) like the other modules.
-
-The agent will:
-
-1. Connect to the running server via `~/.local/share/salome-agent/server.json`. If none is
-   running it exits with a message telling you to start one.
-2. Plan the stages, run each specialist, verify, and assemble — progress is logged to
-   stderr as it goes (`planning...`, `stage 1/2 [shaper] ...`,
-   `stage 1/2 accepted`, ...). Add `-v` for per-LLM-call detail, `-vv`
-   to also dump every LLM prompt, response and reasoning to the terminal and
-   `<run_id>/llm_trace.jsonl` (a call cut off, cancelled or dropped still gets a line,
-   marked `incomplete`, with what it streamed). `-vv` also writes
-   `<run_id>/llm_live.txt` as each call streams: `tail -f` it to watch the model's
-   reasoning while a call is in flight, and the tool calls it ends with.
-3. Write output to `<work_dir>/<run_id>/`:
-   - `result.py` — the standalone reproducible script
-   - `report.md` — per-stage status, what each stage built, timing and LLM token usage, and a `## Warnings` section when an accepted stage kept a user value against a check or missed a check (also printed at the end; the CLI prints each warning as a `[warning]` line)
-
-Raw SALOME noise goes to
-`~/.local/share/salome-agent/server.log`, not your terminal.
-
-Run the result on its own, with no agent involved:
-
-```bash
-"$SALOME_ROOT"/salome shell -- \
-  python3 ~/.local/share/salome-agent/runs/<run_id>/result.py
-```
-
-### Options
-
-| Flag | Meaning |
-|------|---------|
-| `--images PATH,PATH,...` | Comma-separated reference image(s) (PNG/JPEG/WEBP/GIF/BMP) the generated CAD should match — e.g. several views/plans of the same part; described by a vision agent whose text description feeds the planner and the SHAPER / GEOM specialist (they never see the images). |
-| `--batch` | Non-interactive. Auto-approve the plan; on stage failure follow `policy.on_stage_failure` (`abort` or `continue`). Without it, the run is interactive — see below. |
-| `--work-dir DIR` | Override `config.work_dir`. |
-| `--config PATH` | Use a different config file (default: `./config.json`). |
-| `--on-failure {abort,continue}` | Override `policy.on_stage_failure`. |
-| `--tools {hints,all}` | SHAPER / GEOM tool retrieval. `hints` (default): the specialist is offered a small per-stage tool subset (planner hint + a core set) and widens it on demand via `load_tools`. `all`: offer the module's full registry on every call (pre-retrieval behaviour). Overrides `policy.tool_selection`. |
-| `--timeout SECONDS` | Override the per-round-trip LLM budget (`llm.timeout` in config). Total wall-clock for one streamed call and, capped at 60s, the socket read-gap; a generation still running at the limit (a runaway reasoning loop) is cut and not retried. |
-| `-v`, `--verbose` | Per-LLM-call detail on top of the milestone log. Repeat (`-vv`) to dump every LLM prompt, response and reasoning to the terminal and `<run_id>/llm_trace.jsonl`, and stream each call's reasoning to `<run_id>/llm_live.txt`. |
-| `--chat` | After the first result, keep talking to the agent in a REPL — see [Chat mode](#chat-mode). Cannot be combined with `--batch`. |
-
-### GUI plugin setup
-
-The menu entry comes with the salome-agent-gui SAT product: launch
-`"$SALOME_ROOT"/salome`, then **Tools ▸ Plugins ▸ SALOME Agent** starts the server
-inside the GUI and opens the chat window. CLI runs find the same server via
-`~/.local/share/salome-agent/server.json`.
-
-If an older setup ran `scripts/install-plugin.sh` (removed), delete its
-`# --- salome-agent server launcher ---` block from
-`~/.config/salome/Plugins/salome_plugins.py`: it puts a git checkout first on
-`sys.path`, so SALOME runs that checkout's server instead of the installed one.
-
-Objects a run publishes appear in the Object Browser and 3D viewer, prefixed
-`sa_<run_id>_`. A failed stage attempt can leave debris under that prefix —
-`report.md` names it; bulk-delete by prefix.
-
-A stage timeout **poisons** the server: the run aborts (exit 1) and the next menu
-click restarts it
-— or, if the GUI is frozen by a runaway stage, kill it. The headless server (which
-otherwise stays up across runs) **exits** on a poisoning timeout — restart it.
-
-> Auto-launching SALOME from the agent was tried and reverted (task 182). Repeated
-> external attach/detach against a long-lived GUI has crashed the session before
-> (task 181) — save your work; treat live-GUI use as demo/interactive, not unattended
-> batch. Headless (`scripts/start-headless-server.sh`) is the unattended path.
-
-**Headless:** do **not** run `python -m agent_server` from an activated venv — the
-wrapper script strips `.venv` from `PATH` first (the venv python lacks `psutil` and
-SALOME's `sys.path`). The server refuses the raw `run` command (any code sent with
-the token) unless started with `--allow-run`; only the live tests pass it.
-
-### Interactive mode
-
-Without `--batch`, the run pauses for you at two points:
-
-- **Plan approval** — after planning, the stage list is printed and you `[Y]es` /
-  `[e]dit` (opens the plan as JSON in `$EDITOR`; add/drop/reorder stages, then it
-  re-prompts) / `[n]o abort`.
-- **Stage failure** — if a stage fails, you get `[h]int` (give the specialist
-  a text hint and retry the stage), `[s]kip stage`, or `[a]bort run`.
-
-Everything up to the pause is preserved (LangGraph checkpointer); your decision resumes the
-same run. If stdin is not a terminal (piped, no input), an unanswered prompt aborts the run —
-use `--batch` for unattended runs.
-
-Aborting at either gate stops immediately with exit 1 and writes nothing — no
-`result.py`, no `report.md`, no run directory.
-
-### Chat mode
+### Keep talking to refine it
 
 ```bash
 salome-agent "a small house" --chat
 ```
 
-`--chat` keeps the session open after the first result, so you can keep talking:
+The session stays open after the first result:
 
 ```
 chat> make the roof taller
@@ -312,165 +123,46 @@ chat> add a chimney
 chat> /undo
 ```
 
-Commands:
+An edit rebuilds only the object it changes and what depends on it, keeping the same names.
+Ctrl-C cancels the turn in progress. `--chat` cannot be combined with `--batch`.
 
-| Command | Meaning |
-|---------|---------|
-| `/help` | list these commands |
-| `/undo` | revert the last turn |
-| `/redo` | re-apply the last undone turn (cleared by any new turn) |
-| `/show` | print the build graph |
-| `/result` | print `result.py` |
-| `/rebuild` | rebuild the whole study from the model (after a failed rollback) |
-| `/image PATH[,PATH] [request]` | a request with reference image(s), as `--images` gives the first turn; quote a path with spaces; with no request, "Build what the attached image(s) show." |
-| `/quit` | leave (Ctrl-D too) |
+| Command | What it does |
+|---|---|
+| `/help` | List these commands |
+| `/undo` | Revert the last turn |
+| `/redo` | Re-apply the last undone turn (cleared by any new turn) |
+| `/show` | Print the build graph |
+| `/result` | Print `result.py` |
+| `/rebuild` | Rebuild the whole study from scratch, when an undo failed to restore it |
+| `/image PATH[,PATH] [request]` | A request with reference images; with no request, it builds what they show |
+| `/quit` | Leave (Ctrl-D too) |
 
-One executor connection and one LLM session serve the whole conversation. An edit
-replays only the affected object and everything downstream of it, reusing the same
-object names, rather than starting the study over. `/undo` reverts the last turn;
-`/rebuild` forgets every name and replays the whole graph from scratch, for when a
-rollback itself fails. Ctrl-C cancels the turn in progress and returns to `chat>`.
-`--chat` is interactive, so it cannot be combined with `--batch`.
+### Options
 
----
-
-## Development
-
-```bash
-# fast unit tests (no SALOME needed), in parallel (pytest-xdist)
-pytest tests/unit -n auto
-
-# live tests — require a working SALOME install, ~15-20s startup each;
-# keep these serial (no -n): they share one SALOME server
-pytest -m salome
-
-# tests that call a real LLM (spend tokens) — deselected by default
-pytest -m llm
-```
-
-Tests marked `salome` are skipped unless a real SALOME install is present.
-They locate it via `$SALOME_ROOT`, else `salome.root` in `config.json`; with
-neither set the `salome` tests skip. Tests marked `llm` call the endpoint in
-`config.json`; `pytest.ini` deselects them (`addopts = -m "not llm"`) unless
-you pass `-m llm`.
-
-Test layout:
-
-- `tests/unit/` — no SALOME, no network.
-- `tests/salome/` — live tests against a headless agent server the fixture
-  starts (it refuses to run if another server owns `~/.local/share/salome-agent/server.json`).
-- `tests/replay.py` + `tests/fixtures/cassettes/` — a recorded run (LLM replies
-  and server responses) replayed strictly in order, no network or SALOME;
-  `test_golden_runs.py` checks the replay still produces
-  `tests/fixtures/golden/<name>.py`. Record a new cassette from a run directory
-  with `scripts/make-cassette.py <run_dir> <name>`.
-- `tests/fixtures/golden/planner_prompt.txt`, `list_tools.json` — snapshots of
-  the planner prompt and the GEOM tool order; a change shows up as a diff.
-- `tests/fixtures/repetition/*.txt` — real reasoning streamed by models
-  (`loop_*` repeat themselves, `ok_*` do not), test data for the loop detector
-  in `salome_agent/repetition.py`.
-
-### SALOME API map
-
-`salome_agent/verify/toplevel_api.json` is a snapshot of the top-level members
-of `geompy`, `smesh` and SHAPER's `model`: a reference for what the installed
-SALOME offers.
-
-That fixture has no source but a live session, so regenerate it whenever the
-SALOME build changes:
-
-```bash
-python3 scripts/regen-toplevel-api.py
-```
-
-It reuses a running agent server (`~/.local/share/salome-agent/server.json`, GUI plugin or
-headless) if one is up, otherwise spawns a throwaway headless server (needs
-`$SALOME_ROOT` or `salome.root` in `config.json`) and tears it down after. A
-module whose live introspect comes back empty keeps its existing member list.
-`tests/salome/test_toplevel_api_fixture.py` fails if the committed fixture has
-drifted from a live introspect.
-
-### Layout
-
-```
-salome_agent/
-  cli.py            entry point
-  graph.py          the LangGraph StateGraph (all nodes + routing)
-  runner.py         runs one request through the graph, maps its events
-  config.py         config loading + validation
-  llm.py            minimal OpenAI-compatible tool-calling client (+ with_images() for multimodal messages)
-  repetition.py     catches a model repeating itself while it streams
-  calc.py           the calc tool (arithmetic in a locked-down subprocess)
-  modules.py        ModuleSpec registry (shaper, geom, smesh)
-  state.py          RunState / stage TypedDicts
-  interactive.py    plan approval / stage-failure prompts
-  chat.py, conversation.py  --chat REPL and the multi-turn conversation
-  build_graph.py    the object graph a conversation edits
-  replay.py         replays part of the build graph after an edit or /undo
-  logs.py           logging setup (-v / -vv)
-  nodes/            planner, vision, gates (plan/retry), advance, assembler, report
-  specialists/      tool_specialist (shared tool loop), shaper + geom (tool-calling),
-                    smesh (tool-calling), amend (chat edits), tool_selection
-  verify/           toplevel_api.json (SALOME API snapshot) and its module list
-  server_conn.py    finds + connects to the SALOME agent server
-  executor_client.py  TCP client for the server (hello handshake, framing)
-  codegen.py        call log -> Python source
-agent_server/       the server that runs inside SALOME
-  core.py           command dispatch + poison gate
-  backend.py        Backend protocol + HeadlessBackend
-  gui_backend.py    GuiBackend + Qt main-thread marshal
-  wire.py           loopback TCP + token listener
-  handshake.py      ~/.local/share/salome-agent/server.json
-  gui_plugin.py     the Tools > Plugins entry point (launch/restart)
-  namespace.py      builds the exec namespace (geompy/smesh/...)
-  __main__.py       headless entry (`python -m agent_server`)
-executor/
-  registry.py       ToolRegistry — tool decorator, schemas, arg-type coercion
-  code_guard.py     checks SHAPER / SMESH source built from tool arguments before it runs
-  shaper/           SHAPER tool implementations (sketch, features, primitives, ...)
-  geom/             geom tool implementations + per-tool JSON schemas
-  smesh/            SMESH tool implementations (setup, naming, sizes, groups, compute, export)
-scripts/            start-headless-server.sh, regen-toplevel-api.py, make-cassette.py,
-                    dump-view.sh (+ dump_view.py, run inside the SALOME GUI)
-docs/superpowers/   design specs + implementation plans
-```
-
----
+| Flag | What it does |
+|---|---|
+| `--batch` | Run without asking anything (see above) |
+| `--chat` | Keep talking after the first result (see above) |
+| `--images PATH,PATH,...` | Reference images (see above) |
+| `--config PATH` | Use another config file (default: `./config.json`) |
+| `--work-dir DIR` | Where to write the run's folder |
+| `--on-failure {abort,continue}` | What `--batch` does when a stage fails |
+| `--tools {hints,all}` | `hints` (default) offers the model a few tools per stage and loads more on demand; `all` offers every tool on each call |
+| `--timeout SECONDS` | Time limit for one LLM call |
+| `-v`, `-vv` | More logging; `-vv` also records every LLM call in the run's folder ([details](docs/development.md#logs-and-traces)) |
 
 ## Known limitations
 
-- **The GUI plugin server is newer and less tested than the headless path.** GUI
-  mode does not roll back — a failed stage attempt leaves `sa_<run_id>_`-prefixed
-  debris in the study. A stage timeout poisons the server (run aborts, exit 1);
-  recovery may need killing the GUI. Save your work first. Headless mode is the
-  unattended path.
-- Tool registries: SHAPER 55 tools, GEOM 52 (primitives, sketch, swept,
-  booleans, transforms, fillet/chamfer, display, query, subshape selection),
-  SMESH 25 (setup, naming, local sizes, groups, compute and checks, export).
-  The SHAPER stage prompt lists every SHAPER tool in one line each; a call to
-  one not loaded yet is refused and the tool loaded. `align` does relative
-  placement (move a part so a chosen face/centre meets another's) so the model
-  states the spatial relationship instead of computing the translation itself.
-  Subshape ids come from
-  `get_subshapes` (query — returns ids/centres, emits no `CallRecord`) or
-  `explode` (publishes each subshape); `get_subshape` builds one shape from an id
-  list. Add a tool with `@tool(name, category=..., description=..., schema=...,
-  arg_types=...)` in `executor/geom/<category>.py` (see an existing tool);
-  registration order = import order in `executor/geom/__init__.py` and is
-  pinned by `tests/fixtures/golden/list_tools.json`. SHAPER tools live in
-  `executor/shaper/<category>.py` the same way.
-- Some OCC operations crash the SALOME process (segfault) instead of failing.
-  `fillet_edges` (SHAPER) refuses a radius at which fillets on two edges of one
-  face would meet; GEOM fillet/chamfer has no such guard yet.
-- SMESH `compute` refuses a mesh predicted above 1 000 000 elements, but SMESH's
-  `Evaluate()` cannot predict every setup. `mesh_body_fitted` and `mesh_prism`
-  are counted by their own rule (grid cells, layers × end-face elements).
-  Hand-built `set_algorithm` setups that `Evaluate()` leaves uncounted (Prism,
-  quadrangle_medial_axis, ...) compute without the limit, with a note in the
-  reply; `polyhedron_per_solid` is predicted far too low and slips through.
-  NETGEN is predicted 2–6× too high, so a NETGEN mesh can be refused well below
-  the limit.
-- RAG / documentation retrieval was cut from v1.
+- **Failed attempts stay in the SALOME window.** With the plugin, a failed stage is not rolled
+  back: its objects stay in the study, prefixed `sa_<run_id>_`, and `report.md` names them. Save
+  your work first. For unattended runs, use the headless server.
+- **A stage that runs past its time limit stops the run** (exit 1). In the SALOME window, click the
+  menu entry again to restart the server, or kill SALOME if it froze. A headless server exits;
+  start it again.
+- **Some geometry operations crash SALOME** instead of failing. SHAPER `fillet_edges` refuses a
+  radius at which two fillets on one face would meet; GEOM has no such guard yet.
+- **The 1 000 000 element limit on meshes is approximate.** It can refuse a NETGEN mesh well below
+  the limit, and miss some manual setups ([details](docs/development.md#smesh-element-limit)).
 
 ## License
 
