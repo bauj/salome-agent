@@ -133,7 +133,7 @@ class ExecutorClient:
             raise ServerOutdated(
                 f"the agent server has no {module} tools: it runs older code than "
                 f"this engine. Restart SALOME; if that does not help, an older "
-                f"salome-agent is first on SALOME's sys.path (see README, GUI plugin setup)")
+                f"salome-agent is first on SALOME's sys.path (see docs/development.md, The agent server)")
         return resp
 
     def call_tool(self, name, args, pin=None, module=None):
