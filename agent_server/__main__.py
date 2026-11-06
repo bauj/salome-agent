@@ -3,6 +3,7 @@
 import argparse
 import os
 import secrets
+import signal
 import sys
 
 from agent_server import handshake
@@ -20,6 +21,16 @@ def parse_args(argv):
                    help="answer the run command, which executes any code sent "
                         "with the token (live tests only)")
     return p.parse_args(argv)
+
+
+def _stop_on_signals() -> None:
+    # GEOM loads OCCT's OSD::SetSignal, whose SIGINT handler only sets a flag:
+    # without this, Ctrl-C ends the launcher and leaves the server orphaned.
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, stop)
 
 
 def main(argv=None) -> int:
@@ -45,12 +56,15 @@ def main(argv=None) -> int:
     from agent_server.backend import HeadlessBackend
 
     backend = HeadlessBackend()
+    _stop_on_signals()
     token = secrets.token_hex(16)
     srv = Server(Core(backend, allow_run=args.allow_run), token)
     port = srv.bind()
-    handshake.write(port=port, token=token, mode="headless", log_path=log_path)
     try:
+        handshake.write(port=port, token=token, mode="headless", log_path=log_path)
         srv.serve_forever_once() if args.once else srv.serve_forever()
+    except KeyboardInterrupt:
+        print("agent server stopped by a signal")
     finally:
         srv.stop()
         handshake.remove()
