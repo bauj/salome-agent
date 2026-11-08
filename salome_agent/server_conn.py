@@ -4,7 +4,7 @@ from agent_server import handshake
 from salome_agent.executor_client import (ExecutorClient, ServerBusy,
                                           SessionDied, SessionPoisoned)
 
-_HELP = ("Start it from Tools > Plugins > SALOME Agent, "
+_HELP = ("Start it from Tools > Plugins > SALOME agentic assistants, "
          "or run scripts/start-headless-server.sh")
 
 
