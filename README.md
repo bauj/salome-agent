@@ -65,7 +65,7 @@ scripts/start-headless-server.sh
 
 Prefer to watch it build? Open SALOME with the
 [salome-agent-gui](https://github.com/bauj/salome-agent-gui) plugin instead and click
-**Tools > Plugins > SALOME Agent**: the command line then drives that window.
+**Tools > Plugins > AI tools > SALOME agent**: the command line then drives that window.
 
 **4. Run a request,** from the repo root, where `config.json` is:
 
