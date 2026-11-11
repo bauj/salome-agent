@@ -343,3 +343,24 @@ def test_an_amend_block_that_only_sets_up_an_earlier_mesh_renders_without_a_warn
         text = render_script(g, "r1")
     assert "mesh_1.Compute()" in text
     assert "match no built shape" not in caplog.text
+
+
+def test_render_script_roots_choose_what_the_script_ends_with():
+    from salome_agent.build_graph import BuildGraph
+    from salome_agent.nodes.assembler import render_script
+
+    lit = lambda v: {"kind": "literal", "value": v}  # noqa: E731
+    ref = lambda v: {"kind": "ref", "value": v}  # noqa: E731
+    g = BuildGraph()
+    b = g.add_block(0, "stage 1/1: geom", "geom", [])
+    g.append(b, "make_box", {}, [{"fn": "MakeBoxDXDYDZ", "args": [lit(1), lit(2), lit(3)],
+                                  "out_vars": ["box_1"], "publish": ["box_1"]}], 0)
+    g.append(b, "make_sphere", {}, [{"fn": "MakeSphereR", "args": [lit(4)],
+                                     "out_vars": ["sph_1"], "publish": ["sph_1"]}], 0)
+    g.append(b, "translate", {}, [{"fn": "MakeTranslation", "args": [ref("box_1"), lit(1), lit(0), lit(0)],
+                                   "out_vars": ["moved_1"], "publish": ["moved_1"]}], 0)
+    every = render_script(g, "r1")
+    assert "MakeSphereR" in every and "MakeTranslation" in every
+    only = render_script(g, "r1", roots=["moved_1"])
+    assert "MakeSphereR" not in only                       # not asked for
+    assert "MakeBoxDXDYDZ" in only and "MakeTranslation" in only   # needed by moved_1

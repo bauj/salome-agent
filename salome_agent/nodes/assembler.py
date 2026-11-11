@@ -82,18 +82,22 @@ def _is_tool_module(module: str) -> bool:
 _SHAPER_PUBLISH = "model.end()\nmodel.publishToShaperStudy()\nmodel.begin()\n"
 
 
-def _geom_bodies(graph) -> dict:
+def _geom_bodies(graph, roots: list | None = None) -> dict:
+    """`roots`: the objects the script must end with, for the whole graph; by
+    default each block's result names (or everything it published)."""
     from salome_agent.codegen import _reachable, generate, roots_for
     from salome_agent.modules import spec_for
 
-    per_block, roots = {}, []
+    per_block, given, roots = {}, roots, []
     for b in graph.blocks:
         if b.script is None:
             records = [r for n in graph.block_nodes(b.id) for r in n.records]
             names = b.result_names or [p for n in graph.block_nodes(b.id) for p in n.published]
             per_block[b.id] = (records, names)
-            if names:
+            if names and given is None:
                 roots += roots_for(records, names)
+    if given is not None:
+        roots = list(given)
     everything = [r for records, _ in per_block.values() for r in records]
     keep = _reachable(everything, roots)
     module = {b.id: b.module for b in graph.blocks}
@@ -105,7 +109,8 @@ def _geom_bodies(graph) -> dict:
     return out
 
 
-def render_script(graph, run_id: str) -> str:
+def render_script(graph, run_id: str, roots: list | None = None) -> str:
+    """`roots`: see _geom_bodies (an MCP session passes the objects still in the study)."""
     from salome_agent.modules import spec_for
 
     requests = graph.requests or [""]
@@ -116,7 +121,7 @@ def render_script(graph, run_id: str) -> str:
     for i, r in enumerate(requests[1:], start=2):
         header += comment(f"turn {i}: {r}") + "\n"
 
-    geom_bodies = _geom_bodies(graph)
+    geom_bodies = _geom_bodies(graph, roots)
     bodies = []
     modules = set()
     unpublished = False

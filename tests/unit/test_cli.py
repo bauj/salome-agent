@@ -238,3 +238,9 @@ def test_chat_with_batch_is_an_error(capsys):
     from salome_agent.cli import main
     assert main(["a box", "--chat", "--batch"]) == 2
 
+
+
+def test_check_image_uris_accepts_webp_whatever_label_it_came_with():
+    webp = b"RIFF\x24\x00\x00\x00WEBPVP8X" + b"\x00" * 10
+    for label in ("image/webp", "image/png", "application/octet-stream"):
+        assert check_image_uris([uri(webp, label)]) == [uri(webp, "image/webp")]
